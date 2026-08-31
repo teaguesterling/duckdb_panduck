@@ -57,7 +57,7 @@ int HeadingLevelFromName(const std::string &raw) {
 	for (char c : raw) {
 		s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
 	}
-	auto pos = s.find("heading");
+	auto pos = s.find(DuckBlockTypes::TYPE_HEADING);
 	if (pos == std::string::npos) {
 		return 0;
 	}
@@ -87,18 +87,18 @@ struct RunFormat {
 	//! reported by its strongest. Documented limitation, matching the RTF reader.
 	std::string ElementType() const {
 		if (bold) {
-			return "bold";
+			return DuckBlockTypes::INLINE_BOLD;
 		}
 		if (italic) {
-			return "italic";
+			return DuckBlockTypes::INLINE_ITALIC;
 		}
 		if (underline) {
-			return "underline";
+			return DuckBlockTypes::INLINE_UNDERLINE;
 		}
 		if (strike) {
-			return "strikethrough";
+			return DuckBlockTypes::INLINE_STRIKETHROUGH;
 		}
-		return "text";
+		return DuckBlockTypes::INLINE_TEXT;
 	}
 };
 
@@ -239,10 +239,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 
 		DocxBlock block;
 		if (level > 0) {
-			block.element_type = "heading";
+			block.element_type = DuckBlockTypes::TYPE_HEADING;
 			block.heading_level = level;
 		} else {
-			block.element_type = "paragraph";
+			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
 
 		// Character formatting inside a heading is presentational -- writers bold heading
@@ -297,7 +297,7 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 	int32_t order = 0;
 	for (auto &block : docx::ParseDocxFile(input.inputs[0].GetValue<string>())) {
 		DocxRow row;
-		row.kind = "block";
+		row.kind = DuckBlockTypes::KIND_BLOCK;
 		row.element_type = block.element_type;
 		row.content = block.content;
 		row.element_order = order++;
@@ -308,7 +308,7 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 
 		for (auto &inl : block.inlines) {
 			DocxRow child;
-			child.kind = "inline";
+			child.kind = DuckBlockTypes::KIND_INLINE;
 			child.element_type = inl.element_type;
 			child.content = inl.content;
 			child.has_level = true;
@@ -330,7 +330,7 @@ void DocxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value("text"));
+		output.SetValue(4, count, Value(DuckBlockTypes::INLINE_TEXT));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 		state.offset++;

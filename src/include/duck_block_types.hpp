@@ -113,6 +113,34 @@ public:
 	// Attribute keys
 	static constexpr const char *ATTR_HEADING_LEVEL = "heading_level";
 
+	// ---- Added to close the gap against duck_block_utils' published vocabulary ----
+	// Sourced VERBATIM from duck_block_utils/src/include/duck_block_vocabulary.hpp at
+	// 628dcd7. Where the two headers already overlapped they agreed exactly -- this copy
+	// was incomplete, never wrong, so nothing panduck emitted was incorrect.
+	//
+	// THIS IS A STOPGAP. That header is published link-free specifically so siblings can
+	// consume it via a submodule instead of copying it, and copying is the defect it
+	// exists to prevent -- this is the fourth copy in the portfolio. The submodule is
+	// blocked on the header reaching duck_block_utils' main: pinning a build to an
+	// unmerged feature branch is a heavier commitment than tracking type names.
+	//
+	// The drift detector is db_block_types() / db_block_kinds(), asserted at test time.
+	// Blocked on panduck's CI being able to depend on duck_block_utils being installed.
+
+	static constexpr const char *INLINE_CITE = "cite";
+	static constexpr const char *INLINE_GENERIC = "generic";
+	static constexpr const char *INLINE_MATH = "math";
+	static constexpr const char *INLINE_NOTE = "note";
+	static constexpr const char *INLINE_QUOTED = "quoted";
+	static constexpr const char *KIND_VALUE = "value";
+	static constexpr const char *TYPE_CAPTION = "caption";
+	static constexpr const char *TYPE_DEFLIST = "deflist";
+	static constexpr const char *TYPE_DIV = "div";
+	static constexpr const char *TYPE_FIGURE = "figure";
+	static constexpr const char *TYPE_GENERIC = "generic";
+	static constexpr const char *TYPE_LINEBLOCK = "lineblock";
+	static constexpr const char *TYPE_LIST_ITEM = "list_item";
+	static constexpr const char *TYPE_SECTION = "section";
 	// Helper to create an attributes MAP from a std::map
 	static Value CreateAttributesMap(const std::map<std::string, std::string> &attrs) {
 		vector<Value> keys;

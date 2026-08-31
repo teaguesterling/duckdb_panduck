@@ -107,6 +107,28 @@ SELECT len(panduck_read_blocks('test/fixtures/pandoc_outlinelevel.rtf'))
 ----
 true
 
+# ...IN DOCUMENT ORDER. doc_section slices this list by position, so element_order must
+# equal list position at every row. The wrapper orders explicitly rather than relying on
+# a table function's emission order, which nothing in the contract guarantees.
+query I
+SELECT count(*) FROM (
+  SELECT e, row_number() OVER () AS rn FROM (
+    SELECT unnest(panduck_read_blocks('test/fixtures/pandoc_outlinelevel.rtf')) AS e
+  )
+) WHERE (e).element_order <> rn - 1;
+----
+0
+
+# Heading level lives in attributes['heading_level'], NOT the level field -- matching
+# pandoc_ast_to_blocks exactly, which is what doc_section is built against. The level
+# field is hierarchy depth and stays NULL for a heading.
+query II
+SELECT level IS NULL, attributes['heading_level'][1]
+FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE element_type = 'heading' ORDER BY element_order LIMIT 1;
+----
+true	1
+
 # ---------------------------------------------------------------------------
 # Documents vs data. A .csv has no document structure; refusing it by name beats
 # returning something shaped like a document that isn't one.

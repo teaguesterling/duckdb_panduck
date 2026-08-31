@@ -329,7 +329,12 @@ const DefaultMacro SCALAR_MACROS[] = {
      // No ::duck_block cast: that named type belongs to duck_block_utils, and panduck
      // must answer without it. The struct is structurally identical, so it still casts
      // implicitly wherever a duck_block[] is wanted.
-     "(SELECT list(b) FROM read_panduck_doc(src, format := format, pages := pages) b)"},
+     // ORDER BY element_order is not decoration. doc_section slices this list by
+     // position, so the order has to be GUARANTEED rather than incidental -- a bare
+     // list() over a table function preserves emission order today but nothing in the
+     // contract says it must, and a reordering would surface as a slicing bug far from
+     // its cause.
+     "(SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc(src, format := format, pages := pages) b)"},
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
 
@@ -396,14 +401,26 @@ SELECT * FROM query(
         -- element_order, block STRUCT(...)) -- a third output shape, neither flat columns
         -- nor LIST(duck_block). It unpacks by name like the LIST branches do.
         --
-        -- KNOWN LIMITATION, measured: panduck_ensure_extension loads sitting_duck, but a
-        -- MACRO registered into the catalog at load time is not visible to the statement
-        -- that triggered the load -- the binder's catalog view predates it. A C++ function
-        -- is (read_markdown_blocks resolves on the first call; ast_to_blocks does not).
-        -- So the first code-format read in a fresh session fails with a catalog error and
-        -- the second succeeds. Eagerly loading sitting_duck whenever panduck loads would
-        -- fix it at the cost of pulling in tree-sitter for every .rtf read, which is a
-        -- worse trade. LOAD sitting_duck once, or call twice.
+        -- KNOWN LIMITATION. Autoloading mid-statement is governed by TWO effects that
+        -- compose, both measured:
+        --
+        --   1. BIND TIME. A statement binds fully before it executes, so anything it
+        --      names DIRECTLY must already exist -- panduck_ensure_extension runs during
+        --      execution, too late. This is why every branch here goes through query():
+        --      query() binds its inner SQL at execution, after the ensure has run.
+        --        CASE WHEN ensure('markdown') THEN md_to_html('# H') END  -> Catalog Error
+        --        query(CASE WHEN ensure('markdown') THEN '<that sql>' END) -> works
+        --
+        --   2. CATALOG VISIBILITY. Even inside query(), a MACRO created by the load is
+        --      not visible, while a C++ function is:
+        --        read_markdown_blocks (C++ table function) -> resolves first call
+        --        md_to_html           (C++ scalar)         -> resolves first call
+        --        ast_to_blocks        (table macro)        -> does NOT; second call works
+        --
+        -- ast_to_blocks is a macro, so the first code-format read in a fresh session
+        -- fails and the second succeeds. Eagerly loading sitting_duck whenever panduck
+        -- loads would fix it at the cost of pulling tree-sitter into every .rtf read.
+        -- LOAD sitting_duck once, or call twice.
         ELSE CASE WHEN panduck_ensure_extension('sitting_duck')
              THEN 'SELECT ' || panduck_block_cols() ||
                   ' FROM (SELECT block AS b FROM ast_to_blocks(' || panduck_quote(src) || '))'

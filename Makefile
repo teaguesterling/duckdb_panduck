@@ -11,3 +11,11 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: test_pandoc_alignment
 test_pandoc_alignment:
 	python3 test/pandoc/check_pandoc_alignment.py
+
+# Differential validation: read each fixture with BOTH panduck and pandoc and compare
+# at declared levels of equivalence. Requires a built extension (make release) as well
+# as pandoc; skips cleanly when either is missing. Add --report to see raw divergences
+# without asserting.
+.PHONY: test_roundtrip
+test_roundtrip:
+	python3 test/roundtrip/check_roundtrip.py

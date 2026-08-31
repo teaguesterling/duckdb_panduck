@@ -142,6 +142,62 @@ installs pandoc explicitly so the check actually runs there.
 The complementary SQL test (`test/sql/pandoc_ast_map.test`) asserts the *built extension*
 agrees with that same table. Together: real pandoc → C++ table → loaded extension.
 
+## Differential validation
+
+`make test_roundtrip` reads every fixture **twice** — once with panduck, once with
+pandoc — and compares the results:
+
+```
+  pandoc_outlinelevel.rtf [rtf]
+    text      diverges as declared [reference-wrong] -- pandoc's RTF reader drops the
+              space after \u8212 ...
+    skeleton  agree
+    marked    diverges as declared [reference-wrong] -- ...
+```
+
+The obvious test would be `X == panduck_read(panduck_write(X))`. That needs a writer
+panduck doesn't have, and it's the weaker test anyway: a reader and writer sharing one
+misunderstanding round-trip perfectly while both being wrong. Two *independent* readers
+of the same bytes catch misreads no self-round-trip can.
+
+### What counts as identity
+
+Two readers never agree byte-for-byte, and mostly shouldn't have to. `canonical.py`
+normalizes away three differences that carry no information — pandoc emits explicit
+`Space` inlines where panduck folds spaces into runs; pandoc splits text per word;
+pandoc nests `Strong [Str "bold"]` where panduck puts content on the `bold` inline.
+Each case then declares how far up the ladder agreement is required:
+
+| Level | Compares | Catches |
+|---|---|---|
+| `text` | all visible text, markers stripped | data loss |
+| `skeleton` | block types + heading levels | structural loss, misclassification |
+| `marked` | skeleton + canonical inline markup | everything above plus formatting |
+
+### The reference is not ground truth
+
+pandoc is the reference, but it is not always right. On `pandoc_outlinelevel.rtf` its own
+RTF reader yields `café —em-dash` where the source document reads `café — em-dash`;
+panduck matches the source. On `libreoffice_stylesheet.rtf` panduck resolves
+`{\stylesheet}` `\sN` and reports `Heading One` as a heading, while pandoc reads it as
+`Para[Strong[Span]]` and detects no heading at all.
+
+So divergences are **triaged**, not assumed to be panduck's fault:
+
+| Verdict | Effect |
+|---|---|
+| `panduck-wrong` | **fails** |
+| `reference-wrong` | recorded; pandoc is wrong |
+| `not-implemented` | recorded; panduck doesn't read this construct yet |
+| `ambiguous` | recorded with reasoning |
+
+The ledger ratchets **both** ways: an undeclared divergence fails, and so does a declared
+divergence that has silently started agreeing — that one should be promoted rather than
+left rotting. Both directions are negative-tested.
+
+Requires pandoc *and* a built extension; skips cleanly without either. `--report` shows
+raw divergences without asserting, which is how the ledger entries were derived.
+
 ### Known gaps
 
 These are constructors real pandoc emits that the `duck_block` round-trip does not handle.

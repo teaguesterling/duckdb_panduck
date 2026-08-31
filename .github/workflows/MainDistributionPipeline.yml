@@ -74,13 +74,17 @@ jobs:
           sudo apt-get install -y pandoc
           pandoc --version | head -1
 
+      # Unzip into its own directory: the archive contains a file named `duckdb`, and
+      # the checkout already has a `duckdb/` SUBMODULE directory. Extracting in place
+      # makes unzip prompt to overwrite it, which on a runner reads EOF and exits 1.
       - name: Install DuckDB CLI v1.5.5
         run: |
           curl -sSL -o duckdb.zip \
             https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
-          unzip -q duckdb.zip
-          chmod +x duckdb
-          ./duckdb --version
+          unzip -q -o duckdb.zip -d duckdb-cli
+          chmod +x duckdb-cli/duckdb
+          test -x duckdb-cli/duckdb || { echo "duckdb CLI not where expected"; exit 1; }
+          ./duckdb-cli/duckdb --version
 
       - name: Download the panduck extension built above
         uses: actions/download-artifact@v4
@@ -93,4 +97,4 @@ jobs:
           EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
           echo "extension: $EXT"
           python3 test/roundtrip/check_roundtrip.py \
-            --require --duckdb ./duckdb --extension "$EXT"
+            --require --duckdb ./duckdb-cli/duckdb --extension "$EXT"

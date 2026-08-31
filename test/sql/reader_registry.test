@@ -86,6 +86,17 @@ SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/pan
 ----
 0
 
+# POSITIVE COMPANION, and it is load-bearing. The identity above is satisfied by MUTUAL
+# EMPTINESS -- two readers that both return nothing agree perfectly. Verified: against an
+# empty RTF the EXCEPT assertion still reports 0. A negative assertion is satisfied by
+# absence, so it certifies nothing without a positive one beside it.
+query II
+SELECT element_type, content FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+heading	Heading One
+heading	Heading Two
+
 # The dispatcher's schema is the canonical duck_block schema, so a row casts to duck_block
 # and `SELECT *` pass-through in the flat branches is safe.
 query I
@@ -118,6 +129,12 @@ SELECT count(*) FROM (
 ) WHERE (e).element_order <> rn - 1;
 ----
 0
+
+# ...and the list is not empty, which the mismatch count alone would not tell us.
+query I
+SELECT len(panduck_read_blocks('test/fixtures/pandoc_outlinelevel.rtf')) > 0;
+----
+true
 
 # Heading level lives in attributes['heading_level'], NOT the level field -- matching
 # pandoc_ast_to_blocks exactly, which is what doc_section is built against. The level

@@ -118,6 +118,13 @@ WHERE kind NOT IN ('block', 'inline', 'value') OR encoding <> 'text';
 ----
 0
 
+# The guard above counts violations, and an empty document has none -- verified against
+# an empty RTF, where it still reports 0. So assert there is something to guard.
+query I
+SELECT count(*) > 10 FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf');
+----
+true
+
 query I
 SELECT count(DISTINCT element_order) = count(*)
 FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf');

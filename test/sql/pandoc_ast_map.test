@@ -1,0 +1,66 @@
+# name: test/sql/pandoc_ast_map.test
+# description: panduck_pandoc_ast_map() exposes the full pandoc-types 1.23 vocabulary
+# group: [sql]
+#
+# This asserts the BUILT extension agrees with the mapping table in
+# src/pandoc_ast_map.cpp. The other half of the contract -- that the table agrees with a
+# real pandoc binary -- is checked by test/pandoc/check_pandoc_alignment.py.
+
+require panduck
+
+# pandoc-types 1.23 has exactly 15 Block and 20 Inline constructors.
+query II
+SELECT kind, count(*) FROM panduck_pandoc_ast_map() GROUP BY kind ORDER BY kind;
+----
+block	15
+inline	20
+
+# Every row is one of the three defined states.
+query I
+SELECT count(*) FROM panduck_pandoc_ast_map()
+WHERE status NOT IN ('mapped', 'planned', 'dropped');
+----
+0
+
+# element_type is NULL exactly when the constructor is dropped, and never otherwise.
+query I
+SELECT count(*) FROM panduck_pandoc_ast_map()
+WHERE (element_type IS NULL) <> (status = 'dropped');
+----
+0
+
+# Null is the only constructor that intentionally yields no element.
+query I
+SELECT pandoc_type FROM panduck_pandoc_ast_map() WHERE status = 'dropped';
+----
+Null
+
+# The four known gaps in the duck_block round-trip. Kept in lockstep with KNOWN_GAPS in
+# test/pandoc/check_pandoc_alignment.py -- if this list changes, that harness fails too.
+query I
+SELECT pandoc_type FROM panduck_pandoc_ast_map() WHERE status = 'planned' ORDER BY pandoc_type;
+----
+DefinitionList
+Figure
+LineBlock
+Underline
+
+# Constructor names are unique.
+query I
+SELECT count(*) FROM (SELECT DISTINCT pandoc_type FROM panduck_pandoc_ast_map());
+----
+35
+
+# Spot-check the element_type vocabulary panduck's readers must emit. These strings are
+# fixed by duck_block_utils (src/include/block_types.hpp), not chosen here.
+query II
+SELECT pandoc_type, element_type FROM panduck_pandoc_ast_map()
+WHERE pandoc_type IN ('Header', 'CodeBlock', 'BulletList', 'Strong', 'Emph', 'Str')
+ORDER BY pandoc_type;
+----
+BulletList	list
+CodeBlock	code
+Emph	italic
+Header	heading
+Str	text
+Strong	bold

@@ -1,0 +1,31 @@
+# name: test/sql/panduck.test
+# description: panduck extension loads and registers its Phase 1 surface
+# group: [sql]
+
+# Before the extension is loaded, nothing is registered.
+statement error
+SELECT panduck_version();
+----
+Catalog Error
+
+require panduck
+
+query I
+SELECT panduck_version() IS NOT NULL;
+----
+true
+
+# The pandoc-types AST version this build's mapping targets. test/pandoc/
+# check_pandoc_alignment.py asserts this same value against a real pandoc binary.
+query I
+SELECT panduck_pandoc_api_version();
+----
+1.23
+
+# The duck_block struct panduck's readers must emit. This header is a copy of the
+# contract owned by duck_block_utils; asserting it here means a drift between the two
+# fails in Phase 1 rather than surfacing inside a reader in Phase 2.
+query I
+SELECT panduck_duck_block_type();
+----
+STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)

@@ -61,11 +61,17 @@ ReaderRegistry::ReaderRegistry() {
 	    {".html", "html", "webbed", "", KIND_DOC},
 	    {".htm", "html", "webbed", "", KIND_DOC},
 	    {".pdf", "pdf", "pdf", "", KIND_DOC},
-	    {".json", "pandoc_ast", "duck_block_utils", "", KIND_DOC},
+	    {".json", "data", "json", "", KIND_TABLE},
 	    // Config trees: a nested key-value document. Not prose, but not rows either.
 	    {".toml", "toml", "toml", "", KIND_DOC},
 	    {".yaml", "yaml", "yaml", "", KIND_DOC},
 	    {".yml", "yaml", "yaml", "", KIND_DOC},
+	    // .json is DATA, not a Pandoc AST. panduck used to route it to duck_block_utils'
+	    // pandoc_ast_to_blocks, which made the IO engine depend on the helper layer -- the
+	    // wrong direction. Anyone holding a Pandoc AST calls pandoc_ast_to_blocks(content)
+	    // directly, which is the standalone usefulness duck_block_utils is meant to have.
+	    // Reading Pandoc JSON natively belongs in panduck eventually; borrowing it does not.
+	    //
 	    // Genuinely tabular. Claimed so they do not fall through to the code fallback;
 	    // read_panduck_doc refuses them by name and points at read_panduck_table.
 	    {".csv", "data", "core", "", KIND_TABLE},
@@ -376,13 +382,6 @@ SELECT * FROM query(
                       panduck_quote(src) || '))) AS b)'
                  ELSE error('panduck: pdf needs the pdf and markdown extensions') END
 
-        WHEN panduck_resolved_format(src, format) = 'pandoc_ast'
-            THEN CASE WHEN panduck_ensure_extension('duck_block_utils')
-                 THEN 'SELECT ' || panduck_block_cols() ||
-                      ' FROM (SELECT unnest(pandoc_ast_to_blocks(content)) AS b FROM read_text(' ||
-                      panduck_quote(src) || '))'
-                 ELSE error('panduck: pandoc AST needs the duck_block_utils extension') END
-
         -- A config tree is entirely document metadata, so it becomes ONE metadata block
         -- carrying the parsed document as JSON rather than being flattened to a string or
         -- refused. When kind='value' lands in duck_block_utils this should become value
@@ -470,7 +469,15 @@ SELECT * FROM query(
             THEN CASE WHEN panduck_ensure_extension('toml')
                  THEN 'SELECT parse_toml(content) AS toml FROM read_text(' || panduck_quote(src) || ')'
                  ELSE error('panduck: toml needs the toml extension') END
-        ELSE 'SELECT * FROM ' || panduck_quote(src)
+        -- DuckDB's replacement scan reads csv/parquet/json/xlsx from a bare path, but
+        -- only once the extension providing the format is loaded. Ensure it first:
+        -- 'core' names no loadable extension, and ensure returns false harmlessly there.
+        ELSE CASE WHEN panduck_reader_extension_for(src) IS NULL
+                    OR panduck_reader_extension_for(src) = 'core'
+                    OR panduck_ensure_extension(panduck_reader_extension_for(src))
+             THEN 'SELECT * FROM ' || panduck_quote(src)
+             ELSE error('panduck: ' || src || ' needs the ' ||
+                        panduck_reader_extension_for(src) || ' extension') END
     END
 )
 )SQL"};

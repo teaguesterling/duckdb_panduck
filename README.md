@@ -195,8 +195,15 @@ The ledger ratchets **both** ways: an undeclared divergence fails, and so does a
 divergence that has silently started agreeing — that one should be promoted rather than
 left rotting. Both directions are negative-tested.
 
-Requires pandoc *and* a built extension; skips cleanly without either. `--report` shows
-raw divergences without asserting, which is how the ledger entries were derived.
+Requires pandoc *and* a built extension. Locally it skips cleanly without either;
+`--report` shows raw divergences without asserting, which is how the ledger entries were
+derived.
+
+In CI it runs against the extension the build matrix already produced — the
+`linux_amd64` artifact is downloaded and `LOAD`ed into a stock DuckDB CLI of the same
+version, so validation costs ~2 minutes rather than the ~40 a rebuild would. The job
+passes `--require`, which turns a missing prerequisite into a failure: a job that
+silently skips reports coverage it is not providing.
 
 ### Known gaps
 

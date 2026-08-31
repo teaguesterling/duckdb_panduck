@@ -33,7 +33,9 @@ rather than left rotting in the ledger.
 Exit codes: 0 = pass (or skipped), 1 = a divergence that matters.
 """
 
+import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -43,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import canonical  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
-DUCKDB = REPO / "build" / "release" / "duckdb"
+DEFAULT_DUCKDB = REPO / "build" / "release" / "duckdb"
 
 PASS = "pass"
 PANDUCK_WRONG = "panduck-wrong"
@@ -118,7 +120,7 @@ def read_pandoc(path, fmt):
     return canonical.pandoc_blocks_to_canonical(json.loads(raw.stdout)["blocks"])
 
 
-def read_panduck(path, reader):
+def read_panduck(path, reader, duckdb_bin, extension=None):
     # attributes is a MAP, and DuckDB renders MAPs as {k=v} -- which is not valid JSON.
     # Project the attributes this comparison needs into plain columns instead.
     sql = (
@@ -128,7 +130,15 @@ def read_panduck(path, reader):
         "attributes['src'][1] AS src "
         f"FROM {reader}('{path}') ORDER BY element_order;"
     )
-    raw = subprocess.run([str(DUCKDB), "-json", "-c", sql], capture_output=True, text=True, cwd=REPO)
+    # CI runs a stock duckdb against the extension artifact the build matrix already
+    # produced, rather than rebuilding panduck: -unsigned is required to LOAD a locally
+    # built .duckdb_extension. Locally, the statically linked build needs neither.
+    cmd = [str(duckdb_bin)]
+    if extension:
+        cmd.append("-unsigned")
+        sql = f"LOAD '{extension}'; " + sql
+    cmd += ["-json", "-c", sql]
+    raw = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
     if raw.returncode != 0:
         raise RuntimeError(f"panduck failed on {path}:\n{raw.stderr}")
     rows = json.loads(raw.stdout or "[]")
@@ -170,17 +180,44 @@ def render_diff(level, got, ref, limit=6):
 
 
 def main():
-    report_only = "--report" in sys.argv
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--report", action="store_true", help="show divergences without asserting")
+    ap.add_argument(
+        "--require",
+        action="store_true",
+        help="treat a missing prerequisite as a failure instead of a skip. CI passes this: "
+        "a job that silently skips reports coverage it is not providing.",
+    )
+    ap.add_argument("--duckdb", default=os.environ.get("PANDUCK_DUCKDB"), help="duckdb binary to use")
+    ap.add_argument(
+        "--extension",
+        default=os.environ.get("PANDUCK_EXTENSION"),
+        help="panduck.duckdb_extension to LOAD (implies -unsigned); omit when panduck is linked in",
+    )
+    args = ap.parse_args()
+    report_only = args.report
+
+    duckdb_bin = Path(args.duckdb) if args.duckdb else DEFAULT_DUCKDB
+    extension = Path(args.extension).resolve() if args.extension else None
+
+    def missing(msg):
+        if args.require:
+            print(f"FAIL: {msg} (--require)", file=sys.stderr)
+            return 1
+        print(f"SKIP: {msg}")
+        return 0
 
     if not shutil.which("pandoc"):
-        print("SKIP: pandoc not on PATH; cannot run differential validation.")
-        return 0
-    if not DUCKDB.exists():
-        print(f"SKIP: {DUCKDB.relative_to(REPO)} not built; run `make release` first.")
-        return 0
+        return missing("pandoc not on PATH; cannot run differential validation")
+    if not (duckdb_bin.exists() or shutil.which(str(duckdb_bin))):
+        return missing(f"duckdb binary not found at {duckdb_bin}; run `make release` first")
+    if extension and not extension.exists():
+        return missing(f"extension not found at {extension}")
 
     version = subprocess.run(["pandoc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
-    print(f"Differential validation of panduck's readers against {version}\n")
+    print(f"Differential validation of panduck's readers against {version}")
+    print(f"  duckdb: {duckdb_bin}" + (f"  (LOAD {extension.name})" if extension else "  (linked in)"))
+    print()
 
     failures = 0
     for case in CASES:
@@ -189,7 +226,7 @@ def main():
             print(f"    {case.note}")
         try:
             ref = read_pandoc(case.path, case.fmt)
-            got = read_panduck(case.path, case.reader)
+            got = read_panduck(case.path, case.reader, duckdb_bin, extension)
         except RuntimeError as exc:
             print(f"    FAIL: {exc}")
             failures += 1

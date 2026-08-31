@@ -49,3 +49,48 @@ jobs:
 
       - name: Check AST mapping against the installed pandoc
         run: python3 test/pandoc/check_pandoc_alignment.py
+
+  # Differential validation: read each fixture with BOTH panduck and pandoc and compare
+  # at declared levels of equivalence (see test/roundtrip/).
+  #
+  # This does NOT rebuild panduck. Building the extension takes ~40 minutes, and the
+  # matrix above has already done it -- so this downloads that job's linux_amd64
+  # artifact and LOADs it into a stock DuckDB CLI of the same version. Runs in ~2
+  # minutes instead.
+  #
+  # --require is deliberate: without it the check skips when a prerequisite is missing,
+  # which in CI would report coverage it is not providing. A missing pandoc, CLI or
+  # artifact must fail this job, not quietly pass it.
+  roundtrip-validation:
+    name: Differential validation (panduck vs pandoc)
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc
+          pandoc --version | head -1
+
+      - name: Install DuckDB CLI v1.5.5
+        run: |
+          curl -sSL -o duckdb.zip \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
+          unzip -q duckdb.zip
+          chmod +x duckdb
+          ./duckdb --version
+
+      - name: Download the panduck extension built above
+        uses: actions/download-artifact@v4
+        with:
+          name: panduck-v1.5.5-extension-linux_amd64
+          path: ext
+
+      - name: Differential validation
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          echo "extension: $EXT"
+          python3 test/roundtrip/check_roundtrip.py \
+            --require --duckdb ./duckdb --extension "$EXT"

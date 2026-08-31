@@ -3,6 +3,8 @@
 #include "panduck_extension.hpp"
 #include "duck_block_types.hpp"
 #include "pandoc_ast_map.hpp"
+#include "rtf_reader.hpp"
+#include "supported_extensions.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -54,6 +56,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    ScalarFunction("panduck_duck_block_type", {}, LogicalType::VARCHAR, PanduckDuckBlockTypeFun));
 
 	RegisterPandocAstMapFunction(loader);
+	RegisterRtfReaderFunction(loader);
+
+	RegisterSupportedExtensionsFunction(loader);
 }
 
 void PanduckExtension::Load(ExtensionLoader &loader) {

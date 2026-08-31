@@ -1,0 +1,105 @@
+# name: test/sql/supported_extensions.test
+# description: panduck_supported_extensions() describes panduck's readers to a dispatcher
+# group: [sql]
+
+#
+# This is panduck's half of derived reader dispatch: instead of duck_block_utils
+# maintaining a table of which extension reads which file type, each reader describes
+# itself and the dispatch is derived. These assertions are the contract a consumer is
+# entitled to rely on.
+
+require panduck
+
+# Shaped to UNION with sitting_duck's ast_supported_languages() without special-casing:
+# a name column, an extensions LIST(VARCHAR), and what does the reading.
+query IIIII
+SELECT format, extensions, reader, status, notes FROM panduck_supported_extensions() LIMIT 1;
+----
+docx	[docx]	NULL	planned	roadmap phase 2: ZIP + word/document.xml via miniz + pugixml
+
+# Every row is one of the two defined states.
+query I
+SELECT count(*) FROM panduck_supported_extensions()
+WHERE status NOT IN ('implemented', 'planned');
+----
+0
+
+# THE LOAD-BEARING ASSERTION. Every format reported 'implemented' must name a reader
+# that actually exists in this build. Asserting a count alone would let the registry
+# drift back into claiming a reader that was never written, so this checks the claim
+# against duckdb_functions() rather than against a number.
+query I
+SELECT count(*) FROM panduck_supported_extensions() r
+WHERE r.status = 'implemented'
+  AND NOT EXISTS (SELECT 1 FROM duckdb_functions() f WHERE f.function_name = r.reader);
+----
+0
+
+# ...and conversely, panduck reads rtf as of the RTF reader landing.
+query II
+SELECT format, reader FROM panduck_supported_extensions()
+WHERE status = 'implemented' ORDER BY format;
+----
+rtf	read_rtf_blocks
+
+# reader is NULL exactly when the format is not implemented, and never otherwise. A
+# consumer that forgets to filter on status therefore builds a CASE branch naming NULL
+# rather than a plausible-looking function that does not exist.
+query I
+SELECT count(*) FROM panduck_supported_extensions()
+WHERE (reader IS NULL) <> (status <> 'implemented');
+----
+0
+
+# Extensions follow sitting_duck's convention exactly: lowercase, no leading dot. A
+# consumer that has to normalise one registry differently from another has
+# reintroduced the per-reader knowledge this table exists to remove.
+query I
+WITH claimed AS (SELECT unnest(extensions) AS ext FROM panduck_supported_extensions())
+SELECT count(*) FROM claimed WHERE ext <> lower(ext) OR starts_with(ext, '.') OR ext = '';
+----
+0
+
+# No extension is claimed by two formats -- otherwise a derived dispatcher gets
+# ambiguous rows from panduck alone, before any other registry is unioned in.
+query I
+WITH claimed AS (SELECT unnest(extensions) AS ext FROM panduck_supported_extensions())
+SELECT count(*) FROM (SELECT ext FROM claimed GROUP BY ext HAVING count(*) > 1);
+----
+0
+
+# Format names are unique and are pandoc's own --from names.
+query I
+SELECT format FROM panduck_supported_extensions() ORDER BY format;
+----
+docx
+epub
+latex
+mediawiki
+odt
+org
+rst
+rtf
+
+# DELEGATION. Markdown and HTML are read into duck_block by duckdb_markdown and
+# duckdb_webbed. Panduck does not claim them here even though pandoc reads both: this
+# table is a self-description, and a row is a claim a dispatcher may act on. Two
+# registries claiming .md is exactly the ambiguity derived dispatch removes.
+query I
+WITH claimed AS (SELECT unnest(extensions) AS ext FROM panduck_supported_extensions())
+SELECT count(*) FROM claimed WHERE ext IN ('md', 'markdown', 'html', 'htm', 'pdf');
+----
+0
+
+# The formats panduck claims must not collide with the source-code extensions
+# sitting_duck claims, or the union of the two registries is ambiguous. Spot-checked
+# against sitting_duck's LANGUAGE_TO_EXTENSIONS rather than required at runtime, so
+# this test does not take a dependency on sitting_duck being installed.
+query I
+WITH claimed AS (SELECT unnest(extensions) AS ext FROM panduck_supported_extensions())
+SELECT count(*) FROM claimed
+WHERE ext IN ('py', 'cpp', 'c', 'h', 'hpp', 'js', 'ts', 'go', 'rb', 'rs', 'sql',
+              'java', 'php', 'css', 'json', 'sh', 'swift', 'r', 'kt', 'cs', 'lua',
+              'hcl', 'tf', 'graphql', 'toml', 'zig', 'dart');
+----
+0

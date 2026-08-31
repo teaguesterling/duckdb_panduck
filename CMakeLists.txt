@@ -29,6 +29,8 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/panduck_extension.cpp
     src/pandoc_ast_map.cpp
+    src/rtf_reader.cpp
+    src/supported_extensions.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

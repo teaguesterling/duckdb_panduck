@@ -43,6 +43,9 @@ SELECT panduck_pandoc_api_version();   -- pandoc-types AST version targeted: 1.2
 
 -- The full pandoc-types 1.23 vocabulary and its duck_block correspondence
 SELECT * FROM panduck_pandoc_ast_map();
+
+-- Which document formats panduck reads, for a dispatcher to route on
+SELECT * FROM panduck_supported_extensions();
 ```
 
 ```
@@ -63,6 +66,50 @@ SELECT * FROM panduck_pandoc_ast_map();
 | `mapped` | round-trip implemented in `duck_block_utils` today |
 | `planned` | named in the spec, not implemented on either side yet |
 | `dropped` | intentionally yields no element (`Null` only) |
+
+## Reader dispatch
+
+`panduck_supported_extensions()` is panduck's self-description as a reader — the same
+shape `sitting_duck` already exposes as `ast_supported_languages()`, so a dispatcher can
+`UNION` them and *derive* which extension reads which file rather than maintaining a
+central table that drifts:
+
+```
+┌───────────┬─────────────────┬────────┬─────────┬──────────────────────────────────┐
+│  format   │   extensions    │ reader │ status  │              notes               │
+├───────────┼─────────────────┼────────┼─────────┼──────────────────────────────────┤
+│ docx      │ [docx]          │ NULL   │ planned │ roadmap phase 2: ZIP + word/…    │
+│ epub      │ [epub]          │ NULL   │ planned │ roadmap phase 3: container.xml…  │
+│ latex     │ [tex, latex]    │ NULL   │ planned │ roadmap phase 4: streaming tok…  │
+└───────────┴─────────────────┴────────┴─────────┴──────────────────────────────────┘
+```
+
+`extensions` are lowercase with **no leading dot**, matching `ast_supported_languages()`
+exactly — a consumer that normalises one registry differently from another has
+reintroduced the per-reader knowledge the table exists to remove.
+
+`status` is `implemented` (panduck reads this today; route here) or `planned` (panduck
+intends to; **do not** route here). Panduck ships no readers yet, so every row is
+`planned` and `reader` is `NULL` — a dispatcher gets nothing routable, which is the
+honest answer.
+
+### What panduck does *not* claim
+
+Pandoc reads markdown and HTML, and panduck could. It does not list them, because this
+table is a *self-description*, not a routing table: a row here is panduck asserting "I
+read this", which a dispatcher is entitled to act on. `duckdb_markdown` and
+`duckdb_webbed` already read those formats into `duck_block`, and two registries claiming
+`.md` is exactly the ambiguity derived dispatch is supposed to eliminate.
+
+The alternative — a `delegated_to = 'markdown'` row — would be panduck holding
+second-hand knowledge about another extension's formats, with no test here that could
+catch it going stale. That is the failure mode being fixed, not a fix for it. Absence is
+unambiguous: `planned` means "not yet, but mine", and no row at all means "not mine".
+
+Delegation is a *dispatcher* concern, not a registry one. When panduck takes over
+path → blocks routing (see Phase 6), `panduck_read('x.md')` will hand off to
+`duckdb_markdown` by reading that extension's own self-description — not by hardcoding a
+claim about it here.
 
 ## Pandoc AST alignment
 
@@ -134,11 +181,24 @@ Run the tests with `make test`, and the pandoc conformance check with
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Scaffolding, vcpkg dependency chain, `duck_block` contract, Pandoc AST alignment harness | **done** |
-| 2 | `read_docx_blocks()` — ZIP + `word/document.xml` via miniz + pugixml | not started |
+| 1 | Scaffolding, vcpkg dependency chain, `duck_block` contract, Pandoc AST alignment harness, `panduck_supported_extensions()` | **done** |
+| 2 | `read_docx_blocks()`, `read_odt_blocks()` — ZIP + `word/document.xml` via miniz + pugixml | not started |
 | 3 | `read_epub_blocks()` — `container.xml` → `.opf` spine, `toc.ncx` / `nav.xhtml` | not started |
 | 4 | `read_latex_blocks()` — streaming tokenizer for macros, environments, math | not started |
-| 5 | `read_rst_blocks()`, and the `doc_to_blocks()` hook in `duck_block_utils` | not started |
+| 5 | `read_rst_blocks()`, `read_org_blocks()`, `read_mediawiki_blocks()` | not started |
+| 6 | `panduck_read(path)` — panduck takes ownership of path → blocks dispatch | not started |
+
+> **Phase 5/6 changed direction (2026-08-31).** Phase 5 previously read "`read_rst_blocks()`,
+> and the `doc_to_blocks()` hook in `duck_block_utils`" — panduck plugging into a registry
+> owned by `duck_block_utils`. That is reversed. A library defining a vocabulary should be
+> a leaf dependency, not something that knows about every reader extension that exists;
+> path → blocks routing is pandoc's identity, so **panduck owns it**, as `panduck_read(path)`
+> in Phase 6. `duck_block_utils` keeps `doc_to_blocks` meanwhile as an explicitly temporary
+> seam — moving it today would mean `LOAD panduck` to read a `.md` file — but rebuilds it to
+> *derive* its mapping from self-describing readers, which is what
+> `panduck_supported_extensions()` above is for. Once dispatch is derived, relocating it is
+> near-free. See `duck_block_utils`
+> `docs/superpowers/specs/2026-08-31-pandoc-gaps-and-reader-dispatch-design.md`.
 
 ## Related
 

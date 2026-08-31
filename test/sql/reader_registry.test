@@ -138,6 +138,26 @@ SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf', format :
 ----
 is a data format
 
+# A format the registry CLAIMS but dispatch has no branch for must fail loudly. Guarded
+# on format_for IS NULL rather than a bare ELSE: a catch-all would route it to the code
+# fallback and return a parse tree instead of a document -- silently wrong rather than
+# loudly missing. .yaml behaved exactly that way until it got a branch.
+statement error
+SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf', format := 'epub');
+----
+has no branch for it
+
+# Every format the registry claims for a document must be dispatchable. This is the
+# general form of the assertion above: it fails when a format is added to the registry
+# without a branch, rather than waiting for someone to read such a file.
+query I
+SELECT count(*) FROM panduck_reader_registry()
+WHERE kind = 'doc'
+  AND format NOT IN ('markdown', 'html', 'pdf', 'pandoc_ast', 'toml', 'yaml', 'code')
+  AND function IS NULL;
+----
+0
+
 # ---------------------------------------------------------------------------
 # Runtime registration. A user reader REPLACES the entry for an extension rather than
 # competing with it, so one-reader-per-extension survives customisation.

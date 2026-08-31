@@ -395,6 +395,14 @@ SELECT * FROM query(
                       '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
                  ELSE error('panduck: toml needs the toml extension') END
 
+        WHEN panduck_resolved_format(src, format) = 'yaml'
+            THEN CASE WHEN panduck_ensure_extension('yaml')
+                 THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
+                      'yaml_to_json(content::yaml)::VARCHAR AS content, NULL::INTEGER AS level, ' ||
+                      '''json'' AS encoding, MAP {''source_type'': ''yaml''} AS attributes, ' ||
+                      '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
+                 ELSE error('panduck: yaml needs the yaml extension') END
+
         -- Anything unclaimed falls through to source code. The exclusion rule is BY
         -- CONSTRUCTION: .md is in the registry, so it can never arrive here.
         -- sitting_duck's ast_to_blocks is a TABLE MACRO emitting (file_path,
@@ -421,11 +429,24 @@ SELECT * FROM query(
         -- fails and the second succeeds. Eagerly loading sitting_duck whenever panduck
         -- loads would fix it at the cost of pulling tree-sitter into every .rtf read.
         -- LOAD sitting_duck once, or call twice.
-        ELSE CASE WHEN panduck_ensure_extension('sitting_duck')
+        -- Guarded on format_for IS NULL rather than a bare ELSE. A catch-all would
+        -- swallow any format the registry CLAIMS but this CASE has no branch for,
+        -- routing it to sitting_duck and returning a parse tree instead of a document --
+        -- silently wrong rather than loudly missing. That is precisely how doc_search
+        -- silently degraded md/html/blocks/pandoc to text in duck_block_utils, and it is
+        -- how .yaml behaved here until this branch existed.
+        WHEN (panduck_format_for(src) IS NULL AND nullif(format, 'auto') IS NULL)
+             OR panduck_resolved_format(src, format) = 'code'
+            THEN CASE WHEN panduck_ensure_extension('sitting_duck')
              THEN 'SELECT ' || panduck_block_cols() ||
                   ' FROM (SELECT block AS b FROM ast_to_blocks(' || panduck_quote(src) || '))'
              ELSE error('panduck: no reader for ' || src ||
                         ' and sitting_duck (the fallback) is not installed') END
+
+        ELSE error('panduck: ' || src || ' resolves to format ''' ||
+                   panduck_resolved_format(src, format) ||
+                   ''' but read_panduck_doc has no branch for it -- the registry claims ' ||
+                   'the format and dispatch does not handle it. This is a panduck bug.')
     END
 )
 )SQL"};

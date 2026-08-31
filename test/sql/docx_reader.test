@@ -1,0 +1,131 @@
+# name: test/sql/docx_reader.test
+# description: read_docx_blocks() over DOCX produced by two different real writers
+# group: [sql]
+
+#
+# The fixtures mark headings by MUTUALLY EXCLUSIVE mechanisms, measured:
+#
+#                     w:pStyle "Heading*"      w:outlineLvl
+#   pandoc            Heading1, Heading2       none
+#   LibreOffice       none (only "Normal")     0, 1
+#
+# A reader supporting one loses every heading from the other. This is the same split RTF
+# has, with the writers on OPPOSITE sides -- pandoc is style-based here and outline-based
+# in RTF, LibreOffice the reverse. Both paths are asserted independently.
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# Mechanism 1: w:pStyle resolved through word/styles.xml (pandoc)
+# ---------------------------------------------------------------------------
+query II
+SELECT content, attributes['heading_level'][1] AS lvl
+FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	1
+Heading Two	2
+
+# ---------------------------------------------------------------------------
+# Mechanism 2: w:outlineLvl, with no heading pStyle anywhere (LibreOffice)
+# ---------------------------------------------------------------------------
+query II
+SELECT content, attributes['heading_level'][1] AS lvl
+FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	1
+Heading Two	2
+
+# Both writers reduce to the same block skeleton. Content differs slightly because the
+# source documents differ -- LibreOffice's RTF->DOCX conversion kept a literal bullet
+# character -- so this compares STRUCTURE, which is the part that must agree.
+query I
+SELECT count(*) FROM (
+  SELECT element_type, kind FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+  EXCEPT
+  SELECT element_type, kind FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+);
+----
+0
+
+# ---------------------------------------------------------------------------
+# Inline runs become structured children; the block's own content is NULL.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, trim(content) FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+bold	bold
+italic	italic
+strikethrough	strike
+
+# A heading always flattens its text into content even though writers bold it: the bold
+# belongs to the heading style, and a NULL here would empty any table of contents built
+# from `content`.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE element_type = 'heading' AND content IS NULL;
+----
+0
+
+# ---------------------------------------------------------------------------
+# Unicode survives the ZIP + XML path.
+# ---------------------------------------------------------------------------
+query II
+SELECT length(content) < strlen(content), contains(content, 'café')
+FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx') WHERE content LIKE 'Unicode:%';
+----
+true	true
+
+# ---------------------------------------------------------------------------
+# Row shape is the canonical duck_block schema, so read_panduck_doc's flat branch can
+# SELECT * it through. 'value' is allowed ahead of duck_block_utils implementing it.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding <> 'text';
+----
+0
+
+# POSITIVE COMPANION. Every count-violations-expecting-zero guard above is satisfied by
+# an empty document, so assert there was something to guard. Written this way from the
+# start rather than retrofitted, which is how the RTF suite acquired it.
+query I
+SELECT count(*) > 10 FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx');
+----
+true
+
+# ---------------------------------------------------------------------------
+# The dispatcher is indistinguishable from the reader, for BOTH fixtures. Symmetric,
+# because a one-directional EXCEPT would miss rows the dispatcher drops.
+# ---------------------------------------------------------------------------
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/pandoc_pstyle.docx'))
+                       EXCEPT (SELECT * FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/pandoc_pstyle.docx'))));
+----
+0
+
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/libreoffice_outlinelvl.docx'))
+                       EXCEPT (SELECT * FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/libreoffice_outlinelvl.docx'))));
+----
+0
+
+# ---------------------------------------------------------------------------
+# Errors name what is wrong. A ZIP that is not a DOCX is a different failure from a file
+# that is not a ZIP, and saying which beats returning zero rows.
+# ---------------------------------------------------------------------------
+statement error
+SELECT * FROM read_docx_blocks('test/fixtures/pandoc_outlinelevel.rtf');
+----
+not a readable ZIP archive
+
+statement error
+SELECT * FROM read_docx_blocks('test/fixtures/does_not_exist.docx');
+----
+not a readable ZIP archive

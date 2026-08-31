@@ -91,6 +91,23 @@ RTF_LISTS = (
     "at all -- panduck is the more faithful reader here, not the divergent one.",
 )
 
+DOCX_SCOPE = (
+    NOT_IMPLEMENTED,
+    "panduck reads neither lists nor blockquotes yet, so pandoc's list_item and "
+    "blockquote markers have no counterpart and every later position shifts. Text agrees "
+    "exactly, so nothing is LOST -- the structure around it is not built yet. Tracked in "
+    "the registry notes.",
+)
+
+DOCX_LO = (
+    REFERENCE_WRONG,
+    "two causes, and the dominant one is pandoc's. (1) panduck reads w:outlineLvl and "
+    "reports 'Heading One' as heading/1; pandoc ignores outlineLvl entirely and emits "
+    "Para[Strong] -- its raw JSON for this file is all Para, no Header, so it detects NO "
+    "headings in a LibreOffice DOCX. panduck is the more faithful reader, exactly as with "
+    "LibreOffice RTF. (2) panduck does not read blockquotes yet, which is panduck's gap.",
+)
+
 CASES = [
     Case(
         "test/fixtures/pandoc_outlinelevel.rtf",
@@ -98,6 +115,20 @@ CASES = [
         "read_rtf_blocks",
         expect={"text": EMDASH, "marked": EMDASH},  # skeleton must agree exactly
         note="pandoc-generated RTF: headings via \\outlinelevel",
+    ),
+    Case(
+        "test/fixtures/pandoc_pstyle.docx",
+        "docx",
+        "read_docx_blocks",
+        expect={"skeleton": DOCX_SCOPE, "marked": DOCX_SCOPE},  # text must AGREE
+        note="pandoc-generated DOCX: headings via w:pStyle",
+    ),
+    Case(
+        "test/fixtures/libreoffice_outlinelvl.docx",
+        "docx",
+        "read_docx_blocks",
+        expect={"skeleton": DOCX_LO, "marked": DOCX_LO},  # text must AGREE
+        note="LibreOffice-generated DOCX: headings via w:outlineLvl",
     ),
     Case(
         "test/fixtures/libreoffice_stylesheet.rtf",

@@ -20,11 +20,19 @@ SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ex
 .rtf	rtf	panduck	read_rtf_blocks
 
 # A planned-but-unimplemented format must NOT be routable: dispatch would name a function
-# that does not exist.
+# that does not exist. .epub is the current example -- .docx was, until read_docx_blocks
+# landed and this assertion correctly went red demanding promotion.
 query I
-SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.docx';
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.epub';
 ----
 0
+
+# ...and an implemented one IS routable, derived from the self-description with no edit
+# to reader_registry.cpp. read_panduck_doc contains no branch naming docx.
+query III
+SELECT ext, reader_ext, function FROM panduck_reader_registry() WHERE ext = '.docx';
+----
+.docx	panduck	read_docx_blocks
 
 # THE DRIFT TEST. Holds by construction here -- Register() replaces rather than appends --
 # but asserted because "by construction" is a property of today's implementation.

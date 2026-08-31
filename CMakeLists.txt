@@ -27,6 +27,7 @@ find_package(miniz CONFIG REQUIRED)
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
+    src/docx_reader.cpp
     src/panduck_extension.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp

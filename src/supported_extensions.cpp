@@ -32,7 +32,10 @@ static const char *const EXT_RTF[] = {"rtf", nullptr};
 // doc_default_extension_mappings(), and panduck has no test that could catch it going
 // stale here either.
 const FormatReader FORMATS[] = {
-    {"docx", EXT_DOCX, nullptr, STATUS_PLANNED, "roadmap phase 2: ZIP + word/document.xml via miniz + pugixml"},
+    {"docx", EXT_DOCX, "read_docx_blocks", STATUS_IMPLEMENTED,
+     "ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a "
+     "w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. "
+     "Tables, lists, images and footnotes are not read yet"},
     {"odt", EXT_ODT, nullptr, STATUS_PLANNED, "roadmap phase 2: same container/XML machinery as docx"},
     {"epub", EXT_EPUB, nullptr, STATUS_PLANNED, "roadmap phase 3: container.xml -> .opf spine, toc.ncx / nav.xhtml"},
     {"latex", EXT_LATEX, nullptr, STATUS_PLANNED,

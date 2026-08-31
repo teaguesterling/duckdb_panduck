@@ -2,6 +2,7 @@
 
 #include "panduck_extension.hpp"
 #include "duck_block_types.hpp"
+#include "docx_reader.hpp"
 #include "pandoc_ast_map.hpp"
 #include "reader_registry.hpp"
 #include "rtf_reader.hpp"
@@ -58,6 +59,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	RegisterPandocAstMapFunction(loader);
 	RegisterRtfReaderFunction(loader);
+	RegisterDocxReaderFunction(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

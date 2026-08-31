@@ -15,7 +15,7 @@ require panduck
 query IIIII
 SELECT format, extensions, reader, status, notes FROM panduck_supported_extensions() LIMIT 1;
 ----
-docx	[docx]	NULL	planned	roadmap phase 2: ZIP + word/document.xml via miniz + pugixml
+docx	[docx]	read_docx_blocks	implemented	ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. Tables, lists, images and footnotes are not read yet
 
 # Every row is one of the two defined states.
 query I
@@ -40,6 +40,7 @@ query II
 SELECT format, reader FROM panduck_supported_extensions()
 WHERE status = 'implemented' ORDER BY format;
 ----
+docx	read_docx_blocks
 rtf	read_rtf_blocks
 
 # reader is NULL exactly when the format is not implemented, and never otherwise. A

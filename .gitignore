@@ -9,3 +9,6 @@ test/python/__pycache__/
 
 # clangd index
 .cache/
+
+# python bytecode (roundtrip harness)
+__pycache__/

@@ -29,6 +29,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/panduck_extension.cpp
     src/pandoc_ast_map.cpp
+    src/reader_registry.cpp
     src/rtf_reader.cpp
     src/supported_extensions.cpp
 )

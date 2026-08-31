@@ -105,9 +105,16 @@ WHERE content LIKE '%bkmkstart%' OR content LIKE '%heading-one%'
 # Row shape matches the duck_block struct, so a row casts straight to duck_block --
 # which is what duck_block_utils' doc_to_blocks dispatcher does.
 # ---------------------------------------------------------------------------
+# 'value' is included ahead of duck_block_utils implementing it, so panduck does not go
+# red -- and block a coordinated vocabulary change -- the moment a reader emits metadata.
+# duck_block_utils now ships db_block_kinds(); once panduck's suite can depend on it being
+# installed this should become
+#     WHERE NOT list_contains(db_block_kinds(), kind)
+# so the set has one source of truth instead of two. Hardcoding it here is the same defect
+# one repo over, and it is temporary for that reason.
 query I
 SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE kind NOT IN ('block', 'inline') OR encoding <> 'text';
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding <> 'text';
 ----
 0
 

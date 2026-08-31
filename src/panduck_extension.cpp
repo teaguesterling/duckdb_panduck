@@ -3,6 +3,7 @@
 #include "panduck_extension.hpp"
 #include "duck_block_types.hpp"
 #include "pandoc_ast_map.hpp"
+#include "reader_registry.hpp"
 #include "rtf_reader.hpp"
 #include "supported_extensions.hpp"
 
@@ -59,6 +60,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterRtfReaderFunction(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
+	RegisterReaderRegistry(loader);
 }
 
 void PanduckExtension::Load(ExtensionLoader &loader) {

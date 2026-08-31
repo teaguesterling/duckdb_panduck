@@ -1,0 +1,158 @@
+# name: test/sql/reader_registry.test
+# description: derived reader dispatch — one reader per extension, no drift
+# group: [sql]
+
+#
+# Everything here runs on panduck alone. Assertions that would need markdown, toml or
+# sitting_duck installed are deliberately absent rather than gated with `require`, which
+# would skip the whole file and take these with it.
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# The registry is DERIVED, not restated. .rtf appears because
+# panduck_supported_extensions() says rtf is implemented and names read_rtf_blocks --
+# nothing in reader_registry.cpp mentions rtf.
+# ---------------------------------------------------------------------------
+query IIII
+SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ext = '.rtf';
+----
+.rtf	rtf	panduck	read_rtf_blocks
+
+# A planned-but-unimplemented format must NOT be routable: dispatch would name a function
+# that does not exist.
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.docx';
+----
+0
+
+# THE DRIFT TEST. Holds by construction here -- Register() replaces rather than appends --
+# but asserted because "by construction" is a property of today's implementation.
+query I
+SELECT count(*) FROM (SELECT ext FROM panduck_reader_registry() GROUP BY ext HAVING count(*) > 1);
+----
+0
+
+# Every registered entry names a reader extension and a kind.
+query I
+SELECT count(*) FROM panduck_reader_registry()
+WHERE reader_ext IS NULL OR reader_ext = '' OR kind NOT IN ('doc', 'table');
+----
+0
+
+# Extensions are lowercase and dot-prefixed, matching sitting_duck's convention so the
+# two registries union without per-registry normalisation.
+query I
+SELECT count(*) FROM panduck_reader_registry()
+WHERE ext <> lower(ext) OR NOT starts_with(ext, '.') OR length(ext) < 2;
+----
+0
+
+# ---------------------------------------------------------------------------
+# Lookups. Pure string work -- no I/O, so these answer for files that do not exist.
+# ---------------------------------------------------------------------------
+query III
+SELECT panduck_format_for('a.rtf'), panduck_format_for('a.csv'), panduck_format_for('a.md');
+----
+rtf	data	markdown
+
+# Unclaimed extensions are NULL, not a guess. If this answered 'code' for everything,
+# panduck_can_read would be true for every path and would mean nothing.
+query II
+SELECT panduck_format_for('a.nope') IS NULL, panduck_can_read('a.nope');
+----
+true	false
+
+# Case and directories do not matter.
+query II
+SELECT panduck_format_for('/tmp/DIR.d/A.RTF'), panduck_format_for('no_extension_at_all') IS NULL;
+----
+rtf	true
+
+# ---------------------------------------------------------------------------
+# THE IDENTITY. For a format panduck reads natively, the dispatcher must be
+# indistinguishable from the reader it dispatches to. Symmetric, because a
+# one-directional EXCEPT would miss rows the dispatcher DROPS.
+#
+# This is the check a DESCRIBE-style schema guard cannot make: a transposed column list
+# inside panduck_block_cols() keeps the canonical names and types while corrupting every
+# row, and only a value comparison sees it.
+# ---------------------------------------------------------------------------
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf'))
+                       EXCEPT (SELECT * FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf'))));
+----
+0
+
+# The dispatcher's schema is the canonical duck_block schema, so a row casts to duck_block
+# and `SELECT *` pass-through in the flat branches is safe.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL;
+----
+0
+
+# An explicit format overrides extension sniffing.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf', format := 'rtf');
+----
+true
+
+# The LIST-shaped companion returns the same document.
+query I
+SELECT len(panduck_read_blocks('test/fixtures/pandoc_outlinelevel.rtf'))
+     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf'));
+----
+true
+
+# ---------------------------------------------------------------------------
+# Documents vs data. A .csv has no document structure; refusing it by name beats
+# returning something shaped like a document that isn't one.
+# ---------------------------------------------------------------------------
+statement error
+SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf', format := 'data');
+----
+is a data format
+
+# ---------------------------------------------------------------------------
+# Runtime registration. A user reader REPLACES the entry for an extension rather than
+# competing with it, so one-reader-per-extension survives customisation.
+# ---------------------------------------------------------------------------
+statement ok
+CALL panduck_register_doc_reader('panduck', 'read_rtf_blocks', ['.fixture', 'DOTLESS']);
+
+# Both spellings normalise: dot-prefixed and bare, upper and lower.
+query II
+SELECT ext, function FROM panduck_reader_registry() WHERE source = 'user' ORDER BY ext;
+----
+.dotless	read_rtf_blocks
+.fixture	read_rtf_blocks
+
+# Overriding a builtin REPLACES it -- still exactly one row for the extension, now
+# owned by the user entry rather than competing with the builtin.
+statement ok
+CALL panduck_register_doc_reader('panduck', 'read_rtf_blocks', ['.rtf']);
+
+query III
+SELECT count(*), max(source), max(reader_ext) FROM panduck_reader_registry() WHERE ext = '.rtf';
+----
+1	user	panduck
+
+# ...and dispatch goes through the user entry, producing the same document. This is the
+# generic branch: the registry named a function, so it was called, with no branch in
+# read_panduck_doc mentioning rtf at all.
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf'))
+                       EXCEPT (SELECT * FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf'))));
+----
+0
+
+# Registering nothing is an error rather than a silent no-op.
+statement error
+CALL panduck_register_doc_reader('x', 'y', []::VARCHAR[]);
+----
+at least one file extension

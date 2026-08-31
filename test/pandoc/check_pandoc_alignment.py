@@ -31,13 +31,30 @@ FIXTURE = REPO / "test" / "pandoc" / "fixtures" / "kitchen_sink.md"
 # CitationMode. They appear as {"t": ...} in the JSON but are not document elements, so
 # they are outside this mapping's scope.
 AUXILIARY = {
-    "AlignDefault", "AlignLeft", "AlignRight", "AlignCenter",
-    "ColWidth", "ColWidthDefault",
-    "DefaultStyle", "Example", "Decimal", "LowerRoman", "UpperRoman", "LowerAlpha", "UpperAlpha",
-    "DefaultDelim", "Period", "OneParen", "TwoParens",
-    "SingleQuote", "DoubleQuote",
-    "DisplayMath", "InlineMath",
-    "AuthorInText", "SuppressAuthor", "NormalCitation",
+    "AlignDefault",
+    "AlignLeft",
+    "AlignRight",
+    "AlignCenter",
+    "ColWidth",
+    "ColWidthDefault",
+    "DefaultStyle",
+    "Example",
+    "Decimal",
+    "LowerRoman",
+    "UpperRoman",
+    "LowerAlpha",
+    "UpperAlpha",
+    "DefaultDelim",
+    "Period",
+    "OneParen",
+    "TwoParens",
+    "SingleQuote",
+    "DoubleQuote",
+    "DisplayMath",
+    "InlineMath",
+    "AuthorInText",
+    "SuppressAuthor",
+    "NormalCitation",
 }
 
 # Constructors pandoc emits that the duck_block round-trip does not yet implement.
@@ -58,9 +75,7 @@ def fail(msg):
 def parse_cpp_table():
     """Extract (pandoc_type -> (kind, element_type, status)) from the C++ table."""
     text = MAP_CPP.read_text()
-    entry = re.compile(
-        r'\{"([A-Za-z]+)",\s*"(block|inline)",\s*(?:"([^"]*)"|(nullptr)),\s*STATUS_([A-Z]+)'
-    )
+    entry = re.compile(r'\{"([A-Za-z]+)",\s*"(block|inline)",\s*(?:"([^"]*)"|(nullptr)),\s*STATUS_([A-Z]+)')
     table = {}
     for m in entry.finditer(text):
         name, kind, element_type, is_null, status = m.groups()
@@ -108,7 +123,8 @@ def main():
 
     raw = subprocess.run(
         [pandoc, "-f", "markdown", "-t", "json", str(FIXTURE)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if raw.returncode != 0:
         return fail(f"pandoc failed to convert the fixture:\n{raw.stderr}")
@@ -133,10 +149,8 @@ def main():
     emitted = {c for c in collect_constructors(ast) if c not in AUXILIARY}
     unmapped = sorted(emitted - set(table))
     if unmapped:
-        errors += fail(
-            f"pandoc emits {len(unmapped)} constructor(s) absent from src/pandoc_ast_map.cpp: "
-            f"{', '.join(unmapped)}"
-        )
+        missing = ", ".join(unmapped)
+        errors += fail(f"pandoc emits {len(unmapped)} constructor(s) absent from src/pandoc_ast_map.cpp: {missing}")
     else:
         print(f"  all {len(emitted)} emitted constructors are present in the mapping")
 

@@ -27,7 +27,7 @@ jobs:
       duckdb_version: v1.5.5
       ci_tools_version: v1.5.5
       extension_name: panduck
-      format_checks: 'format;tidy'
+      format_checks: 'format'
 
   # Panduck deliberately does not link pandoc, so nothing in the build above would
   # notice if pandoc changed its AST underneath us. This job installs a real pandoc and

@@ -1,6 +1,7 @@
 # name: test/sql/pandoc_ast_map.test
 # description: panduck_pandoc_ast_map() exposes the full pandoc-types 1.23 vocabulary
 # group: [sql]
+
 #
 # This asserts the BUILT extension agrees with the mapping table in
 # src/pandoc_ast_map.cpp. The other half of the contract -- that the table agrees with a

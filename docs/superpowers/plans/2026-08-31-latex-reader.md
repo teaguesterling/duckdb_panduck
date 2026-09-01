@@ -712,17 +712,21 @@ bold	bold
 italic	italic
 strikethrough	strike
 
-# NESTING IS EMITTED GENUINELY. \textbf{\emph{x}} is a tree in the source and stays one:
-# bold owns italic owns the text. Flattening to "strongest format wins" -- which every
-# other panduck reader still does, and rtf_reader.cpp:77 documents as a limitation --
-# would discard the one thing LaTeX states unambiguously.
+# NESTING IS EMITTED GENUINELY. \textbf{\emph{x}} is a tree in the source and stays one.
+# Flattening to "strongest format wins" -- which every other panduck reader still does, and
+# rtf_reader.cpp:77 documents as a limitation -- discards the one thing LaTeX states
+# unambiguously. Before this task the inner \emph was dropped outright, yielding `bold x`.
+#
+# TWO ROWS, NOT THREE. bold's only child is an ITALIC, not a text run, so bold nests and
+# carries no content. italic's only child IS a text run, so italic CARRIES it rather than
+# growing a `text` child. That is duck_block's content rule -- populated iff the only child
+# is plain text -- applied at each level independently.
 query III
 SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{\emph{x}}')
 WHERE kind = 'inline' ORDER BY element_order;
 ----
 bold	NULL	2
-italic	NULL	3
-text	x	4
+italic	x	3
 
 # ...AND THE SIMPLE CASE STAYS FLAT. \textbf{x} is ONE run, byte-identical to what the
 # other four readers emit. Asserting only the nested case would pass against a reader that
@@ -788,10 +792,8 @@ FROM read_latex_blocks('test/fixtures/pandoc.tex')
 WHERE element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
 ----
 list	NULL	1	bullet	false
-list_item	NULL	2	NULL	NULL
-plain	bullet one	3	NULL	NULL
-list_item	NULL	2	NULL	NULL
-plain	bullet two	3	NULL	NULL
+list_item	bullet one	2	NULL	NULL
+list_item	bullet two	2	NULL	NULL
 
 # A blockquote owns its paragraph one level deeper and carries no content itself.
 query III
@@ -843,7 +845,25 @@ Expected: FAIL — environments are not handled.
 - **Unknown environment → TRANSPARENT.** Most wrap prose; dropping them loses real content.
 - **Unknown macro → DROPPED** with its arguments. Most are presentational.
 
-`\item` closes any open item and opens a `list_item` at `list_level+1`. Its body parses at `list_level+2`. A body that is a **bare run** emits `plain`; a body containing a genuine paragraph emits `paragraph`. **Do not decide this from whether the item has block children** — an item can hold a nested list and still be tight; the distinction is a property of the run.
+`\item` closes any open item and opens a `list_item` at `list_level+1`. Its body parses at `list_level+2`.
+
+**What the item's own run becomes, under duck_block 6.0:**
+
+| the item holds | emit |
+|---|---|
+| ONE bare text run and nothing else | the text as the `list_item`'s own **`content`** — no child |
+| a genuine `\par`-separated paragraph | a `paragraph` child |
+| a bare run AND a block sibling (e.g. a nested list) | a `plain` child, plus that sibling |
+
+This is v1's content rule — `content` is populated **iff** the container's only child is a
+text run — and a lone bare run IS that single text child. `plain` is for a run with
+nowhere else to live: beside a block sibling, or at the top level where the document root
+has no content field.
+
+**Do not decide this from whether the item has block children.** An item can hold a nested
+list and still be tight, which is why the third row exists and differs from the second.
+The tight/loose distinction needs no attribute: it falls out of the content rule, because
+`\item text` gives the item its text while `\item \par text` gives it a paragraph.
 
 `verbatim`/`lstlisting` take bytes raw to the matching `\end`, with no tokenizing, and emit `code`.
 

@@ -41,6 +41,7 @@ SELECT format, reader FROM panduck_supported_extensions()
 WHERE status = 'implemented' ORDER BY format;
 ----
 docx	read_docx_blocks
+odt	read_odt_blocks
 rtf	read_rtf_blocks
 
 # reader is NULL exactly when the format is not implemented, and never otherwise. A

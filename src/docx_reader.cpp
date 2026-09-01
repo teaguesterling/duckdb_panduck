@@ -1,36 +1,18 @@
 #include "docx_reader.hpp"
 
 #include "duck_block_types.hpp"
+#include "zip_container.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <cctype>
 #include <map>
-#include <miniz.h>
 #include <pugixml.hpp>
 
 namespace duckdb {
 namespace docx {
 
 namespace {
-
-//! Read one member of the ZIP into a string. Returns false when the member is absent,
-//! which is a normal condition for styles.xml (a minimal DOCX may omit it) and a fatal
-//! one for document.xml -- the caller decides which.
-bool ReadZipMember(mz_zip_archive &zip, const char *name, std::string &out) {
-	int index = mz_zip_reader_locate_file(&zip, name, nullptr, 0);
-	if (index < 0) {
-		return false;
-	}
-	size_t size = 0;
-	void *data = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(index), &size, 0);
-	if (!data) {
-		return false;
-	}
-	out.assign(static_cast<char *>(data), size);
-	mz_free(data);
-	return true;
-}
 
 //! styleId -> style name, from word/styles.xml. Word writes localized names ("Overskrift
 //! 1"), so the id is checked too; between them the common writers are covered.
@@ -149,21 +131,10 @@ int ParagraphHeadingLevel(const pugi::xml_node &ppr, const std::map<std::string,
 } // namespace
 
 std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
-	mz_zip_archive zip;
-	memset(&zip, 0, sizeof(zip));
-	if (!mz_zip_reader_init_file(&zip, path.c_str(), 0)) {
-		throw IOException("read_docx_blocks: not a readable ZIP archive: %s", path);
-	}
-
-	std::string document_xml, styles_xml;
-	bool have_document = ReadZipMember(zip, "word/document.xml", document_xml);
-	ReadZipMember(zip, "word/styles.xml", styles_xml); // optional
-	mz_zip_reader_end(&zip);
-
-	if (!have_document) {
-		throw InvalidInputException("read_docx_blocks: %s is a ZIP but has no word/document.xml, so it is not a DOCX",
-		                            path);
-	}
+	ZipContainer zip(path, "read_docx_blocks");
+	auto document_xml = zip.ReadRequired("word/document.xml");
+	std::string styles_xml;
+	zip.Read("word/styles.xml", styles_xml); // optional: a minimal DOCX may omit it
 
 	auto styles = ParseStyleNames(styles_xml);
 

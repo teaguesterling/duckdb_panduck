@@ -29,10 +29,12 @@ include_directories(src/include duck_block_utils/src/include)
 set(EXTENSION_SOURCES
     src/docx_reader.cpp
     src/panduck_extension.cpp
+    src/odt_reader.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp
     src/rtf_reader.cpp
     src/supported_extensions.cpp
+    src/zip_container.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

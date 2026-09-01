@@ -36,7 +36,10 @@ const FormatReader FORMATS[] = {
      "ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a "
      "w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. "
      "Tables, lists, images and footnotes are not read yet"},
-    {"odt", EXT_ODT, nullptr, STATUS_PLANNED, "roadmap phase 2: same container/XML machinery as docx"},
+    {"odt", EXT_ODT, "read_odt_blocks", STATUS_IMPLEMENTED,
+     "ZIP via miniz + content.xml via pugixml, sharing ZipContainer with docx. ODF has a "
+     "dedicated text:h element with text:outline-level, so unlike RTF and DOCX there is no "
+     "heading ambiguity. Lists, tables, images and footnotes are not read yet"},
     {"epub", EXT_EPUB, nullptr, STATUS_PLANNED, "roadmap phase 3: container.xml -> .opf spine, toc.ncx / nav.xhtml"},
     {"latex", EXT_LATEX, nullptr, STATUS_PLANNED,
      "roadmap phase 4: streaming tokenizer for macros, environments, math"},

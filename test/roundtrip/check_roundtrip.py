@@ -108,6 +108,16 @@ DOCX_LO = (
     "LibreOffice RTF. (2) panduck does not read blockquotes yet, which is panduck's gap.",
 )
 
+ODT_SCOPE = (
+    NOT_IMPLEMENTED,
+    "panduck flattens list items to paragraphs and does not read blockquotes, so pandoc's "
+    "list_item and blockquote markers have no counterpart and later positions shift. TEXT "
+    "AGREES EXACTLY on both fixtures -- nothing is lost, the structure around it is not "
+    "modelled. That distinction is why this is not-implemented rather than a defect: an "
+    "earlier version skipped text:list wholesale and lost the words themselves, which the "
+    "text level caught.",
+)
+
 CASES = [
     Case(
         "test/fixtures/pandoc_outlinelevel.rtf",
@@ -129,6 +139,20 @@ CASES = [
         "read_docx_blocks",
         expect={"skeleton": DOCX_LO, "marked": DOCX_LO},  # text must AGREE
         note="LibreOffice-generated DOCX: headings via w:outlineLvl",
+    ),
+    Case(
+        "test/fixtures/pandoc.odt",
+        "odt",
+        "read_odt_blocks",
+        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE},  # text must AGREE
+        note="pandoc-generated ODT",
+    ),
+    Case(
+        "test/fixtures/libreoffice.odt",
+        "odt",
+        "read_odt_blocks",
+        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE},  # text must AGREE
+        note="LibreOffice-generated ODT",
     ),
     Case(
         "test/fixtures/libreoffice_stylesheet.rtf",

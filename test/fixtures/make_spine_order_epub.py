@@ -10,7 +10,13 @@ real-world multi-directory book needs and a one-file book never exercises:
   * chapters are STORED in the archive in reverse of their reading order
   * the package document sits in its own directory, so manifest hrefs climb with ../
   * one chapter's filename contains a space, so its href is percent-encoded
-  * the stylesheet is linked from both chapters, resolved relative to each
+  * each chapter links a DIFFERENT stylesheet, and chapter two USES a class that only
+    chapter one's stylesheet defines -- so a leaked rule set is visible
+
+    Testing that with a REDEFINED class does not work, and the failed attempt is worth
+    recording: chapter two's own rule overwrites the leaked one, so the leak is masked and
+    the assertion passes either way. Scoping is only observable through a name the second
+    document uses and does NOT define.
 
 Regenerate with: python3 test/fixtures/make_spine_order_epub.py
 """
@@ -39,6 +45,7 @@ OPF = """<?xml version="1.0" encoding="UTF-8"?>
   </metadata>
   <manifest>
     <item id="css" href="../css/book.css" media-type="text/css"/>
+    <item id="css2" href="../css/second.css" media-type="text/css"/>
     <item id="c1" href="../text/ch1.xhtml" media-type="application/xhtml+xml"/>
     <item id="c2" href="../text/ch%202.xhtml" media-type="application/xhtml+xml"/>
     <item id="cover" href="../images/cover.png" media-type="image/png"/>
@@ -56,17 +63,28 @@ CSS = """
 .whisper { font-style: italic; }
 .gone, .also-gone { text-decoration: line-through; }
 .big { font-size: 24pt; font-weight: 700; }
+/* Defined HERE and used only in chapter two, which links a different sheet. */
+.only-in-book-css { font-weight: bold; }
 p.tight { margin: 0; }
 #not-a-class { font-weight: bold; }
 .a .b { font-weight: bold; }
 """
 
+# The SAME class name, meaning something else. Rules are gathered per content document, so
+# chapter two must not inherit chapter one's .shout. That holds by construction today --
+# the rule map is rebuilt per document and the cache is keyed by resolved path -- and "by
+# construction" is a property of today's implementation, which is why it is asserted.
+CSS2 = """
+.shout { font-style: italic; }
+"""  # note: NOT .only-in-book-css
+
 CHAPTER = """<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>%(title)s</title><link rel="stylesheet" type="text/css" href="../css/book.css"/></head>
+<head><title>%(title)s</title><link rel="stylesheet" type="text/css" href="../css/second.css"/></head>
 <body>
 <h1>%(title)s</h1>
-<p>%(body)s</p>
+<p><span class="shout">%(body)s</span></p>
+<p><span class="only-in-book-css">Chapter one cannot reach me.</span></p>
 </body>
 </html>
 """
@@ -101,6 +119,7 @@ def main():
         z.writestr("META-INF/container.xml", CONTAINER)
         z.writestr("OEBPS/pkg/book.opf", OPF)
         z.writestr("OEBPS/css/book.css", CSS)
+        z.writestr("OEBPS/css/second.css", CSS2)
         # REVERSED on purpose: chapter two is stored first, so reading the archive in
         # member order gets the book backwards.
         z.writestr("OEBPS/text/ch 2.xhtml", CH2)

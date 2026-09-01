@@ -144,6 +144,29 @@ strikethrough	struck
 bold	bold
 
 # ---------------------------------------------------------------------------
+# CSS RULES ARE PER CONTENT DOCUMENT. Chapter two links a different stylesheet and USES a
+# class only chapter one's sheet defines, so a shared rule map would report that run bold
+# where it must come back plain text.
+#
+# The first version of this assertion used a class BOTH chapters define, expecting a leak
+# to show as the wrong formatting -- and seeding chapter two with chapter one's rules did
+# not turn it red, because chapter two's own rule overwrites the leaked one and masks it.
+# Scoping is only observable through a name the second document uses and does NOT define.
+# A negative that cannot distinguish the two cases is not a negative.
+#
+# The third row is a PARAGRAPH, not a plain inline run: a block whose runs carry no
+# formatting flattens into content with no inline children at all, so a leak would change
+# the row's element_type from paragraph to bold rather than merely its formatting.
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('loud', 'Read me second, stored me first.', 'Chapter one cannot reach me.')
+ORDER BY element_order;
+----
+bold	loud
+italic	Read me second, stored me first.
+paragraph	Chapter one cannot reach me.
+
+# ---------------------------------------------------------------------------
 # <li>text</li> and <li><p>text</p></li> mean the same thing and are both legal, so the
 # item's text is read wherever the writer put it.
 # ---------------------------------------------------------------------------

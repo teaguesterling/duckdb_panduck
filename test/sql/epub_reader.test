@@ -37,10 +37,10 @@ Heading Two	2
 # the list_item or invented a paragraph the source never wrote.
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/pandoc.epub')
-WHERE element_type IN ('list', 'list_item', 'blockquote', 'div') ORDER BY element_order;
+WHERE element_type IN ('list', 'list_item', 'blockquote', 'div', 'section') ORDER BY element_order;
 ----
-div	NULL
-div	NULL
+section	NULL
+section	NULL
 list	NULL
 list_item	NULL
 list_item	NULL
@@ -52,10 +52,10 @@ blockquote	NULL
 # so the list and the quote genuinely sit three deep, and reading the file confirms it
 # rather than the reader inventing it:
 #
-#   section level1   -> div        1
+#   section level1   -> section    1
 #     h1             -> heading    2
 #     p              -> paragraph  2
-#     section level2 -> div        2
+#     section level2 -> section    2
 #       h2           -> heading    3
 #       ul           -> list       3
 #       blockquote   -> blockquote 3
@@ -66,7 +66,7 @@ query III
 SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/pandoc.epub')
 WHERE kind = 'block' AND element_order <= 2 ORDER BY element_order;
 ----
-div	NULL	1
+section	NULL	1
 heading	Heading One	2
 paragraph	NULL	2
 
@@ -399,4 +399,44 @@ ORDER BY element_order;
 list	NULL	2	ordered
 list_item	term	2	NULL
 list_item	definition	2	NULL
+
+# ---------------------------------------------------------------------------
+# <section> IS A `section`, NOT A `div`. duck_block has both and the distinction is a
+# statement about the document: HTML's own spec calls div "an element of last resort",
+# while `section` means the author marked semantic structure. Which kind lives in
+# attributes['role'] -- section, article, aside, nav, header, footer, main -- following the
+# heading+heading_level convention rather than minting a type per variant.
+#
+# Mapping <section> onto div asserted that the document had NO semantic sectioning when it
+# demonstrably did. That is the same defect class as <dl> in the <ul> branch: a placeholder
+# mapping used as though it were a real one, and invisible for the same reason -- the
+# output was structurally well-formed and merely untrue.
+query III
+SELECT element_type, attributes['role'], level
+FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type IN ('div', 'section') ORDER BY element_order;
+----
+section	section	1
+section	section	2
+
+# ---------------------------------------------------------------------------
+# A TABLE'S TEXT SURVIVES EVEN THOUGH ITS STRUCTURE CANNOT. duck_block has no structural
+# table -- `table` still carries an opaque JSON tuple, and table_row/table_cell do not
+# exist -- so panduck cannot represent the grid. It can still refuse to throw the words
+# away.
+#
+# <table> used to sit in the SKIPPED set beside <script> and <style>, so every cell's text
+# was discarded outright. That contradicted this reader's own rule, written a few hundred
+# lines up: losing structure is a gap, losing text is a bug. It was shipping the bug in
+# order to avoid a gap it had anyway.
+#
+# The cells come through as paragraphs, which is honestly wrong about shape and honestly
+# right about content. When a structural table lands upstream this becomes a real mapping;
+# until then the words are in the document rather than gone from it.
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('cell one', 'cell two') ORDER BY element_order;
+----
+paragraph	cell one
+paragraph	cell two
 

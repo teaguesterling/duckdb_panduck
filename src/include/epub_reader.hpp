@@ -56,6 +56,9 @@ struct EpubBlock {
 	//! carry start/number_style/number_delim -- emitted always, even at their defaults,
 	//! because that is what duck_block_utils' Pandoc reader does and matching the
 	//! stricter producer keeps one shape rather than two.
+	//! For a `section`: which kind of sectioning container the source marked, per the
+	//! duck_block role vocabulary. Empty for anything else.
+	std::string role;
 	std::string list_type;
 	std::string list_start, number_style, number_delim;
 	std::vector<EpubInline> inlines;

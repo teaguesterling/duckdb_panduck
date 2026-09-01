@@ -247,7 +247,14 @@ const std::set<std::string> TRANSPARENT = {"body", "article", "aside",  "header"
 //! Not read. `table` is skipped in every panduck reader alike -- modelling tables needs
 //! table/row/cell blocks, and doing it in one reader only would make the vocabulary mean
 //! different things per format.
-const std::set<std::string> SKIPPED = {"head", "script", "style", "template", "svg", "math", "table"};
+// NOTE WHAT IS *NOT* HERE. `table` was, alongside script and style, which meant every
+// cell's TEXT was discarded rather than its structure. duck_block still has no structural
+// table -- no table_row, no table_cell, and `table` itself carries an opaque JSON tuple --
+// so panduck cannot represent the grid either way. But it was shipping a bug (the words
+// are gone) in order to avoid a gap (the shape is unrepresented) that it had regardless.
+// Falling through to the transparent branch yields the cells as paragraphs: honestly wrong
+// about shape, honestly right about content, and reversible when a real table lands.
+const std::set<std::string> SKIPPED = {"head", "script", "style", "template", "svg", "math"};
 
 bool IsBlockTag(const std::string &tag) {
 	return BLOCK_LEAF.count(tag) || TRANSPARENT.count(tag) || SKIPPED.count(tag) || tag == "div" || tag == "section" ||
@@ -490,7 +497,19 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 		} else if (tag == "blockquote" || tag == "div" || tag == "section") {
 			bool structural = tag != "blockquote";
 			EpubBlock block;
-			block.element_type = tag == "blockquote" ? DuckBlockTypes::TYPE_BLOCKQUOTE : DuckBlockTypes::TYPE_DIV;
+			// <section> IS SEMANTIC AND <div> IS NOT, and duck_block distinguishes them:
+			// HTML's own spec calls div "an element of last resort", while `section` says
+			// the author marked structure. Mapping <section> onto div asserts the document
+			// had no semantic sectioning when it did -- a placeholder standing in for a
+			// real type, which is the same defect as <dl> wearing the <ul> branch.
+			// Which kind of section lives in attributes['role'], following the
+			// heading+heading_level convention rather than minting a type per variant.
+			block.element_type = tag == "blockquote" ? DuckBlockTypes::TYPE_BLOCKQUOTE
+			                     : tag == "section"  ? DuckBlockTypes::TYPE_SECTION
+			                                         : DuckBlockTypes::TYPE_DIV;
+			if (tag == "section") {
+				block.role = "section";
+			}
 			block.container = true;
 			block.level = depth;
 			auto before = out.size();
@@ -697,6 +716,9 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+		}
+		if (!block.role.empty()) {
+			row.attributes["role"] = block.role;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, deliberately. attributes['ordered'] is the CANONICAL name --

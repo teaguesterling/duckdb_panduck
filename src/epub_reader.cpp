@@ -604,6 +604,32 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				// kept, because writing one is an authorial act rather than a wrapper.
 				out.pop_back();
 			}
+		} else if (!std::string(child.attribute("epub:type").value()).empty() &&
+		           std::string(child.attribute("epub:type").value()).find("pagebreak") != std::string::npos) {
+			// EPUB 3 PRINT-EQUIVALENT PAGINATION. `<span epub:type="pagebreak" title="42"/>`
+			// is how a reflowable book records where the PRINT edition's page 42 began, and
+			// it is what citation and library workflows depend on -- "page 42 of the print
+			// edition" is unanswerable without it.
+			//
+			// The allowlist previously said no panduck source exposes page boundaries
+			// because "epub paginates by spine document". Half right, and the wrong half was
+			// doing the work: spine items are DOCUMENT boundaries -- chapters -- and
+			// correctly are not pages. This construct is a page and was being discarded,
+			// because the reader never read epub:type at all. No fixture contained one,
+			// which is why nothing noticed.
+			//
+			// The number comes from `title`, which is where EPUB 3 puts the label; `id` is
+			// an anchor target and often carries a prefix like "pg42", so it is a fallback
+			// rather than a peer.
+			std::string label = child.attribute("title").value();
+			if (label.empty()) {
+				label = child.attribute("id").value();
+			}
+			EpubBlock block;
+			block.element_type = DuckBlockTypes::TYPE_PAGE;
+			block.level = depth;
+			block.page_number = label;
+			out.push_back(std::move(block));
 		} else if (tag == "table") {
 			// SPEC 5.0: `table` carries the NATIVE schema {"headers": [...], "rows": [[...]]}
 			// in `content`, encoding='json'. It is the only element_type whose content is
@@ -961,6 +987,11 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		}
 		if (!block.key.empty()) {
 			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
+		}
+		if (!block.page_number.empty()) {
+			// The name duck_blocks_page_rows reads, so a page marker is queryable rather
+			// than merely present.
+			row.attributes["page_number"] = block.page_number;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, deliberately. attributes['ordered'] is the CANONICAL name --

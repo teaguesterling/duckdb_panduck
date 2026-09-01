@@ -49,6 +49,10 @@ struct EpubBlock {
 	//! `value` only: the field name, in attributes['key']. PANDOC'S namespace, not the
 	//! source's -- dc:creator is `author`.
 	std::string key;
+	//! `page_break` only: the PRINT edition's page label, from epub:type="pagebreak". EPUB
+	//! 3's way of recording where the print edition's page N began, which citation and
+	//! library workflows need and which this reader discarded until 2026-09-01.
+	std::string page_number;
 	std::string element_type; //!< heading, paragraph, list_item, blockquote, div, code, hr
 	std::string content;      //!< flattened text; empty when inlines are populated
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise

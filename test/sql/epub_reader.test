@@ -632,3 +632,34 @@ value	inlines	1	NULL
 inline	text	2	en
 value	inlines	1	NULL
 inline	text	2	Unknown Title
+
+# ---------------------------------------------------------------------------
+# EPUB 3 PRINT-EQUIVALENT PAGINATION. `<span epub:type="pagebreak" title="42"/>` records
+# where the PRINT edition's page 42 began, and it is what citation and library workflows
+# depend on -- "page 42 of the print edition" is unanswerable without it.
+#
+# panduck DISCARDED every one of these, because the reader never read epub:type at all, and
+# the allowlist recorded the wrong reason: "no panduck source exposes page boundaries,
+# epub paginates by spine document". Half right, and the wrong half was doing the work --
+# spine items are DOCUMENT boundaries (chapters) and correctly are not pages, while this
+# construct is a page and was being dropped.
+#
+# NO FIXTURE CONTAINED ONE, which is why nothing noticed. Coverage was real and the sample
+# was not, which is the same shape that hid a nesting defect in duckdb_markdown where every
+# list tested was flat.
+#
+# The number comes from `title`, where EPUB 3 puts the label; `id` is an anchor target and
+# often carries a prefix like "pg42", so it is a fallback rather than a peer.
+query III
+SELECT element_type, level, attributes['page_number']
+FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'page_break';
+----
+page_break	2	42
+
+# The marker must not swallow its neighbours: the paragraphs either side survive, which is
+# what distinguishes "read the marker" from "consumed a span and whatever followed it".
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('Before the break.', 'After the break.');
+----
+2

@@ -15,10 +15,11 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-**Status:** five native readers (RTF, DOCX, ODT, EPUB, LaTeX), full path dispatch, and a
-differential validator that checks panduck against real pandoc on every CI run. RST, Org
-and MediaWiki are declared but not yet implemented — and the registry knows the
-difference, so nothing routes to a reader that doesn't exist.
+**Status:** eight native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb), a
+Pandoc AST reader that reaches **every format pandoc can read**, document metadata across
+all of them, full path dispatch, and a differential validator that checks panduck against
+real pandoc on every run. MediaWiki is declared but not implemented — and the registry
+knows the difference, so nothing routes to a reader that doesn't exist.
 
 ## Why not just call pandoc?
 
@@ -45,7 +46,8 @@ pushdown) or an HTTP server. panduck does neither.
 | `read_panduck_doc(src, format := 'auto', pages := '')` | table | `duck_block` rows |
 | `panduck_read_blocks(src, …)` | scalar | `LIST(duck_block)` |
 | `read_panduck_table(src)` | table | rows and columns |
-| `read_rtf_blocks(path)` / `read_docx_blocks(path)` | table | one format, directly |
+| `read_rtf_blocks(path)`, `read_org_blocks(path)`, … | table | one format, directly |
+| `read_pandoc_blocks(path)` | table | a Pandoc JSON AST |
 
 Two surfaces, mirroring [duckeye](https://github.com/teaguesterling/duckeye)'s own split:
 a document is prose and becomes blocks; `--raw` is *"read FILE as data, not prose"* and
@@ -77,11 +79,53 @@ panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 | `odt` | `.odt` | **implemented** — `read_odt_blocks` |
 | `epub` | `.epub` | **implemented** — `read_epub_blocks` |
 | `latex` | `.tex` `.latex` | **implemented** — `read_latex_blocks` |
-| `rst` `org` `mediawiki` | | declared, not implemented |
+| `org` | `.org` | **implemented** — `read_org_blocks` |
+| `rst` | `.rst` | **implemented** — `read_rst_blocks` |
+| `ipynb` | `.ipynb` | **implemented** — `read_ipynb_blocks` |
+| `pandoc` | *(none — by `format :=` only)* | **implemented** — `read_pandoc_blocks` |
+| `mediawiki` | `.wiki` `.mediawiki` | declared, not implemented |
 | `markdown` `html` `pdf` | `.md` `.html` `.pdf` | routed to `duckdb_markdown`, `duckdb_webbed`, `pdf` |
-| `toml` `yaml` | `.toml` `.yaml` | read as a `metadata` block |
+| `zim_article` | `zim://…` | one article, via `zim` + `webbed` |
+| `zim` | `.zim` | refused — an archive is a corpus, not a document |
+| `toml` `yaml` | `.toml` `.yaml` | read verbatim as a `metadata` block |
 | `data` | `.csv` `.parquet` `.json` `.xlsx` … | `read_panduck_table` only |
 | `code` | anything unclaimed | falls through to `sitting_duck` |
+
+### Every format pandoc reads
+
+`json` is pandoc's own AST, so `read_pandoc_blocks` makes all **43** of pandoc's input
+formats reachable with no per-format code:
+
+```sql
+-- anything pandoc reads, for anyone who has pandoc
+SELECT * FROM read_pandoc_blocks('doc.json');
+SELECT * FROM read_panduck_doc('doc.json', format := 'pandoc');
+```
+
+This does **not** make pandoc a dependency: the eight native readers need no external
+binary. It adds a path for people who already have pandoc and want the other thirty-five
+formats. `.json` deliberately does **not** auto-route here — it is already a data format,
+and dispatch cannot tell an AST from any other JSON by its suffix.
+
+## Document metadata
+
+Every reader whose format carries metadata emits it as `kind='value'` elements, appended
+after the blocks, with the field name in `attributes['key']`:
+
+```sql
+SELECT attributes['key'], content
+FROM read_epub_blocks('book.epub') WHERE kind = 'value';
+```
+
+**Keys are pandoc's namespace, not the source's** — `dc:creator` becomes `author`,
+RTF's `{\*\generator}` becomes `generator`. Measured against pandoc rather than assumed.
+
+DOCX and ODT go further than pandoc, which extracts nothing at all from either despite the
+files plainly carrying `dcterms:created` and `meta:generator`. Those fields carry
+`attributes['source_type']` with their original spelling, so a format-derived field stays
+distinguishable from a pandoc-derived one. RST is the only format with no document metadata
+at all: a `:Author:` field list is a definition list, which is also what pandoc makes of
+it.
 
 `panduck_supported_extensions()` is panduck's self-description; `panduck_reader_registry()`
 is the derived dispatch table. Adding a reader means flipping one row from `planned` to
@@ -114,15 +158,26 @@ make release
 Targets DuckDB **v1.5.5**.
 
 ```sh
-make test                   # sqllogictests
-make test_pandoc_alignment  # AST vocabulary vs a real pandoc
-make test_roundtrip         # differential validation vs a real pandoc
+make test           # sqllogictests
+make check          # every guard below, all of them, then fails if any failed
 ```
+
+| Guard | Checks |
+|---|---|
+| `check-vocabulary` | the vendored `duck_block` header against upstream, by name and value |
+| `check-conformance` | every fixture through every reader, against upstream's pure-SQL macros |
+| `check-converter` | every block type through the export and render paths |
+| `test_pandoc_alignment` | the AST mapping against a real pandoc |
+| `test_roundtrip` | differential validation against a real pandoc, per fixture |
+
+`make check` runs **all** of them and fails at the end rather than stopping at the first —
+a red run that skips the rest reads as an ordinary failure rather than as "and three things
+went unverified".
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) — the layering, and why nothing depends upward
-- [Readers](docs/readers.md) — all five readers, and what real writers actually emit
+- [Readers](docs/readers.md) — every reader, and what real writers actually emit
 - [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration
 - [The doc_ namespace](docs/doc_namespace.md) — path-taking sugar over `db_*`
 - [Validation](docs/validation.md) — how the pandoc-compatibility claim is tested

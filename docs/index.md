@@ -26,13 +26,15 @@ SELECT level, title FROM doc_toc('report.docx');  -- table of contents, by path
 
 ## Status
 
-Four native readers — **RTF**, **DOCX**, **ODT** and **EPUB** — plus full path dispatch,
-runtime reader registration, and a differential validator that checks panduck against a
-real pandoc on every CI run.
+Eight native readers — **RTF**, **DOCX**, **ODT**, **EPUB**, **LaTeX**, **Org**, **RST**
+and **ipynb** — plus a **Pandoc AST reader** that reaches every format pandoc can read,
+document metadata across all of them, full path dispatch, runtime reader registration, and
+a differential validator that checks panduck against a real pandoc on every run.
 
-RST, Org and MediaWiki are **declared but not implemented**, and the registry knows
-the difference: a format with `status='planned'` has a NULL reader and is skipped, so
-dispatch can never route to a function that doesn't exist.
+**MediaWiki** is declared but not implemented, and the registry knows the difference: a
+format with `status='planned'` has a NULL reader and is skipped, so dispatch can never
+route to a function that doesn't exist. A regression test pins that, and its example has
+moved down the roadmap six times as each format was promoted.
 
 ## The function surface
 

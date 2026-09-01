@@ -1,6 +1,6 @@
 # The Pandoc AST Converter Handoff
 
-**Status:** proposed
+**Status:** steps 1–3 DONE. Step 4 is duck_block_utils', gated on a released panduck.
 **Scope:** relocate `pandoc_ast_to_blocks` and its siblings from `duckdb_duck_block_utils`
 into panduck, with the regression net that proves them.
 
@@ -13,7 +13,8 @@ reader for it is not another format alongside the seven panduck already has:
 pandoc -f <anything> -t json   →   pandoc_ast_to_blocks(...)   →   duck_blocks
 ```
 
-Pandoc reads **42 input formats**. panduck implements seven. This converter makes all 42
+Pandoc reads **43 input formats** (measured with `--list-input-formats`; I said 42 while
+writing this and was off by one). panduck implements eight natively. This converter makes all 43
 reachable with no per-format code, for anyone who has pandoc installed, while the native
 readers keep serving people who do not. That is what "compatible with pandoc's data model,
 not its ABI" cashes out to, and it means **the converter is the thing that makes the format
@@ -89,10 +90,15 @@ a deliverable rather than an assumption:
 - the build-driven container sweep over all 43 types
 - the four-arm roundtrip sweep with its three exemption registries and their expiry audits
 
-`test/check_roundtrip_sweep.py` and `test/check_spec_alignment.py` are the two that are
-about the CONVERTER. The others in that directory — `check_vendorable`,
-`check_consumer_alignment`, `check_vocabulary_header`, `check_constants_are_used` — are
-about the vocabulary and stay where they are.
+`test/check_roundtrip_sweep.py` is the one that is about the CONVERTER, and it is the one
+that moved — it lives at `test/converter/` and runs in `make check`.
+
+**CORRECTED, having looked rather than planned from memory.**
+`check_spec_alignment.py` does NOT travel: it asserts duck_block_utils' own
+`docs/duck_blocks_spec.md` against their build, and panduck does not own that spec. And the
+34-constructor ledger did not need to move either, because **panduck already had one** —
+`test/pandoc/check_pandoc_alignment.py`, already in `make check`. So the deliverable was
+one script, not four.
 
 These sweeps were built against a converter serving one consumer. Under the framing above
 they protect every format pandoc can read, so they get **stricter** on arrival, not looser.
@@ -103,16 +109,25 @@ they protect every format pandoc can read, so they get **stricter** on arrival, 
 2. The code moves under it.
 3. `panduck_supported_extensions()` gains `pandoc`, and `read_panduck_doc(format :=
    'pandoc')` routes to it — dispatch by explicit format only, per the decision above.
-4. duck_block_utils removes its copy only once panduck's net is green, so there is never a
-   window where neither repo owns it.
+4. duck_block_utils removes its copy only after a **RELEASED** panduck can be installed
+   and verified.
 
-Step 4 is the one that must not be reordered: the two-copy window is safe and the
-zero-copy window is not.
+**Step 4's trigger was sharpened by duck_block_utils and theirs is right.** I wrote "once
+panduck's net is green". Green is a fact about a *tree*; the zero-copy window is a fact
+about what people can *install*. duckeye resolves installed artifacts, so a deletion timed
+on my green would strand anyone holding the new duck_block_utils and the old panduck. Their
+copy survives at least one full release cycle.
+
+The two-copy window is safe and the zero-copy window is not — and the two-copy window's
+safety was **measured**, not assumed: a name is owned by exactly one extension in this
+family. Two extensions registering one name both survive as ambiguous overloads, and every
+call then fails at bind time. That is why panduck registers `read_pandoc_blocks` rather
+than the upstream names.
 
 ## What this does NOT do
 
-It does not make pandoc a dependency. panduck still reads seven formats with no external
-binary; this adds an eighth path for users who already have pandoc and want the other
+It does not make pandoc a dependency. panduck still reads eight formats with no external
+binary; this adds a ninth path for users who already have pandoc and want the other
 thirty-five formats. The README's argument against subprocess-per-file stands unchanged —
 a user piping `pandoc -t json` has made that choice explicitly, once, rather than having it
 made for them per document.

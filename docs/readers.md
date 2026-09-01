@@ -1,8 +1,21 @@
 # Readers
 
-panduck has five native readers — RTF, DOCX, ODT, EPUB and LaTeX. All five were written
-against **real writer output** rather than the format specification, and the first four
-together say something the first two alone did not.
+panduck has eight native readers — RTF, DOCX, ODT, EPUB, LaTeX, Org, RST and ipynb — plus
+a reader for pandoc's own JSON AST that reaches every format pandoc can read. All were
+written against **real writer output** rather than the format specification, and together
+they say something no one of them said alone.
+
+The three plain-text formats each turned on a rule that could not be guessed:
+
+| | the rule, measured |
+|---|---|
+| **Org** | a leading `*` is a heading at column 0, a bullet when indented, emphasis mid-line — one character, three meanings |
+| **RST** | heading level is set by the **order of first appearance** of the adornment character, not by which character it is. A reader hardcoding `= → 1` passes every conventional document |
+| **ipynb** | a markdown cell is held **raw**: it is a document, not data, and parsing it here would violate the isolation that keeps `.toml` verbatim |
+
+RST is also the only one of the eight with **no document metadata**: a `:Author:` field
+list is a definition list, which is what pandoc makes of it too. The opposite reading is
+the obvious one, and nothing in the vocabulary would object to a reader that got it wrong.
 
 ## How a format marks a heading predicts how badly writers disagree
 

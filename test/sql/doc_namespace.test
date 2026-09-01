@@ -38,11 +38,23 @@ LOAD duck_block_utils;
 # not panduck's submodule pin -- the pin is a compile-time dependency on constant names and
 # says nothing about this. Two independent clocks.
 #
-# This assertion is the alarm. The day duck_block_utils publishes, it goes red HERE, naming
-# exactly what moved, instead of doc_toc failing with a bare "function db_blocks_toc does
-# not exist" three assertions further down. Then rename the call sites in
-# reader_registry.cpp (db_blocks_toc -> duck_blocks_toc, db_blocks_to_text ->
-# duck_blocks_to_text) and flip this expectation.
+# This assertion is the alarm. It goes red HERE, naming exactly what moved, instead of
+# doc_toc failing with a bare "function db_blocks_toc does not exist" three assertions
+# further down -- but a red result has AT LEAST TWO causes, not one, because this reads
+# whatever build is currently INSTALLED, not necessarily a published one:
+#
+#   1. duck_block_utils actually published the rename upstream. Re-run the measurement
+#      above against `FROM community` to confirm, then rename the call sites in
+#      reader_registry.cpp (db_blocks_toc -> duck_blocks_toc, db_blocks_to_text ->
+#      duck_blocks_to_text) and flip this expectation.
+#   2. Someone locally replaced the installed build -- e.g. `FORCE INSTALL duck_block_utils
+#      FROM '<local repo>'` -- which mutates the shared ~/.duckdb extension profile in
+#      place. Nothing has been published; the fix is restoring the community build, not
+#      touching panduck's call sites. This has happened: a sibling project's local build
+#      briefly sat in that profile, this assertion correctly went red, and an implementer
+#      who read only the old wording here concluded upstream had published when it had not.
+#
+# Check which one actually happened before acting on a red result.
 query I
 SELECT count(*) > 0 FROM duckdb_functions() WHERE function_name = 'db_blocks_toc';
 ----

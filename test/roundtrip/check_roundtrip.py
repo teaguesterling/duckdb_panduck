@@ -131,6 +131,30 @@ EPUB_LO_CSS = (
     "size is evidence for a heading rather than a statement of one.",
 )
 
+LATEX_LOOSE_LISTS = (
+    REFERENCE_WRONG,
+    "pandoc's LaTeX reader wraps every itemize/enumerate item's content in Para -- a "
+    "LOOSE list -- regardless of blank lines or \\tightlist. Verified against a minimal "
+    "fixture with no blank lines between \\item and no \\tightlist at all: still Para. "
+    "\\tightlist is pandoc's own MARKDOWN WRITER convention, a no-op macro it emits so its "
+    "LaTeX output round-trips back into a tight list through pandoc itself; pandoc's LaTeX "
+    "READER never consults it, so pandoc.tex containing \\tightlist reads exactly as loose "
+    "as handwritten.tex, which has no such macro. panduck folds each \\item's content "
+    "directly onto its list_item -- the same tight shape panduck uses for every list it "
+    "reads, and the one a human writing \\item bullet one would recognise as their list.",
+)
+
+LATEX_HYPERTARGET_DIV = (
+    REFERENCE_WRONG,
+    "pandoc's own LaTeX writer wraps every heading in "
+    "\\hypertarget{id}{%\\n\\section{...}\\label{id}} (see the header comment on "
+    "handwritten.tex, which a human never writes). Reading that back, pandoc's LaTeX "
+    "reader collapses the wrapper for 'Heading One' into a plain Header but leaves an "
+    "extra Div around 'Heading Two' -- an inconsistency inside pandoc's own reader, not a "
+    "real structural distinction between the two headings in the source. panduck strips "
+    "\\hypertarget uniformly and reads through to the heading both times.",
+)
+
 CASES = [
     Case(
         "test/fixtures/pandoc_outlinelevel.rtf",
@@ -191,6 +215,30 @@ CASES = [
         "read_rtf_blocks",
         expect={"text": RTF_LISTS, "skeleton": RTF_LISTS, "marked": RTF_LISTS},
         note="LibreOffice-generated RTF: headings via {\\stylesheet} \\sN",
+    ),
+    Case(
+        "test/fixtures/handwritten.tex",
+        "latex",
+        "read_latex_blocks",
+        # text must AGREE: only the list's looseness diverges, nothing is lost.
+        expect={"skeleton": LATEX_LOOSE_LISTS, "marked": LATEX_LOOSE_LISTS},
+        note="hand-written LaTeX: no \\hypertarget, no \\tightlist -- what a person writes",
+    ),
+    Case(
+        "test/fixtures/pandoc.tex",
+        "latex",
+        "read_latex_blocks",
+        # Two independent pandoc-reader quirks stack in this fixture: loose list items
+        # (LATEX_LOOSE_LISTS, same as handwritten.tex) AND an inconsistent \hypertarget
+        # Div around the second heading only (LATEX_HYPERTARGET_DIV). Both are declared
+        # here since either one alone would leave the other an unexplained divergence.
+        expect={
+            "skeleton": (REFERENCE_WRONG,
+                        LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1]),
+            "marked": (REFERENCE_WRONG,
+                      LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1]),
+        },
+        note="pandoc-generated LaTeX: \\hypertarget headings, \\tightlist itemize",
     ),
 ]
 

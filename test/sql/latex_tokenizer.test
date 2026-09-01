@@ -1,0 +1,17 @@
+# name: test/sql/latex_tokenizer.test
+# description: the LaTeX tokenizer, tested without any duck_block machinery
+# group: [sql]
+
+require panduck
+
+# A control word is backslash plus LETTERS, and the whitespace after it is CONSUMED --
+# `\LaTeX foo` is one control word then `foo`, not the word plus " foo". Getting this
+# wrong inserts a space before every macro's following text.
+query II
+SELECT kind, text FROM panduck_latex_tokens('\textbf{a} b');
+----
+control_word	textbf
+begin_group	{
+text	a
+end_group	}
+text	 b

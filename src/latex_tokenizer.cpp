@@ -53,7 +53,11 @@ bool LexVerbatim(const std::string &src, size_t &i, std::vector<Token> &out) {
 		return false;
 	}
 	std::string env = src.substr(k + 1, close - k - 1);
-	if (env != "verbatim" && env != "lstlisting") {
+	// verbatim* is verbatim with visible spaces -- the same lexical mode, and it arrives
+	// with its star intact because a brace group is not a control word. The TERMINATOR
+	// keeps the star: \begin{verbatim*} is closed by \end{verbatim*} and by nothing else.
+	const std::string base = !env.empty() && env.back() == '*' ? env.substr(0, env.size() - 1) : env;
+	if (base != "verbatim" && base != "lstlisting") {
 		return false;
 	}
 	out.push_back(Token {TokenKind::BEGIN_GROUP, "{", false});

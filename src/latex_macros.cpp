@@ -102,8 +102,12 @@ const MacroEntry ENVIRONMENTS[] = {
     // Dropped whole: descending yields mangled cell and coordinate text as prose.
     {"tabular", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},
+    // Display math, dropped until Task 7 gives it a shape. The starred spellings --
+    // align*, gather* -- reach these through LookupEnvironment, which strips the star.
     {"equation", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"align", Disposition::DROPPED, nullptr, 0, -1, nullptr},
+    {"gather", Disposition::DROPPED, nullptr, 0, -1, nullptr},
+    {"multline", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"displaymath", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"figure", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"table", Disposition::DROPPED, nullptr, 0, -1, nullptr},
@@ -123,8 +127,15 @@ const MacroEntry *LookupMacro(const std::string &name) {
 }
 
 const MacroEntry *LookupEnvironment(const std::string &name) {
+	// A STARRED ENVIRONMENT IS THE UNNUMBERED VARIANT OF THE SAME CONSTRUCT, never a
+	// different one, so `align*` gets `align`'s disposition and figure* gets figure's. The
+	// tokenizer strips the star from a control WORD, but an environment name arrives from a
+	// brace group and keeps it -- so without this, \begin{align*} (the most common display
+	// math there is) missed the DROPPED list entirely and its source came out as prose,
+	// which is the exact outcome that list exists to prevent.
+	const std::string base = !name.empty() && name.back() == '*' ? name.substr(0, name.size() - 1) : name;
 	for (size_t i = 0; i < ENVIRONMENT_COUNT; i++) {
-		if (name == ENVIRONMENTS[i].name) {
+		if (base == ENVIRONMENTS[i].name) {
 			return &ENVIRONMENTS[i];
 		}
 	}

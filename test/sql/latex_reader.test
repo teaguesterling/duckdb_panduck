@@ -265,26 +265,35 @@ WHERE content LIKE '%tightlist%';
 # unknown ENVIRONMENT is descended into, because most still wrap prose. `tabular` is the
 # documented exception: descending yields mangled cell text as sentences.
 #
-# Its run is a `plain` and not a `paragraph`, and that is the asymmetry stated a second
-# way: the environment is one panduck declined to model, so `plain` claims only what is
-# known -- block-level text -- where `paragraph` would assert paragraph semantics on
-# behalf of a construct we just admitted we do not understand. A KNOWN transparent
-# environment (\begin{center}, \begin{abstract}) does get `paragraph`, because there the
-# claim is one we can make.
+# THE ASYMMETRY STOPS AT THE DESCENT. Its run is a `paragraph`, the same as a KNOWN
+# transparent environment's, because the same bytes must not read differently for being
+# wrapped in a name that happens to be in the table -- and body text accumulating into a
+# paragraph until a blank line is what LaTeX does inside every environment, modelled or
+# not. `plain` is a LIST ITEM's shape and nothing else's.
 query II
 SELECT element_type, content FROM read_latex_blocks_string(
   '\begin{document}\vspace{2em}\begin{unknownenv}kept\end{unknownenv}\begin{tabular}{ll}a&b\\\end{tabular}\end{document}')
 WHERE kind = 'block' ORDER BY element_order;
 ----
-plain	kept
+paragraph	kept
 
-# ...and the KNOWN transparent half, which is what makes the line above a distinction
-# rather than a blanket rule.
+# ...and the KNOWN transparent half reads the same, which is the point.
 query II
 SELECT element_type, content FROM read_latex_blocks_string('\begin{center}centred\end{center}')
 WHERE kind = 'block' ORDER BY element_order;
 ----
 paragraph	centred
+
+# THE FOLD THIS PREVENTS. An unknown environment inside an \item used to hand the item a
+# `plain`, which the content rule then folded onto the item as though the item had written
+# the text itself. Only a run the ITEM owns can become the item's content.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  '\begin{itemize}\item \begin{foo}text\end{foo}\end{itemize}') ORDER BY element_order;
+----
+list	NULL	1
+list_item	NULL	2
+paragraph	text	3
 
 # UTF-8 and the em-dash ligature both survive. handwritten.tex carries "café --- em-dash".
 query I
@@ -339,6 +348,63 @@ list	NULL	1
 list_item	NULL	2
 paragraph	text	3
 
+# TIGHTNESS IS A PROPERTY OF THE LIST, NOT OF THE ITEM, and this is the shape that proves
+# it. Blank lines BETWEEN items is the canonical spelling of a loose list -- Pandoc emits
+# Para for all three -- but nothing follows the last item, so a rule that only looks for a
+# break INSIDE the open item can never loosen it. That reads uniform separation as an
+# uneven list, on every loose list in every real document.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  E'\\begin{itemize}\\item a\n\n\\item b\n\n\\item c\\end{itemize}') ORDER BY element_order;
+----
+list	NULL	1
+list_item	NULL	2
+paragraph	a	3
+list_item	NULL	2
+paragraph	b	3
+list_item	NULL	2
+paragraph	c	3
+
+# ...AND THE DISCRIMINATING HALF: no break between the items, so all three stay tight and
+# all three carry their own content. Asserting only the loose case would pass against a
+# reader that had simply stopped folding.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  E'\\begin{itemize}\\item a\n\\item b\n\\item c\\end{itemize}') ORDER BY element_order;
+----
+list	NULL	1
+list_item	a	2
+list_item	b	2
+list_item	c	2
+
+# A BLANK LINE BEFORE THE FIRST \item IS LAYOUT, not spacing the author asked for. It is
+# how a great many lists are typeset, and loosening on it would loosen half the lists ever
+# written.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  E'\\begin{itemize}\n\n\\item a\n\\item b\\end{itemize}') ORDER BY element_order;
+----
+list	NULL	1
+list_item	a	2
+list_item	b	2
+
+# LOOSENESS STOPS AT THE LIST THAT OWNS THE BREAK. The \par is inside the INNER list, so
+# the outer list's items stay tight -- a break belongs to the innermost scope open when it
+# occurs, exactly as a paragraph does.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  '\begin{itemize}\item outer\begin{enumerate}\item inner\par more\end{enumerate}\item second\end{itemize}')
+ORDER BY element_order;
+----
+list	NULL	1
+list_item	NULL	2
+plain	outer	3
+list	NULL	3
+list_item	NULL	4
+paragraph	inner	5
+paragraph	more	5
+list_item	second	2
+
 # A FORMATTED RUN IS NOT A BARE TEXT RUN, so it stays a `plain` child with its own inline
 # tree rather than being flattened onto the item's content -- there is no single string to
 # carry, and Pandoc emits Plain here too. The content rule asks what the only child IS.
@@ -381,6 +447,24 @@ SELECT list_start, count(*) FROM (
 ) GROUP BY 1;
 ----
 3	2
+
+# ...and the DISCRIMINATING half: an enumerate optional is usually enumitem KEY-VALUE
+# OPTIONS, not a start. Reading "the first integer anywhere in it" turns `[itemsep=0pt]`
+# into start=0 -- a number no list starts at -- and `[topsep=2pt,start=5]` into start=2.
+# Both are routine markup, so the loose reading is wrong on ordinary documents.
+query II
+SELECT src, list_start FROM (
+  SELECT 'a_keys_only' AS src, attributes['start'] AS list_start
+    FROM read_latex_blocks_string('\begin{enumerate}[itemsep=0pt]\item a\end{enumerate}')
+   WHERE element_type = 'list'
+  UNION ALL
+  SELECT 'b_start_after_key', attributes['start']
+    FROM read_latex_blocks_string('\begin{enumerate}[topsep=2pt,start=5]\item a\end{enumerate}')
+   WHERE element_type = 'list'
+) ORDER BY src;
+----
+a_keys_only	1
+b_start_after_key	5
 
 # A BULLET LIST HAS NO start/number_style/number_delim. Emitting them anyway would tell a
 # consumer that an unordered list is numbered from 1, which is a statement about the
@@ -457,3 +541,44 @@ SELECT element_type, content FROM read_latex_blocks_string(
 WHERE kind = 'block' ORDER BY element_order;
 ----
 paragraph	[Term] the definition
+
+# ---------------------------------------------------------------------------
+# A STARRED ENVIRONMENT IS THE UNNUMBERED VARIANT OF THE SAME CONSTRUCT, never a different
+# one. The tokenizer strips the star from a control WORD, but an environment name arrives
+# from a brace group and keeps it -- so an exact-match lookup missed `align*`, the most
+# common display-math environment in real LaTeX, and emitted its source as prose. That is
+# precisely the outcome the DROPPED list exists to prevent.
+# ---------------------------------------------------------------------------
+query II
+SELECT src, n FROM (
+  SELECT 'a_align_star' AS src, count(*) AS n
+    FROM read_latex_blocks_string('\begin{align*} E &= mc^2 \end{align*}')
+  UNION ALL
+  SELECT 'b_align_plain', count(*) FROM read_latex_blocks_string('\begin{align} E &= mc^2 \end{align}')
+  UNION ALL
+  SELECT 'c_gather_star', count(*) FROM read_latex_blocks_string('\begin{gather*} x = y \end{gather*}')
+  UNION ALL
+  SELECT 'd_figure_star', count(*) FROM read_latex_blocks_string('\begin{figure*}\caption{c}\end{figure*}')
+) ORDER BY src;
+----
+a_align_star	0
+b_align_plain	0
+c_gather_star	0
+d_figure_star	0
+
+# ...and the star reaches the verbatim LEXER too, which is a separate lookup: without it
+# `\begin{verbatim*}` was tokenized as ordinary LaTeX and its body was read as markup.
+query II
+SELECT element_type, content
+FROM read_latex_blocks_string(E'\\begin{verbatim*}\n\\section{X}\n\\end{verbatim*}') ORDER BY element_order;
+----
+code	\section{X}
+
+# ...and the dropped text really is gone rather than merely uncounted: the prose either
+# side of a starred math environment survives, so this is not the reader stopping early.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  E'before\n\n\\begin{align*} E &= mc^2 \\end{align*}\n\nafter') ORDER BY element_order;
+----
+paragraph	before
+paragraph	after

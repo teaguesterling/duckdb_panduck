@@ -109,13 +109,16 @@ private:
 		int saved_depth = 1; //!< depth to restore when this environment closes
 		int list_depth = 1;  //!< lists only: the depth the `list` block itself sits at
 		bool is_list = false;
-		//! An environment the macro table never claimed. Its runs are `plain` rather than
-		//! `paragraph` -- see RunElementType().
-		bool unknown = false;
-		bool saw_par = false;      //!< a paragraph break has occurred in this scope
-		bool item_open = false;    //!< lists only
-		bool item_saw_par = false; //!< lists only: a paragraph break inside the OPEN item
-		size_t item_index = 0;     //!< lists only: the open list_item's index in `blocks`
+		bool item_open = false; //!< lists only: an \item is accumulating
+		//! TIGHTNESS IS A PROPERTY OF THE LIST, NOT OF THE ITEM. A paragraph break anywhere
+		//! after the first \item loosens EVERY item, because that is what the spacing it
+		//! produces means. Tracking it per item instead makes the LAST item of every loose
+		//! list come out tight -- nothing follows it, so nothing can loosen it -- which is
+		//! wrong on the canonical spelling of a loose list rather than on an odd one.
+		bool list_loose = false;
+		//! lists only: every list_item's index in `blocks`. Kept because the content rule
+		//! cannot be applied until the list closes and its tightness is known.
+		std::vector<size_t> item_indices;
 	};
 
 	std::vector<Token> tokens;
@@ -153,7 +156,7 @@ private:
 	void PopEnvironment();
 	void ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &name, std::string *raw);
 	void StartItem(std::vector<Token> &toks, size_t &i);
-	void CloseItem(EnvFrame &frame);
+	void ResolveList(EnvFrame &frame);
 	void NoteParagraphBreak();
 	const char *RunElementType() const;
 	void AppendText(const std::string &text);
@@ -343,40 +346,34 @@ const char *Parser::RunElementType() const {
 		return DuckBlockTypes::TYPE_PARAGRAPH;
 	}
 	const auto &frame = env_stack.back();
-	if (frame.is_list) {
-		// A run inside \item that no paragraph break has separated is what the source
-		// literally wrote: text, not a paragraph. CloseItem() then folds a LONE one onto
-		// the item's own content, which is the content rule; one that has a block sibling
-		// stays a `plain` because it has nowhere else to live.
-		if (frame.item_open && !frame.item_saw_par) {
-			return DuckBlockTypes::TYPE_PLAIN;
-		}
-		return DuckBlockTypes::TYPE_PARAGRAPH;
-	}
-	if (frame.unknown && !frame.saw_par) {
-		// AN ENVIRONMENT PANDUCK DECLINED TO MODEL. Descending into it keeps the prose,
-		// which is right; calling that prose a `paragraph` would assert paragraph semantics
-		// on behalf of a construct we have just admitted we do not understand. `plain`
-		// claims only what is known. A KNOWN transparent environment -- center, abstract,
-		// description -- gets `paragraph`, because there the claim is one we can make.
+	// A LIST ITEM IS THE ONLY SCOPE THAT PRODUCES `plain`. Its run is provisional: emitted
+	// as `plain`, then re-typed to `paragraph` by ResolveList() if the list turns out
+	// loose, or folded onto the item's own content if it turns out to be the item's only
+	// child. Neither is knowable until the list closes.
+	//
+	// EVERY OTHER SCOPE GETS `paragraph`, including a transparent environment's, and
+	// including one whose name the table never claimed. The same bytes must not read
+	// differently for being wrapped in a name we happen to recognise -- and body text
+	// accumulating into a paragraph until a blank line IS what LaTeX does inside every
+	// environment, whether or not panduck models the environment itself.
+	if (frame.is_list && frame.item_open) {
 		return DuckBlockTypes::TYPE_PLAIN;
 	}
 	return DuckBlockTypes::TYPE_PARAGRAPH;
 }
 
-//! A blank line, or \par, which is the same fact spelled as a control word. Recorded on
-//! the innermost scope because it is what promotes that scope's runs from `plain` to
-//! `paragraph` -- the source asked for a paragraph, so it gets one.
+//! A blank line, or \par, which is the same fact spelled as a control word. Only a list
+//! cares: it is what makes the list LOOSE, and it counts only once an \item has opened --
+//! a blank line between \begin{itemize} and the first \item is a layout habit rather than
+//! an authorial one, and reading it as spacing would loosen half the lists ever written.
 void Parser::NoteParagraphBreak() {
 	if (env_stack.empty()) {
 		return;
 	}
 	auto &frame = env_stack.back();
-	if (frame.is_list) {
-		frame.item_saw_par = true;
-		return;
+	if (frame.is_list && !frame.item_indices.empty()) {
+		frame.list_loose = true;
 	}
-	frame.saw_par = true;
 }
 
 void Parser::FlushRun() {
@@ -587,6 +584,35 @@ void Parser::ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &n
 	}
 }
 
+//! The first number of an ordered list, from `\begin{enumerate}`'s optional argument.
+//!
+//! ONLY TWO SPELLINGS ARE A START, and the narrowness is the point: an enumerate optional
+//! is usually enumitem KEY-VALUE OPTIONS, and reading "the first integer anywhere in it"
+//! turns `[itemsep=0pt]` into start=0 -- a number no list starts at -- and
+//! `[topsep=2pt,start=5]` into start=2. Both are routine markup, so the loose reading is
+//! wrong on ordinary documents rather than on odd ones. Anything else defaults to 1.
+std::string ParseListStart(const std::string &optional) {
+	auto text = Trim(optional);
+	if (!text.empty() && text.find_first_not_of("0123456789") == std::string::npos) {
+		return text; // the bare form, \begin{enumerate}[3]
+	}
+	auto at = text.find("start=");
+	if (at != std::string::npos) {
+		size_t k = at + 6;
+		while (k < text.size() && IsSpace(text[k])) {
+			k++;
+		}
+		size_t end = k;
+		while (end < text.size() && text[end] >= '0' && text[end] <= '9') {
+			end++;
+		}
+		if (end > k) {
+			return text.substr(k, end - k);
+		}
+	}
+	return "1";
+}
+
 void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::string &name) {
 	auto *entry = LookupEnvironment(name);
 	if (entry && entry->disposition == Disposition::DROPPED) {
@@ -603,9 +629,8 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		// UNKNOWN ENVIRONMENT -> TRANSPARENT, the exact opposite of the rule for an unknown
 		// MACRO. A macro is usually presentational and usually wraps a fragment, so
 		// descending into every one of them floods the output; an environment usually wraps
-		// PROSE, and dropping it loses paragraphs. `unknown` is remembered because it also
-		// decides `plain` vs `paragraph` -- see RunElementType().
-		frame.unknown = entry == nullptr;
+		// PROSE, and dropping it loses paragraphs. Whether the NAME was in the table changes
+		// nothing further: its body reads exactly as a known transparent environment's does.
 		env_stack.push_back(std::move(frame));
 		return;
 	}
@@ -646,15 +671,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		if (block.list_type == "ordered") {
 			// ALWAYS, not only when the source said so. A consumer that renders numbering
 			// otherwise has to invent the default the reader already knows.
-			block.list_start = "1";
-			for (size_t k = 0; k < optional.size(); k++) {
-				// `[3]` is the bare form; enumitem spells the same fact `[start=3]`.
-				if (optional[k] >= '0' && optional[k] <= '9') {
-					size_t end = optional.find_first_not_of("0123456789", k);
-					block.list_start = optional.substr(k, end == std::string::npos ? end : end - k);
-					break;
-				}
-			}
+			block.list_start = ParseListStart(optional);
 			block.number_style = "Decimal";
 			block.number_delim = "Period";
 		}
@@ -669,7 +686,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 void Parser::PopEnvironment() {
 	auto &frame = env_stack.back();
 	if (frame.is_list) {
-		CloseItem(frame);
+		ResolveList(frame);
 	}
 	depth = frame.saved_depth;
 	env_stack.pop_back();
@@ -704,31 +721,49 @@ void Parser::EndEnvironment(const std::string &name) {
 	}
 }
 
-//! Finish the open \item. THE CONTENT RULE: content is carried iff the container's only
-//! child is a plain text run -- and a lone bare run IS that single text child, so it
-//! becomes the item's own content and no child row is emitted at all.
+//! Settle every item of a closing list, which is the earliest moment either question can
+//! be answered -- both depend on facts the list only finishes supplying at its \end.
 //!
-//! DECIDED FROM WHAT THE CHILD IS, not from whether the item has block children. An item
-//! can hold a nested list and still be tight; a rule keyed on "has block children" reads
-//! `\item text` and `\item \par text` correctly and then gets `\item text + sublist`
-//! wrong, which is why the three are asserted together.
-void Parser::CloseItem(EnvFrame &frame) {
-	if (!frame.item_open) {
-		return;
-	}
+//! LOOSE: every item's own run becomes a `paragraph`, because the spacing a blank line
+//! produces applies to the whole list. Nothing is folded: the source wrote paragraphs.
+//!
+//! TIGHT: THE CONTENT RULE. content is carried iff the container's only child is a plain
+//! text run -- and a lone bare run IS that single text child, so it becomes the item's own
+//! content and no child row is emitted at all. Decided from WHAT the child is, not from
+//! whether the item has block children: an item can hold a nested list and still be tight,
+//! so a rule keyed on "has block children" reads `\item text` and `\item \par text`
+//! correctly and then gets `\item text` + sublist wrong.
+//!
+//! Items are settled LAST FIRST so that folding one away cannot move the next one's index.
+void Parser::ResolveList(EnvFrame &frame) {
 	frame.item_open = false;
-	if (blocks.size() != frame.item_index + 2) {
-		return; // no children, or a block sibling: the run keeps its own row
+	// A run belongs to the item it sits DIRECTLY under. Anything deeper is inside a nested
+	// container -- a sublist's own items, a quote's paragraphs -- and is that container's
+	// business, not this list's.
+	const int child_level = frame.list_depth + 2;
+	for (size_t n = frame.item_indices.size(); n > 0; n--) {
+		const size_t item = frame.item_indices[n - 1];
+		const size_t end = n < frame.item_indices.size() ? frame.item_indices[n] : blocks.size();
+		if (frame.list_loose) {
+			for (size_t b = item + 1; b < end; b++) {
+				if (blocks[b].level == child_level && blocks[b].element_type == DuckBlockTypes::TYPE_PLAIN) {
+					blocks[b].element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+				}
+			}
+			continue;
+		}
+		if (end != item + 2) {
+			continue; // no children, or a block sibling: the run keeps its own row
+		}
+		auto &child = blocks[item + 1];
+		if (child.element_type != DuckBlockTypes::TYPE_PLAIN || !child.inlines.empty()) {
+			// A formatted run has no single string to carry, so it stays a `plain` with its
+			// inline tree intact -- which is also what Pandoc emits for `\item \textbf{a} b`.
+			continue;
+		}
+		blocks[item].content = std::move(child.content);
+		blocks.erase(blocks.begin() + (long)(item + 1));
 	}
-	auto &child = blocks.back();
-	if (child.element_type != DuckBlockTypes::TYPE_PLAIN || !child.inlines.empty()) {
-		// A `paragraph` is a paragraph the source asked for. A formatted run has no single
-		// string to carry, so it stays a `plain` with its inline tree intact -- which is
-		// also what Pandoc emits for `\item \textbf{a} b`.
-		return;
-	}
-	blocks[frame.item_index].content = std::move(child.content);
-	blocks.pop_back();
 }
 
 void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
@@ -741,7 +776,6 @@ void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
 		return;
 	}
 	auto &frame = env_stack.back();
-	CloseItem(frame);
 	// \item[label] is a CUSTOM BULLET: presentational, and duck_block has no field for it.
 	// Dropped INSIDE a list, kept as text outside one, where it is the only text there is.
 	SkipOptional(toks, i);
@@ -749,13 +783,8 @@ void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
 	item.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
 	item.level = frame.list_depth + 1;
 	blocks.push_back(std::move(item));
-	frame.item_index = blocks.size() - 1;
+	frame.item_indices.push_back(blocks.size() - 1);
 	frame.item_open = true;
-	// Per ITEM, not per list: `\begin{itemize}` followed by a blank line before the first
-	// \item is a common shape, and letting that one break loosen every item in the list
-	// would read a layout habit as an authorial one. The cost is that a list whose items
-	// are separated by blank lines unevenly comes out unevenly, which is what it says.
-	frame.item_saw_par = false;
 	depth = frame.list_depth + 2;
 }
 

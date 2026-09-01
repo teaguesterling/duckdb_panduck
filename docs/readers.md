@@ -233,6 +233,96 @@ wrong does not.
 **Not yet read:** tables, `\newcommand` expansion (a user macro is read as an unclaimed
 name — dropped, its argument left as text — never expanded against its definition).
 
+## `read_org_blocks(path)`
+
+`#+TITLE:`, `#+AUTHOR:` and `#+DATE:` become `kind='value'` rows appended after the blocks.
+Keys are **pandoc's** namespace — `title`, `author`, `date` — not the source spelling, the
+same rule that turns `dc:title` into `title` for EPUB.
+
+**Repeated `#+AUTHOR:` lines concatenate into ONE space-joined value.** Measured: pandoc
+emits a single `MetaInlines`, not a `MetaList`. LaTeX's `\author` *does* yield a `MetaList`,
+so the same logical field has two shapes in two formats and both are pandoc's. Generalising
+from one to the other is wrong in a way no fixture written by one author would reveal.
+
+`=code=` and `~verbatim~` both map to `code`, and the direction is worth recording because
+it is the opposite of what the names suggest: `=code=` yields pandoc `Code` with class
+`["verbatim"]`, `~verbatim~` yields `Code` with none. duck_block's `code` has no class
+field and the distinction is a spelling difference, so the collapse is declared in the
+roundtrip ledger rather than modelled.
+
+`:PROPERTIES:` drawers, TODO keywords and tags are Org's *agenda* layer, not document
+structure, and are **dropped**. That word is load-bearing: the reader shipped a defect
+where scoped-out drawers fell through to plain text and joined the following paragraph.
+Losing structure is a gap; emitting non-content as prose is a bug.
+
+## `read_rst_blocks(path)`
+
+**Heading level is set by the ORDER of first appearance of the adornment character, not by
+which character it is.** A document opening with `~~~~~` has `~` as level 1. A reader
+hardcoding `= → 1, - → 2` is right on every conventional document and wrong on a valid one,
+so the fixture pair includes one that does not follow the convention — without it the rule
+is untested and the wrong reader passes.
+
+A field list is **not metadata**:
+
+```rst
+:Author: A. Writer
+```
+
+becomes a definition list, which is what pandoc makes of it too. RST is the only one of the
+eight formats with no document metadata at all.
+
+Directives are an open set — docutils ships dozens, Sphinx hundreds — so the reader cannot
+enumerate them. `.. code-block:: python` becomes `code` with `language`; everything else
+becomes `div` carrying the directive name in `attributes['source_type']`, where it is
+visible as a gap rather than silently private. **The body is descended into, never dropped**:
+a directive body is prose, and the one exception is `code-block`, whose body is its content.
+
+## `read_ipynb_blocks(path)`
+
+Every cell is a `div` carrying `attributes['source_type']` = its `cell_type`. Cell
+boundaries are structure a consumer needs — "which cell produced this" is the question
+notebooks exist to answer — so they are not flattened away.
+
+**A code cell's outputs are content.** A notebook read without its outputs is a script.
+`stream` output takes `text`; `execute_result` and `display_data` take `text/plain` from the
+MIME bundle, the one every producer writes and the only one that is text rather than an
+encoded image.
+
+**A markdown cell is held RAW** (`raw` + `encoding='markdown'`), and that is a deferral, not
+a resting place. A markdown cell contains a *document* — it would be duck_blocks — which
+makes it a different case from a whole-file `.toml` blob, where verbatim is the correct and
+final answer. It is raw here because delegating would make this reader's output depend on
+which extensions happen to be installed: panduck's delegation lives in the SQL dispatch
+layer, and a C++ reader cannot reach those functions. One consistent behaviour beats two
+that vary by environment. A consumer wanting blocks calls `md_to_blocks()` on the content
+today; a post-parse helper for embedded formats discharges it later.
+
+Notebook metadata **exceeds pandoc deliberately**: pandoc puts the whole thing into one
+opaque `jupyter` MetaMap, so asking "who wrote this" means walking a blob. Each recovered
+field carries `attributes['source_type']` with its original path, keeping a format-derived
+field distinguishable from a pandoc-derived one.
+
+## `read_pandoc_blocks(path)` — every format pandoc reads
+
+`json` is one of pandoc's own formats and it *is* the Pandoc AST, so this is not a ninth
+format alongside the eight:
+
+```bash
+pandoc -f org -t json input.org > ast.json
+```
+```sql
+SELECT * FROM read_pandoc_blocks('ast.json');
+SELECT * FROM read_pandoc_blocks_string(?);
+```
+
+All **43** of pandoc's input formats become reachable with no per-format code, for anyone
+who has pandoc installed, while the native readers keep serving people who do not. That is
+what "compatible with pandoc's data model, not its ABI" cashes out to.
+
+It does **not** make pandoc a dependency, and `.json` does not auto-route here — see
+[Dispatch](dispatch.md).
+
 ## Output shape
 
 Every reader emits the canonical `duck_block` schema, in document order:

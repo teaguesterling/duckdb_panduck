@@ -49,6 +49,39 @@ with `status='planned'` has a NULL reader and is skipped, so dispatch can never 
 function that doesn't exist. Everything else in the registry is a claim for a format whose
 extension cannot describe itself.
 
+### A URL scheme is an extension, for registry purposes
+
+Two registry keys are not dot-suffixes:
+
+| key | format | what it is |
+|---|---|---|
+| `zim://` | `zim_article` | `zim://wiki.zim/A/Article` — ONE article, a document |
+| `.zim` | `zim` | the whole archive — a corpus, and a **refusal** |
+
+`zim://wiki.zim/A/Article` has no meaningful extension. Its dispatchable identity lives in
+the *scheme*, exactly where `.docx` keeps its own, so the scheme is the key and
+`panduck_format_for` matches it as one. A registry invariant asserting every key begins
+with `.` fired on this and was widened to "a dot-suffix OR a `://` scheme" — the invariant
+was right to fire and the rule was the thing that was too narrow.
+
+The two keys pointing at one archive format is the substantive part. A `.zim` is thousands
+of articles; "read it as a document" has no answer, so panduck **raises and names the zim
+extension** rather than picking an article or concatenating them. An article resolves
+through `zim_get_content` to HTML and then reads like any other HTML. Losing the corpus is
+a gap; inventing a document out of one is a defect.
+
+### `.json` does NOT route to the Pandoc AST reader
+
+`json` is one of pandoc's own formats and it *is* the Pandoc AST, so
+`read_pandoc_blocks` reaches every format pandoc can read. But `.json` is already claimed
+as **data**, and dispatch cannot tell an AST from a config file by extension — the
+overwhelming majority of `.json` in the world is data.
+
+So `pandoc` is reachable by `format := 'pandoc'` and by calling the reader directly, never
+by extension. Auto-routing would change what every existing `.json` read returns to serve
+a rare case, which is the wrong trade in the direction that silently alters a working
+query.
+
 Lookups are pure string work with no I/O, so they answer for files that don't exist:
 
 ```sql

@@ -1,8 +1,8 @@
 # Readers
 
-panduck has four native readers — RTF, DOCX, ODT and EPUB. All four were written against
-**real writer output** rather than the format specification, and the four together say
-something the first two alone did not.
+panduck has five native readers — RTF, DOCX, ODT, EPUB and LaTeX. All five were written
+against **real writer output** rather than the format specification, and the first four
+together say something the first two alone did not.
 
 ## How a format marks a heading predicts how badly writers disagree
 
@@ -160,6 +160,65 @@ carries a `#fragment` that resolution would drop.
     `spine_order.epub` is a panduck-only unit fixture rather than a differential one.
 
 **Not yet read:** tables, footnotes, nested list depth, `toc.ncx` / `nav.xhtml` metadata.
+
+## `read_latex_blocks(path)`
+
+LaTeX has no document model to parse against — it is a macro language, and two writers
+producing "the same document" agree on almost none of the bytes. So this reader is not a
+grammar over a fixed set of constructs; it is a **tokenizer** (control words, control
+symbols, brace groups, math shifts, comments, verbatim as a lexical mode) plus a **macro
+DISPOSITION table** that says, for each macro or environment name, what its bytes mean:
+
+| Disposition | Meaning |
+|---|---|
+| `SEMANTIC` | emits a `duck_block` element — `\textbf` -> bold, `\section` -> heading |
+| `TRANSPARENT` | the macro vanishes, its content argument is read as if the macro were never there |
+| `DROPPED` | the macro AND its arguments vanish — `\maketitle`, `\label`, presentational noise |
+| `TEXT` | expands to literal characters — `\LaTeX`, `\ldots` |
+
+!!! success "TRANSPARENT is what makes a pandoc file and a handwritten one read alike"
+    pandoc buries every heading two brace levels deep:
+    `\hypertarget{id}{\section{Heading One}\label{id}}`. A person just writes `\section{Heading
+    One}`. A reader with a pandoc-specific branch would learn nothing general; reading
+    `\hypertarget` as TRANSPARENT — drop the macro, descend into its content argument —
+    reads both, because that is what `\hypertarget` *means*, not what pandoc happens to
+    emit. `test/fixtures/handwritten.tex` and `test/fixtures/pandoc.tex` are the same
+    document written twice, and the sqllogictest asserts they yield identical headings.
+
+Sectioning is ranked against `\documentclass`: `\section` is heading level 1 in `article`
+but level 2 in `book`/`report`, where `\chapter` takes level 1. Lists are `bullet`
+(`itemize`) or `ordered` (`enumerate`), with the tight/loose distinction resolved at
+`\end{...}` — tight iff no blank line ever separated two items, per Pandoc's own rule.
+Inline formatting nests genuinely (`\textbf{\emph{x}}` is bold containing italic, not a
+single flattened run), unlike RTF's flat inline vocabulary.
+
+TeX's five **ligatures** are resolved in the tokenizer: `---` and `--` to em and en dashes,
+` `` ` and `''` to curly double quotes, and `~` to a no-break space. This is not cosmetic —
+pandoc spells every quotation mark and every unbreakable space that way, so without it the
+same sentence read from `.tex` and from `.docx` would differ in its punctuation. A lone
+`` ` `` or `'` is left alone, because `'` is also how English spells an apostrophe. None of
+the five run inside math or verbatim, whose bodies are cut out as raw bytes before the
+ligature rules ever see them.
+
+**Math is read opaque.** `$..$`, `\(..\)` (inline) and `$$..$$`, `\[..\]` (display) all
+become a `math` inline with `attributes['display']` set accordingly, but the TeX between
+the shifts is carried verbatim as `content` — never parsed, never macro-expanded. There is
+no `duck_block` shape for a formula's internal structure, so claiming to read one would be
+a falsehood about what the reader actually does with it; the alternative (dropping math
+silently) would lose a citation-bearing equation's text outright, which parsing a heading
+wrong does not.
+
+!!! note "Malformed input degrades, it does not throw"
+    An unclosed brace closes at end of input; an unterminated environment resolves the
+    same way a properly closed one does; a stray `\end` closes nothing unless it names
+    `document`, which ends the document from wherever it is found. A reader that refuses a
+    slightly-broken source is worse than one that returns most of it, and real-world TeX is
+    frequently slightly broken. `test/fixtures/edge_cases.tex` carries these cases —
+    together with math and verbatim — because they cannot be added to the matched
+    handwritten/pandoc pair without breaking the equivalence assertion.
+
+**Not yet read:** tables, `\newcommand` expansion (a user macro is read as an unclaimed
+name — dropped, its argument left as text — never expanded against its definition).
 
 ## Output shape
 

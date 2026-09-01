@@ -42,6 +42,7 @@ WHERE status = 'implemented' ORDER BY format;
 ----
 docx	read_docx_blocks
 epub	read_epub_blocks
+latex	read_latex_blocks
 odt	read_odt_blocks
 rtf	read_rtf_blocks
 

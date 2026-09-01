@@ -28,6 +28,21 @@ WHAT IT REPORTS, and why the three arms are separate:
          source_type in duckdb_markdown and duck_block_utils independently in
          the same week.
 
+GAPS HAS A BLIND SPOT OF ITS OWN, DOCUMENTED RATHER THAN FIXED. "Branched on"
+counts a constant's VALUE appearing as a bare string literal ANYWHERE in the
+scanned sources, not just where it is compared against duck_block vocabulary --
+so a short, generic value collides with unrelated code and reads as "handled"
+when nothing branches on it as vocabulary at all. Measured on panduck:
+TYPE_FIGURE ('figure') collides with the LaTeX environment name in
+latex_macros.cpp; TYPE_PAGE ('page_break') collides with a provenance comment
+in duck_block_types.hpp; VALUE_LIST ('list') collides with TYPE_LIST, the
+block type -- duck_block's own spec warns "list" is spelled as both a block
+type and a value type. All three stay in INTENTIONAL_GAPS with reasons, not
+because the scan proved them unhandled, but because the scan CANNOT see past
+the collision to tell. An empty GAPS section therefore means "no gap this scan
+can SEE" -- not "no gap." Scoping the literal match to duck_block call sites
+would close this, but that is real work, deliberately deferred.
+
 COMPARED BY NAME AND VALUE, NEVER BY DIFFING TEXT. This is the design decision
 the whole check rests on. Upstream rewrote every idx_t to uint64_t in 3957f36
 and later added ~88 lines of vendoring guidance -- hundreds of changed bytes,
@@ -99,7 +114,11 @@ INTENTIONAL_GAPS = {
                   "produces the value kind, which belongs to metadata encoding",
     "VALUE_STRING": "value kind unused -- see KIND_VALUE",
     "VALUE_BOOL": "value kind unused -- see KIND_VALUE",
-    "VALUE_LIST": "value kind unused -- see KIND_VALUE",
+    "VALUE_LIST": "value kind unused -- see KIND_VALUE. NOTE: this scan cannot actually "
+                  "verify that -- 'list' also collides with TYPE_LIST's own value, so the "
+                  "GAPS scan would report this as 'branched on' even if the reason above "
+                  "stopped being true. Documented, not fixed -- see the docstring's "
+                  "GAPS BLIND SPOT section",
     "VALUE_MAP": "value kind unused -- see KIND_VALUE",
     "VALUE_BLOCKS": "value kind unused -- see KIND_VALUE",
     "VALUE_INLINES": "value kind unused -- see KIND_VALUE",
@@ -108,13 +127,19 @@ INTENTIONAL_GAPS = {
                      "have it available and none read it",
     "TYPE_PAGE": "physical pagination, added upstream 2026-08-31. No panduck source "
                  "format exposes page boundaries: docx/odt paginate at layout time, "
-                 "epub paginates by spine document",
+                 "epub paginates by spine document. NOTE: 'page_break' also collides "
+                 "with a provenance comment in duck_block_types.hpp, so the GAPS scan "
+                 "cannot verify this reason either -- see the docstring's GAPS BLIND "
+                 "SPOT section",
     "TYPE_DEFLIST": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
                     "no code path, currently dropped",
     "TYPE_LINEBLOCK": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
                       "no code path, currently dropped",
     "TYPE_FIGURE": "pandoc_ast_map records this STATUS_PLANNED -- pandoc 3.0+, "
-                   "no code path, currently dropped",
+                   "no code path, currently dropped. NOTE: 'figure' also collides with "
+                   "the LaTeX environment NAME in latex_macros.cpp, so the GAPS scan "
+                   "cannot verify this reason either -- see the docstring's GAPS BLIND "
+                   "SPOT section",
 }
 
 # Files whose contents count as "panduck branches on this".
@@ -257,8 +282,18 @@ def branched_on(root):
     """
     import glob
     named, literal = set(), set()
+    # Excluded BY NAME, not by narrowing SCAN_GLOBS: the vendored header is what
+    # DEFINES the vocabulary, so scanning it reads every constant's own definition
+    # line back as if it were consumer usage -- every value it defines then trivially
+    # satisfies "value not in literal" and GAPS can never report anything. A narrower
+    # glob would hide this again the moment someone relocates the header; naming the
+    # file explicitly means relocating it breaks this exclusion loudly instead of
+    # silently.
+    excluded = os.path.normpath(os.path.join(root, HEADER_REL))
     for pattern in SCAN_GLOBS:
         for path in glob.glob(os.path.join(root, pattern)):
+            if os.path.normpath(path) == excluded:
+                continue
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
             named |= set(re.findall(r'DuckBlockTypes::([A-Z_][A-Z0-9_]*)', text))

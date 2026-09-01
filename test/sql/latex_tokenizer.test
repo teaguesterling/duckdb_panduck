@@ -1,0 +1,211 @@
+# name: test/sql/latex_tokenizer.test
+# description: the LaTeX tokenizer, tested without any duck_block machinery
+# group: [sql]
+
+require panduck
+
+# A control word is backslash plus LETTERS, and the whitespace after it is CONSUMED --
+# `\LaTeX foo` is one control word then `foo`, not the word plus " foo". Getting this
+# wrong inserts a space before every macro's following text.
+query II
+SELECT kind, text FROM panduck_latex_tokens('\textbf{a} b');
+----
+control_word	textbf
+begin_group	{
+text	a
+end_group	}
+text	 b
+
+# `%` DISCARDS TO END OF LINE, THEN THE NEWLINE, THEN THE NEXT LINE'S LEADING WHITESPACE.
+# That is TeX's actual rule and the reason pandoc writes a trailing `%` -- it exists to
+# suppress the space the line break would otherwise produce. A tokenizer that strips the
+# comment but keeps the newline injects a leading space into every pandoc heading.
+query II
+SELECT kind, text FROM panduck_latex_tokens(e'a% note\n   b');
+----
+text	ab
+
+# \% is a literal percent, not a comment.
+query II
+SELECT kind, text FROM panduck_latex_tokens('100\% sure');
+----
+text	100
+control_symbol	%
+text	 sure
+
+# A BLANK LINE IS A PARAGRAPH BREAK; A SINGLE NEWLINE IS JUST A SPACE. That is LaTeX's
+# only paragraph signal. Asserted as kinds and counts rather than as token values: a text
+# run spanning a single newline CONTAINS one, and sqllogictest uses newlines as row
+# boundaries, so asserting the value would be testing the harness's escaping rather than
+# the tokenizer.
+query II
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo\n\nthree')
+GROUP BY kind ORDER BY kind;
+----
+par_break	1
+text	2
+
+# ...and the discriminating half: NO blank line means NO break, so the whole thing is one
+# text run. A tokenizer that split on every newline would pass the assertion above and
+# fail this one.
+query II
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo')
+GROUP BY kind ORDER BY kind;
+----
+text	1
+
+# Ligatures are resolved in the text scanner, where the source spells them.
+query II
+SELECT kind, text FROM panduck_latex_tokens('a --- b -- c');
+----
+text	a — b – c
+
+# Math is opaque: the shift is a token, the content is text, nothing is parsed.
+query I
+SELECT count(*) FROM panduck_latex_tokens('$x^2$') WHERE kind = 'math_shift';
+----
+2
+
+# BOTH SPELLINGS OF MATH. \( \) and \[ \] lex as control symbols, so without an explicit
+# branch they fall through to the generic control-symbol case and the math vanishes.
+# pandoc PREFERS these forms, so a reader that handles only $ loses math on exactly the
+# documents most likely to contain it. Math is a tokenizer construct, not a macro -- the
+# disposition table never sees it.
+query I
+SELECT count(*) FROM panduck_latex_tokens('\(a\) and \[b\]') WHERE kind = 'math_shift';
+----
+4
+
+# MATH IS A LEXICAL MODE TOO, THE SAME WAY VERBATIM IS: `---` is three hyphens and `%` is a
+# percent sign, not the ligature and comment rules that run over ordinary text -- so the
+# body has to be cut out HERE, before those rules can run, exactly like LexVerbatim does for
+# \begin{verbatim} below. Exactly one TEXT token between the two math_shift tokens is what
+# proves the body was cut at the lexer rather than reconstructed downstream from tokens
+# that already lost the information.
+query I
+SELECT count(*) FROM panduck_latex_tokens(E'$a --- b % not a comment\nc$') WHERE kind = 'text';
+----
+1
+
+# (the embedded newline is flattened to the two characters \n -- an expected block
+# containing a literal newline reads as two rows, not one value with a newline in it.)
+query I
+SELECT replace(text, chr(10), '\n') FROM panduck_latex_tokens(E'$a --- b % not a comment\nc$') WHERE kind = 'text';
+----
+a --- b % not a comment\nc
+
+# ...and \( \) closes on the CLOSER'S OWN BYTES, backslash included, rather than treating
+# its leading backslash as an escape that consumes it -- a bug this exact shape once caused
+# by checking the escape rule before the closer.
+query II
+SELECT kind, text FROM panduck_latex_tokens('\(a\) b');
+----
+math_shift	(empty)
+text	a
+math_shift	(empty)
+text	 b
+
+# VERBATIM IS A LEXICAL MODE, NOT A MACRO. Inside it `%` is a percent sign, `\c` is two
+# characters and `---` is three hyphens -- and every one of those rules has already run by
+# the time a reader sees tokens, so the body has to be cut out HERE, where the bytes still
+# exist. Reconstructing it downstream cannot get back what the comment scanner ate.
+#
+# The \begin and \end are still ordinary tokens, so the reader's environment stack sees a
+# balanced pair and needs no lexical special case of its own.
+query II
+SELECT kind, text FROM panduck_latex_tokens(E'\\begin{verbatim}\na % b \\c ---\n\\end{verbatim}');
+----
+control_word	begin
+begin_group	{
+text	verbatim
+end_group	}
+text	a % b \c ---
+control_word	end
+begin_group	{
+text	verbatim
+end_group	}
+
+# ...and an UNTERMINATED verbatim still closes. The tokenizer emits the \end it never saw,
+# because a body that runs to end of input is a truncated document rather than a reason to
+# leave an environment open for whatever follows -- there is nothing that follows.
+query I
+SELECT count(*) FROM panduck_latex_tokens(E'\\begin{verbatim}\nx')
+WHERE kind = 'control_word' AND text = 'end';
+----
+1
+
+# ---------------------------------------------------------------------------
+# THE LIGATURES. pandoc spells every quotation mark and every unbreakable space this way:
+#   $ pandoc -f markdown -t latex <<< 'He said "hello" to Dr. Smith.'
+#   He said ``hello'' to Dr.~Smith.
+# so a tokenizer that resolves only the dashes returns literal backticks and tildes where
+# the SAME document read as DOCX or EPUB returns real punctuation -- which defeats the one
+# thing this reader exists to provide. All five in one run, because their ORDER matters:
+# `` must be tried before a lone backtick and '' before a lone quote.
+query II
+SELECT kind, text FROM panduck_latex_tokens('a---b--c ``q'''' d');
+----
+text	a—b–c “q” d
+
+# ...and the fifth, asserted BY CODE POINT because it has no visible spelling: `~` is a
+# TIE, a space that cannot break, so `Dr.~Smith` is two words. Writing U+00A0 into the
+# expected block below would put an invisible byte in a test file; 160 is legible.
+query I
+SELECT list_transform(regexp_split_to_array(text, ''), lambda c: unicode(c))[4]
+FROM panduck_latex_tokens('Dr.~Smith');
+----
+160
+
+# ...and a LONE ` or ' is left exactly as written. TeX curls them into single quotes, but
+# `'` is also how English spells an apostrophe and nothing here can tell the two apart;
+# guessing would rewrite `don't` into `don’t` on the strength of no evidence.
+query I
+SELECT text FROM panduck_latex_tokens('don''t `x');
+----
+don't `x
+
+# LIGATURES DO NOT RUN INSIDE MATH OR VERBATIM. Both bodies were cut out as raw bytes
+# before this loop ever sees them, and the new ligatures must not have re-opened that:
+# `~` in a formula is a TeX tie in the source and has to come back byte for byte.
+query I
+SELECT text FROM panduck_latex_tokens('$a~b``c''''d$') WHERE kind = 'text';
+----
+a~b``c''d
+
+query I
+SELECT text FROM panduck_latex_tokens(E'\\begin{verbatim}\na ~ b `` c\n\\end{verbatim}')
+WHERE kind = 'text' AND text LIKE 'a %';
+----
+a ~ b `` c
+
+# A CONTROL SYMBOL IS ONE CHARACTER, WHICH IS NOT ONE BYTE. `\é` -- the accent spelled
+# directly rather than as \'e -- is a two-byte code point, and taking its lead byte alone
+# both made an invalid control symbol and left the continuation byte to poison the text
+# run after it. The whole code point is one token; nothing is left over.
+query II
+SELECT kind, text FROM panduck_latex_tokens('caf\é and more');
+----
+text	caf
+control_symbol	é
+text	 and more
+
+# AN UNCLOSED LISTING OPTION IS NOT AN OPTION. `src.find(']')` from the `[` runs to the
+# first `]` ANYWHERE in the rest of the file -- `int x = a[0];` two lines down will do --
+# and silently deletes every source line before it. The bound is the newline that ends the
+# \begin line, because the body starts on the next one; unclosed by then, the `[` is part
+# of the listing and stays there.
+query I
+SELECT replace(text, chr(10), '\n') FROM panduck_latex_tokens(
+  E'\\begin{lstlisting}[caption=Fig 1\nint x = a[0];\nint y = 2;\n\\end{lstlisting}')
+WHERE kind = 'text' AND text LIKE '%int y%';
+----
+[caption=Fig 1\nint x = a[0];\nint y = 2;
+
+# ...and a WELL-FORMED option list is still removed, closing bracket and all. The bound
+# would be useless if it also cost the reader the ordinary spelling.
+query I
+SELECT replace(text, chr(10), '\n') FROM panduck_latex_tokens(
+  E'\\begin{lstlisting}[language=C]\nint x = a[0];\n\\end{lstlisting}')
+WHERE kind = 'text' AND text LIKE '%int x%';
+----
+int x = a[0];

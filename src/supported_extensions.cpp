@@ -47,8 +47,17 @@ const FormatReader FORMATS[] = {
      "items, blockquotes, divs, links and images; run formatting resolves through CSS "
      "classes because LibreOffice's export emits no semantic markup at all. Tables and "
      "footnotes are not read yet"},
-    {"latex", EXT_LATEX, nullptr, STATUS_PLANNED,
-     "roadmap phase 4: streaming tokenizer for macros, environments, math"},
+    {"latex", EXT_LATEX, "read_latex_blocks", STATUS_IMPLEMENTED,
+     "a tokenizer plus a macro DISPOSITION table -- semantic, transparent, dropped, text -- "
+     "rather than a grammar, because LaTeX has no document model to parse against. "
+     "TRANSPARENT is what makes a pandoc file and a handwritten one read alike: pandoc "
+     "buries every \\section inside \\hypertarget{id}{%...}, and descending into a content "
+     "argument reads that without a pandoc-specific rule. Sectioning (ranked against the "
+     "\\documentclass), paragraphs, lists (bullet and ordered, tight/loose), block quotes, "
+     "verbatim, inline formatting with genuine nesting, links, images and footnotes. Math "
+     "($..$, $$..$$, \\(..\\), \\[..\\]) is read OPAQUE -- the TeX between the shifts is kept "
+     "verbatim as content, never parsed or macro-expanded. Tables and \\newcommand "
+     "expansion are not read yet"},
     {"rst", EXT_RST, nullptr, STATUS_PLANNED, "roadmap phase 5"},
     {"org", EXT_ORG, nullptr, STATUS_PLANNED, "roadmap phase 5"},
     {"mediawiki", EXT_MEDIAWIKI, nullptr, STATUS_PLANNED, "roadmap phase 5"},

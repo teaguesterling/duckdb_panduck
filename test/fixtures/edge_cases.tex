@@ -1,0 +1,9 @@
+% Cases the matched pair cannot carry: math, verbatim, and malformed input.
+\documentclass{article}
+\begin{document}
+Inline $x^2$ and display $$y = mx + b$$ here.
+\begin{verbatim}
+  \section{not a heading}  % not a comment
+\end{verbatim}
+\textbf{unclosed brace
+\end{document}

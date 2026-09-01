@@ -80,5 +80,26 @@ that loads the extension, and panduck cannot invoke a pragma from inside a macro
 | macros behind a PRAGMA — `db_toc`, `db_section`, `db_ansi` | no |
 
 `doc_toc` is therefore built on the **scalar** `db_blocks_toc`, not the table macro
-`db_toc`. The rest lands when `duck_block_utils` registers `db_*` at LOAD, or exposes them
-as C++ scalars.
+`db_toc`.
+
+### Both blockers are fixed upstream, and neither is fixed here yet
+
+`duck_block_utils` has since done two things on its `main`, and it is worth being precise
+that neither has reached panduck:
+
+1. **The pragma blocker is gone.** The query macros are registered at LOAD via
+   `DefaultMacro` / `DefaultTableMacro`, so `doc_section` and `doc_sections_like` become
+   possible.
+2. **Everything is renamed.** `db_*` reads as *database* everywhere else in SQL, so the
+   surface moved to `duck_block_*` (one element) and `duck_blocks_*` (a collection) —
+   `db_blocks_toc` → `duck_blocks_toc`, `db_block_types` → `duck_block_type_names`.
+
+Both are blocked on the same thing: **the community build has not been republished.**
+panduck's `doc_*` macros name these functions at runtime, so they follow whatever is
+`INSTALL`ed, not panduck's vendored vocabulary header — that copy is a compile-time
+dependency on constant names and says nothing about the function surface. Two independent
+clocks.
+
+`test/sql/doc_namespace.test` asserts which spelling the installed build has, so the day
+that changes the suite says so by name rather than failing three assertions later with
+`function db_blocks_toc does not exist`.

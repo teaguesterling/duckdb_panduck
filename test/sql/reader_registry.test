@@ -27,11 +27,12 @@ SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ex
 .rtf	rtf	panduck	read_rtf_blocks
 
 # A planned-but-unimplemented format must NOT be routable: dispatch would name a function
-# that does not exist. .rst is the current example -- .docx was, then .odt, then .epub,
-# then .tex, each of which made this assertion correctly go red and demand promotion
-# rather than a patch. The example moving down the roadmap is the ratchet working.
+# that does not exist. .wiki is the current example -- .docx was, then .odt, then .epub,
+# then .tex, then .org, then .rst, each of which made this assertion correctly go red and
+# demand promotion rather than a patch. The example moving down the roadmap is the ratchet
+# working, and mediawiki is the last one left.
 query I
-SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.rst';
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.wiki';
 ----
 0
 

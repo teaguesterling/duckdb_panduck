@@ -118,6 +118,23 @@ ODT_SCOPE = (
     "text level caught.",
 )
 
+RST_ADMONITION = (
+    REFERENCE_WRONG,
+    "pandoc SYNTHESISES a title paragraph for an admonition; panduck records the directive "
+    "name as data. MEASURED: `.. note::` yields, in pandoc, Div[note] > Div[title] > "
+    "Para 'Note' alongside the body -- and the string 'Note' appears NOWHERE in the source "
+    "document. It is docutils' RENDERING convention materialised into the AST.\n\n"
+    "panduck emits `div` with attributes['source_type']='note' and the body beneath it. The "
+    "same fact, kept queryable instead of spelled as prose. That is better for this "
+    "vocabulary in a way worth stating: a consumer asking WHICH admonition reads an "
+    "attribute rather than string-matching an injected paragraph, and pandoc's invented "
+    "'Note' would otherwise appear in full-text search as document content the author never "
+    "wrote -- the same defect class as the pre-5.0 table tuple polluting search results.\n\n"
+    "The directive set is OPEN -- docutils ships dozens, Sphinx hundreds -- so recording the "
+    "name rather than minting a role per admonition is also what keeps this reader from "
+    "needing a vocabulary change per directive.",
+)
+
 OFFICE_META = (
     REFERENCE_WRONG,
     "panduck recovers document metadata that pandoc drops. MEASURED: `pandoc file.docx "
@@ -259,6 +276,28 @@ CASES = [
         "read_rtf_blocks",
         expect={"text": RTF_LISTS, "skeleton": RTF_LISTS, "marked": RTF_LISTS},
         note="LibreOffice-generated RTF: headings via {\\stylesheet} \\sN",
+    ),
+    Case(
+        "test/fixtures/handwritten.rst",
+        "rst",
+        "read_rst_blocks",
+        # DELIBERATELY NON-CONVENTIONAL ADORNMENT ORDER: `~` appears first and `=` second,
+        # so `~` is level 1 and `=` is level 2. RST sets a heading's level by WHERE its
+        # adornment first appeared, not by which character it is. A conventional document
+        # cannot tell the right rule from the wrong one -- a reader hardcoding `= -> 1`
+        # passes every fixture a person following convention would write.
+        expect={"text": RST_ADMONITION, "skeleton": RST_ADMONITION, "marked": RST_ADMONITION},
+        note="hand-written RST: ~ before =, so the adornment ORDER decides the levels",
+    ),
+    Case(
+        "test/fixtures/pandoc.rst",
+        "rst",
+        "read_rst_blocks",
+        # pandoc's own writer NORMALISES adornments to = then -, so this fixture uses
+        # different characters for the same levels as its handwritten twin. The pair is
+        # what proves the rule is about order rather than about the character.
+        expect={"text": RST_ADMONITION, "skeleton": RST_ADMONITION, "marked": RST_ADMONITION},
+        note="pandoc-generated RST: adornments normalised to = and -",
     ),
     Case(
         "test/fixtures/handwritten.org",

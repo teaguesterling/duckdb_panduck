@@ -58,7 +58,15 @@ const FormatReader FORMATS[] = {
      "($..$, $$..$$, \\(..\\), \\[..\\]) is read OPAQUE -- the TeX between the shifts is kept "
      "verbatim as content, never parsed or macro-expanded. Tables and \\newcommand "
      "expansion are not read yet"},
-    {"rst", EXT_RST, nullptr, STATUS_PLANNED, "roadmap phase 5"},
+    {"rst", EXT_RST, "read_rst_blocks", STATUS_IMPLEMENTED,
+     "heading level is set by the ORDER OF FIRST APPEARANCE of an adornment character, "
+     "not by which character it is -- measured, and the opposite of the usual assumption "
+     "that `=` is level 1. A field list is a DEFINITION LIST and not metadata, so this is "
+     "the only panduck format with no kind='value' rows. Directives are an OPEN set: "
+     "code-block becomes `code`, everything else becomes `div` with the directive name in "
+     "attributes['source_type'], and the body is descended into rather than dropped. "
+     "Substitutions, citations, footnotes, roles and .. include:: are out of scope and "
+     "DROPPED rather than left to fall through as prose"},
     {"org", EXT_ORG, "read_org_blocks", STATUS_IMPLEMENTED,
      "line-scanned, not tokenized: Org's block structure is entirely line prefixes and "
      "only inline markup is character-level. TODO keywords, tags, property drawers, "

@@ -39,6 +39,8 @@ set(EXTENSION_SOURCES
     src/odt_reader.cpp
     src/org_reader.cpp
     src/org_scanner.cpp
+    src/rst_reader.cpp
+    src/rst_scanner.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp
     src/rtf_reader.cpp

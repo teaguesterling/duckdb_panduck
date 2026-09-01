@@ -6,6 +6,7 @@
 #include "epub_reader.hpp"
 #include "latex_reader.hpp"
 #include "org_reader.hpp"
+#include "rst_reader.hpp"
 #include "latex_tokenizer.hpp"
 #include "odt_reader.hpp"
 #include "pandoc_ast_map.hpp"
@@ -70,6 +71,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterLatexTokensFunction(loader);
 	RegisterLatexReaderFunction(loader);
 	org::RegisterOrgReader(loader);
+	rst::RegisterRstReader(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

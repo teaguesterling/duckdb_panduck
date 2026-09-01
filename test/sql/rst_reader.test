@@ -1,0 +1,182 @@
+# name: test/sql/rst_reader.test
+# description: read_rst_blocks() -- reStructuredText, whose heading levels are ordinal
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# HEADING LEVEL IS SET BY THE ORDER OF FIRST APPEARANCE OF THE ADORNMENT CHARACTER, not by
+# which character it is. This is the single most important fact about the format and the
+# one most likely to be got wrong by assuming.
+#
+# Here `~` appears FIRST, so `~` is level 1 and `=` is level 2 -- the reverse of the usual
+# assumption that `=` is always level 1. Measured against pandoc, which agrees.
+#
+# A READER THAT HARDCODES `= -> 1, - -> 2` PASSES EVERY CONVENTIONAL DOCUMENT. That is why
+# this assertion uses an unconventional order: a fixture written by someone following the
+# convention cannot tell the right rule from the wrong one.
+query II
+SELECT content, attributes['heading_level'] FROM read_rst_blocks_string(
+  E'First\n~~~~~\n\nSecond\n======\n\nThird\n------\n')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+First	1
+Second	2
+Third	3
+
+# ...and the SAME characters in a different order give different levels. The pair is the
+# assertion; either half alone is consistent with the character deciding.
+query II
+SELECT content, attributes['heading_level'] FROM read_rst_blocks_string(
+  E'First\n======\n\nSecond\n~~~~~~\n')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+First	1
+Second	2
+
+# `=====` IS AMBIGUOUS with a simple table's rule, and the disambiguation is the run count:
+# one run is an adornment, two or more is a table. Testing tables first without that turned
+# every `Title\n=====` -- the most conventional heading spelling there is -- into a
+# paragraph.
+query II
+SELECT element_type, content FROM read_rst_blocks_string(E'Title\n=====\n');
+----
+heading	Title
+
+# ---------------------------------------------------------------------------
+# A FIELD LIST IS NOT METADATA. Measured: pandoc emits a DefinitionList and an EMPTY meta.
+# RST is the only one of panduck's seven formats with no document metadata at all.
+#
+# The opposite reading is the obvious one -- the syntax exists to record document fields,
+# docutils itself promotes them, and every other format's author lives in metadata. A
+# reader written on that assumption emits kind='value' rows pandoc does not have, and
+# NOTHING IN THE VOCABULARY WOULD OBJECT: the shape is valid and the keys are plausible.
+# Only a differential against pandoc catches it, which is why it is asserted here.
+query IIII
+SELECT kind, element_type, attributes['role'], content FROM read_rst_blocks_string(
+  E':Author: A. Writer\n:Version: 1.0\n') ORDER BY element_order;
+----
+block	list	NULL	NULL
+block	list_item	term	Author
+block	list_item	definition	A. Writer
+block	list_item	term	Version
+block	list_item	definition	1.0
+
+# No kind='value' rows are produced by this reader, ever.
+query I
+SELECT count(*) FROM read_rst_blocks_string(E':Author: A. Writer\n\nBody.\n') WHERE kind = 'value';
+----
+0
+
+# ---------------------------------------------------------------------------
+# DIRECTIVES ARE AN OPEN SET, so the name is RECORDED rather than a role minted per
+# directive. `code-block` is the exception -- its body is content, not prose.
+query IIII
+SELECT element_type, level, attributes['source_type'], content FROM read_rst_blocks_string(
+  E'.. note::\n\n   Body here.\n') ORDER BY element_order;
+----
+div	1	note	NULL
+paragraph	2	NULL	Body here.
+
+# THE BODY IS DESCENDED INTO, never dropped -- a directive body is prose, and the LaTeX
+# reader's rule for an unknown environment applies: dropping it loses paragraphs. The
+# paragraph row above is that guarantee.
+query III
+SELECT element_type, attributes['language'], content FROM read_rst_blocks_string(
+  E'.. code-block:: python\n\n   print(1)\n');
+----
+code	python	print(1)
+
+# ---------------------------------------------------------------------------
+# INLINE. `**strong**` is tested BEFORE `*emph*`: the shorter marker is a prefix of the
+# longer, so checking emphasis first turns every bold run into an empty italic followed by
+# stray asterisks.
+query II
+SELECT element_type, content FROM read_rst_blocks_string('A *emph* and **strong** and ``lit``.')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+italic	emph
+bold	strong
+code	lit
+
+# A link needs its trailing underscore -- that is what separates it from interpreted text.
+query III
+SELECT element_type, content, attributes['href'] FROM read_rst_blocks_string(
+  'See `label <http://x.com>`_ here.') WHERE element_type = 'link';
+----
+link	label	http://x.com
+
+# ---------------------------------------------------------------------------
+# LISTS. ORDEREDNESS ENDS A LIST as surely as a dedent does: a bullet list followed by an
+# enumerated one at the same indent is TWO lists. Without that rule they became one list
+# carrying both, and the second list's numbering was lost entirely.
+query III
+SELECT element_type, attributes['list_type'], content FROM read_rst_blocks_string(
+  E'- a\n- b\n\n1. c\n2. d\n') ORDER BY element_order;
+----
+list	bullet	NULL
+list_item	NULL	a
+list_item	NULL	b
+list	ordered	NULL
+list_item	NULL	c
+list_item	NULL	d
+
+# A definition is a term line followed by an indented body -- the same shape as Org's
+# ` :: ` and EPUB's <dl>, reached by a third syntax.
+query III
+SELECT element_type, attributes['role'], content FROM read_rst_blocks_string(
+  E'term\n    the definition\n') ORDER BY element_order;
+----
+list	NULL	NULL
+list_item	term	term
+list_item	definition	the definition
+
+# ---------------------------------------------------------------------------
+# TABLES: both grammars produce the spec 5.0 native schema. The grid form is delimited;
+# the simple form is POSITIONAL -- its column boundaries come from the rule row's run
+# lengths, which is the only positional extraction in this reader.
+query II
+SELECT encoding, content FROM read_rst_blocks_string(
+  E'+----+----+\n| H1 | H2 |\n+====+====+\n| a  | b  |\n+----+----+\n');
+----
+json	{"headers":["H1","H2"],"rows":[["a","b"]]}
+
+query II
+SELECT encoding, content FROM read_rst_blocks_string(
+  E'=====  =====\nC1     C2\n=====  =====\nx      y\n=====  =====\n');
+----
+json	{"headers":["C1","C2"],"rows":[["x","y"]]}
+
+# ---------------------------------------------------------------------------
+# A LITERAL BLOCK opens with `::`, which docutils keeps as a single colon in the prose. A
+# bare `::` paragraph disappears entirely rather than leaving a stray colon.
+query II
+SELECT element_type, content FROM read_rst_blocks_string(
+  E'Follows::\n\n    indented code\n') ORDER BY element_order;
+----
+paragraph	Follows:
+code	indented code
+
+# A TRANSITION and a heading underline are the SAME LINE SHAPE, told apart only by whether
+# text precedes them. Both spellings in one query, because a reader that handles one looks
+# correct until it meets the other.
+query II
+SELECT element_type, coalesce(content, '(no content)') FROM read_rst_blocks_string(
+  E'Head\n----\n\nBody.\n\n----\n') ORDER BY element_order;
+----
+heading	Head
+paragraph	Body.
+hr	(no content)
+
+# A COMMENT produces nothing, and must do so by being DROPPED rather than falling through
+# as prose -- the defect the Org reader shipped with :PROPERTIES: drawers.
+query I
+SELECT count(*) FROM read_rst_blocks_string(E'.. this is a comment\n\nBody.\n')
+WHERE content LIKE '%comment%';
+----
+0
+
+query II
+SELECT element_type, content FROM read_rst_blocks_string(E'.. this is a comment\n\nBody.\n');
+----
+paragraph	Body.

@@ -15,7 +15,7 @@ require panduck
 # Heading detection path 1: \outlinelevelN (pandoc)
 # ---------------------------------------------------------------------------
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----
@@ -26,7 +26,7 @@ Heading Two	2
 # Heading detection path 2: \sN resolved through {\stylesheet} (LibreOffice/Word)
 # ---------------------------------------------------------------------------
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----

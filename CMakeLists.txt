@@ -29,6 +29,7 @@ include_directories(src/include duck_block_utils/src/include)
 set(EXTENSION_SOURCES
     src/docx_reader.cpp
     src/panduck_extension.cpp
+    src/epub_reader.cpp
     src/odt_reader.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp

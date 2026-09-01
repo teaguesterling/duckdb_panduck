@@ -46,10 +46,23 @@ headings, inline types and Unicode, all of which were already correct.
 ### What counts as identity
 
 Two readers never agree byte-for-byte and mostly shouldn't have to. `canonical.py`
-normalises away three differences that carry no information — pandoc emits explicit `Space`
-inlines where panduck folds spaces into runs; pandoc splits text per word; pandoc nests
-`Strong [Str "bold"]` where panduck puts content on the `bold` inline. Each case then
-declares how far up the ladder agreement is required:
+normalises away differences that carry no information:
+
+- pandoc emits explicit `Space` inlines where panduck folds spaces into runs
+- pandoc splits text per word
+- pandoc nests `Strong [Str "bold"]` where panduck puts content on the `bold` inline
+- **a tight list item's text belongs to the item.** pandoc splits `<li>bullet one</li>`
+  into an empty `list_item` plus a `Plain`; panduck puts the text on the item. The fold
+  reads *pandoc's own signal* — it uses `Plain` rather than `Para` for exactly this case —
+  rather than guessing.
+- **an empty paragraph is not a block.** pandoc's EPUB reader injects one per spine
+  document as a cross-document link target. The rule is applied to **both sides**, or it
+  would just be excusing one reader; container blocks (`div`, `blockquote`, `list_item`,
+  `hr`, …) are kept, because their identity is structural rather than textual.
+
+Both of the last two were found by EPUB and both shifted every later position, which reads
+exactly like a reader defect and is not one. Each case then declares how far up the ladder
+agreement is required:
 
 | Level | Compares | Catches |
 |---|---|---|
@@ -66,6 +79,10 @@ pandoc is the reference, and pandoc is not always right:
 - On LibreOffice files, pandoc detects **no headings at all** — its raw JSON for
   `libreoffice_outlinelvl.docx` is `[Para, Para, Para, …]`, no `Header` — because it ignores
   `w:outlineLvl`. panduck reads them correctly.
+- On `libreoffice.epub`, pandoc detects no **formatting** either: LibreOffice's EPUB export
+  puts every bold and italic in a CSS class, which pandoc does not resolve. panduck does.
+- On a book whose `.opf` sits in a subdirectory, pandoc **cannot open the file at all**:
+  it concatenates manifest hrefs without normalising `../`.
 
 So divergences are **triaged**, not assumed to be panduck's fault:
 
@@ -79,6 +96,11 @@ So divergences are **triaged**, not assumed to be panduck's fault:
 The ledger **ratchets both ways**: an undeclared divergence fails, and so does a declared
 divergence that has silently started agreeing — that one should be promoted rather than left
 rotting. Both directions are negative-tested.
+
+`pandoc.epub` is the **only fixture with no ledger entry at all** — it agrees at every
+level, and the empty entry is itself the assertion. EPUB content documents are XHTML, so
+both readers see the same tree and no representational gap is left to blame; a divergence
+appearing there is a real defect by construction.
 
 `--report` shows raw divergences without asserting, which is how every ledger entry was
 derived. Entries written from expectation rather than measurement are how a validator ends

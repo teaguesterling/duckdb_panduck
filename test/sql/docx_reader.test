@@ -19,7 +19,7 @@ require panduck
 # Mechanism 1: w:pStyle resolved through word/styles.xml (pandoc)
 # ---------------------------------------------------------------------------
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----
@@ -30,7 +30,7 @@ Heading Two	2
 # Mechanism 2: w:outlineLvl, with no heading pStyle anywhere (LibreOffice)
 # ---------------------------------------------------------------------------
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----

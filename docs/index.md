@@ -19,20 +19,20 @@ SELECT level, title FROM doc_toc('report.docx');  -- table of contents, by path
 | | |
 |---|---|
 | [Architecture](architecture.md) | The layering, and why nothing depends upward |
-| [Readers](readers.md) | RTF and DOCX, and what real writers actually emit |
+| [Readers](readers.md) | RTF, DOCX, ODT and EPUB, and what real writers actually emit |
 | [Dispatch](dispatch.md) | The derived registry and runtime reader registration |
 | [The doc_ namespace](doc_namespace.md) | Path-taking sugar over `db_*` |
 | [Validation](validation.md) | How the pandoc-compatibility claim is tested |
 
 ## Status
 
-Two native readers — **RTF** and **DOCX** — plus full path dispatch, runtime reader
-registration, and a differential validator that checks panduck against a real pandoc on
-every CI run.
+Four native readers — **RTF**, **DOCX**, **ODT** and **EPUB** — plus full path dispatch,
+runtime reader registration, and a differential validator that checks panduck against a
+real pandoc on every CI run.
 
-ODT, EPUB, LaTeX, RST, Org and MediaWiki are **declared but not implemented**, and the
-registry knows the difference: a format with `status='planned'` has a NULL reader and is
-skipped, so dispatch can never route to a function that doesn't exist.
+LaTeX, RST, Org and MediaWiki are **declared but not implemented**, and the registry knows
+the difference: a format with `status='planned'` has a NULL reader and is skipped, so
+dispatch can never route to a function that doesn't exist.
 
 ## The function surface
 

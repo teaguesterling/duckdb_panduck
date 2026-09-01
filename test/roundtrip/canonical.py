@@ -122,8 +122,27 @@ def pandoc_inlines_to_marked(inlines) -> str:
     return "".join(out)
 
 
+#: Block types whose identity is STRUCTURAL: they mean something while carrying no text of
+#: their own, because the text is in the blocks they contain. A paragraph is not one of
+#: them -- an empty paragraph is nothing in either model.
+CONTAINER_TYPES = {"div", "blockquote", "list_item", "figure", "table", "hr", "section", "caption"}
+
+
+def _drop_empty_paragraphs(blocks: List[CBlock]) -> List[CBlock]:
+    """Remove text-free non-container blocks, symmetrically on both sides.
+
+    pandoc's EPUB reader injects an empty Para per spine document as a cross-document link
+    target -- pure bookkeeping, present in no other format's output and in no reader that
+    is not pandoc. panduck's readers already skip whitespace-only paragraphs. Applying one
+    rule to both sides is what makes that a shared convention rather than a divergence, and
+    it must be symmetric or it would just be excusing one reader.
+    """
+    return [b for b in blocks if b.marked or b.element_type in CONTAINER_TYPES]
+
+
 def pandoc_blocks_to_canonical(blocks, out=None) -> List[CBlock]:
     """Flatten a Pandoc block list into canonical blocks, in document order."""
+    top_level = out is None
     if out is None:
         out = []
     for node in blocks or []:
@@ -142,8 +161,18 @@ def pandoc_blocks_to_canonical(blocks, out=None) -> List[CBlock]:
         elif t in ("BulletList", "OrderedList"):
             items = c[1] if t == "OrderedList" else c
             for item in items or []:
-                out.append(CBlock("list_item", 0, ""))
-                pandoc_blocks_to_canonical(item, out)
+                # A TIGHT list item's text belongs to the item. pandoc says so itself: it
+                # uses Plain rather than Para for exactly this case, so folding on that
+                # signal reads pandoc's own distinction rather than guessing. Without it,
+                # <li>bullet one</li> is two blocks here and one everywhere else, and every
+                # later position shifts -- which looks like a reader defect and is not one.
+                item_blocks = list(item or [])
+                text = ""
+                if item_blocks and isinstance(item_blocks[0], dict) and item_blocks[0].get("t") == "Plain":
+                    text = normalize_text(pandoc_inlines_to_marked(item_blocks[0].get("c")))
+                    item_blocks = item_blocks[1:]
+                out.append(CBlock("list_item", 0, text))
+                pandoc_blocks_to_canonical(item_blocks, out)
         elif t == "DefinitionList":
             for term, defs in c or []:
                 out.append(CBlock("list_item", 0, normalize_text(pandoc_inlines_to_marked(term))))
@@ -164,7 +193,7 @@ def pandoc_blocks_to_canonical(blocks, out=None) -> List[CBlock]:
             out.append(CBlock("table", 0, ""))
         elif t == "Null":
             continue
-    return out
+    return _drop_empty_paragraphs(out) if top_level else out
 
 
 # ----------------------------------------------------------------------- duck_block
@@ -227,7 +256,7 @@ def duckblocks_to_canonical(rows) -> List[CBlock]:
             out[-1].marked = out[-1].marked + piece
     for b in out:
         b.marked = normalize_text(b.marked)
-    return out
+    return _drop_empty_paragraphs(out)
 
 
 # --------------------------------------------------------------------------- levels

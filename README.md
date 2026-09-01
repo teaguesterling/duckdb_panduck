@@ -15,9 +15,9 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-**Status:** two native readers (RTF, DOCX), full path dispatch, and a differential
-validator that checks panduck against real pandoc on every CI run. EPUB, ODT, LaTeX, RST,
-Org and MediaWiki are declared but not yet implemented — and the registry knows the
+**Status:** four native readers (RTF, DOCX, ODT, EPUB), full path dispatch, and a
+differential validator that checks panduck against real pandoc on every CI run. LaTeX,
+RST, Org and MediaWiki are declared but not yet implemented — and the registry knows the
 difference, so nothing routes to a reader that doesn't exist.
 
 ## Why not just call pandoc?
@@ -74,7 +74,9 @@ panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 |---|---|---|
 | `rtf` | `.rtf` | **implemented** — `read_rtf_blocks` |
 | `docx` | `.docx` | **implemented** — `read_docx_blocks` |
-| `odt` `epub` `latex` `rst` `org` `mediawiki` | | declared, not implemented |
+| `odt` | `.odt` | **implemented** — `read_odt_blocks` |
+| `epub` | `.epub` | **implemented** — `read_epub_blocks` |
+| `latex` `rst` `org` `mediawiki` | | declared, not implemented |
 | `markdown` `html` `pdf` | `.md` `.html` `.pdf` | routed to `duckdb_markdown`, `duckdb_webbed`, `pdf` |
 | `toml` `yaml` | `.toml` `.yaml` | read as a `metadata` block |
 | `data` | `.csv` `.parquet` `.json` `.xlsx` … | `read_panduck_table` only |

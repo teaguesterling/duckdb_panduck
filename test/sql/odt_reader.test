@@ -19,7 +19,7 @@ require panduck
 # Both writers, same markup, same result.
 # ---------------------------------------------------------------------------
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_odt_blocks('test/fixtures/pandoc.odt')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----
@@ -27,7 +27,7 @@ Heading One	1
 Heading Two	2
 
 query II
-SELECT content, attributes['heading_level'][1] AS lvl
+SELECT content, attributes['heading_level'] AS lvl
 FROM read_odt_blocks('test/fixtures/libreoffice.odt')
 WHERE element_type = 'heading' ORDER BY element_order;
 ----

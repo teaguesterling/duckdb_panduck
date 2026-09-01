@@ -41,6 +41,7 @@ SELECT format, reader FROM panduck_supported_extensions()
 WHERE status = 'implemented' ORDER BY format;
 ----
 docx	read_docx_blocks
+epub	read_epub_blocks
 odt	read_odt_blocks
 rtf	read_rtf_blocks
 

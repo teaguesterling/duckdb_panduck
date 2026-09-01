@@ -118,6 +118,19 @@ ODT_SCOPE = (
     "text level caught.",
 )
 
+EPUB_LO_CSS = (
+    REFERENCE_WRONG,
+    "panduck reports the run formatting; pandoc reports none. LibreOffice's EPUB export "
+    "emits NO semantic markup -- no <h1>, no <ul>, no <strong> -- only "
+    "<p class=\"paraN\"><span class=\"spanN\"> with the meaning in a CSS file. pandoc does not "
+    "resolve those classes, so its output is bare Spans and 'bold' comes back unmarked. "
+    "panduck resolves .span2 { font-weight: bold } and reports bold, which is what the "
+    "document says. Same posture as LibreOffice RTF and DOCX: being MORE faithful than the "
+    "reference is not a divergence to fix. Note what panduck deliberately does NOT do -- "
+    "'Heading One' stays a bold paragraph, because .span0 says font-size: 16pt and a font "
+    "size is evidence for a heading rather than a statement of one.",
+)
+
 CASES = [
     Case(
         "test/fixtures/pandoc_outlinelevel.rtf",
@@ -155,6 +168,24 @@ CASES = [
         note="LibreOffice-generated ODT",
     ),
     Case(
+        "test/fixtures/pandoc.epub",
+        "epub",
+        "read_epub_blocks",
+        # THE ONLY FIXTURE THAT AGREES AT EVERY LEVEL, and the empty ledger entry is the
+        # assertion: EPUB content documents are XHTML, so both readers see the same tree
+        # and there is nothing left to excuse. If a divergence ever appears here it is a
+        # real defect, because no representational gap remains to blame.
+        expect={},
+        note="pandoc-generated EPUB: semantic XHTML",
+    ),
+    Case(
+        "test/fixtures/libreoffice.epub",
+        "epub",
+        "read_epub_blocks",
+        expect={"marked": EPUB_LO_CSS},  # text and skeleton must AGREE
+        note="LibreOffice-generated EPUB: no semantic markup, everything in CSS",
+    ),
+    Case(
         "test/fixtures/libreoffice_stylesheet.rtf",
         "rtf",
         "read_rtf_blocks",
@@ -178,11 +209,18 @@ def read_pandoc(path, fmt):
 def read_panduck(path, reader, duckdb_bin, extension=None):
     # attributes is a MAP, and DuckDB renders MAPs as {k=v} -- which is not valid JSON.
     # Project the attributes this comparison needs into plain columns instead.
+    #
+    # NO [1] ON THESE. map['key'] already yields the VARCHAR; map_extract() is the one that
+    # returns a list. These read attributes['heading_level'][1] for three readers, which
+    # indexes the STRING and takes its first character -- and passed the whole time,
+    # because every heading level is one digit. The first multi-character attribute in the
+    # suite (an EPUB link's href) is what exposed it, comparing 'c' against
+    # 'ch%202.xhtml#top'. A guard that only ever sees one-character values is not a guard.
     sql = (
         "SELECT kind, element_type, content, "
-        "attributes['heading_level'][1] AS heading_level, "
-        "attributes['href'][1] AS href, "
-        "attributes['src'][1] AS src "
+        "attributes['heading_level'] AS heading_level, "
+        "attributes['href'] AS href, "
+        "attributes['src'] AS src "
         f"FROM {reader}('{path}') ORDER BY element_order;"
     )
     # CI runs a stock duckdb against the extension artifact the build matrix already

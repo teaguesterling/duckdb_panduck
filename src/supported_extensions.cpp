@@ -40,7 +40,13 @@ const FormatReader FORMATS[] = {
      "ZIP via miniz + content.xml via pugixml, sharing ZipContainer with docx. ODF has a "
      "dedicated text:h element with text:outline-level, so unlike RTF and DOCX there is no "
      "heading ambiguity. Lists, tables, images and footnotes are not read yet"},
-    {"epub", EXT_EPUB, nullptr, STATUS_PLANNED, "roadmap phase 3: container.xml -> .opf spine, toc.ncx / nav.xhtml"},
+    {"epub", EXT_EPUB, "read_epub_blocks", STATUS_IMPLEMENTED,
+     "ZIP via ZipContainer, then META-INF/container.xml -> the .opf package document -> the "
+     "SPINE, which is the only statement of reading order. Content documents are XHTML, so "
+     "pugixml reads them directly and no HTML parser is needed. Headings, paragraphs, list "
+     "items, blockquotes, divs, links and images; run formatting resolves through CSS "
+     "classes because LibreOffice's export emits no semantic markup at all. Tables and "
+     "footnotes are not read yet"},
     {"latex", EXT_LATEX, nullptr, STATUS_PLANNED,
      "roadmap phase 4: streaming tokenizer for macros, environments, math"},
     {"rst", EXT_RST, nullptr, STATUS_PLANNED, "roadmap phase 5"},

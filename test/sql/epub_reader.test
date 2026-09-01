@@ -1,0 +1,242 @@
+# name: test/sql/epub_reader.test
+# description: read_epub_blocks() over EPUB produced by two real writers plus one built by hand
+# group: [sql]
+
+#
+# EPUB NEEDS NO HTML PARSER. The open question when this reader was scheduled was how much
+# to delegate to the webbed extension, since EPUB content documents are "HTML". They are
+# not: the specification requires XHTML, which is well-formed XML by definition, so the
+# same pugixml that reads DOCX and ODT reads a book. An arbitrary .html file still needs
+# webbed; an EPUB's content documents never do.
+#
+# THE TWO WRITERS DISAGREE ABOUT EVERYTHING. RTF and DOCX each offered two ways to mark a
+# heading and ODT offered one. EPUB is the first format where one writer emits no
+# semantics at all: pandoc writes <h1>, <ul>, <li>, <strong>; LibreOffice writes
+# <p class="paraN"><span class="spanN"> and puts the meaning in a CSS file.
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# pandoc's EPUB is semantic XHTML, so the structure reads straight off the tags.
+# ---------------------------------------------------------------------------
+query II
+SELECT content, attributes['heading_level'] AS lvl
+FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	1
+Heading Two	2
+
+# EPUB is the first format panduck models structurally: XHTML says <ul><li> and
+# <blockquote> outright, where RTF, DOCX and ODT only had paragraphs wearing hats.
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type IN ('list_item', 'blockquote', 'div') ORDER BY element_order;
+----
+div	NULL
+div	NULL
+list_item	bullet one
+list_item	bullet two
+blockquote	NULL
+
+# ---------------------------------------------------------------------------
+# LIBREOFFICE'S EPUB EXPORT EMITS NO SEMANTIC MARKUP AT ALL. Not one <h1>, <ul> or
+# <strong> in the whole book -- every block is <p class="paraN"> and every run is
+# <span class="spanN">, with the meaning banished to CSS. pandoc reading this file finds
+# no headings and no emphasis either.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE element_type = 'heading';
+----
+0
+
+# POSITIVE COMPANION: the zero above must mean "this writer marks no headings", not "the
+# reader returned nothing". The words are all present, as paragraphs.
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE element_type = 'paragraph';
+----
+7
+
+# ...and the run formatting IS recovered, from CSS, where pandoc recovers none.
+# .span2 { font-weight: bold } states the formatting; it does not merely imply it.
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+bold	Heading One
+bold	bold
+italic	italic
+strikethrough	strike
+bold	Heading Two
+
+# WHERE THE LINE IS DRAWN, asserted rather than described. 'Heading One' comes back a BOLD
+# PARAGRAPH and not a heading: .span0 says font-size: 16pt, and a font size is evidence
+# for a heading rather than a statement of one. font-weight: bold is read for the opposite
+# reason -- "bold" is the answer, not evidence for it.
+query II
+SELECT element_type, attributes['heading_level'] IS NULL
+FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE content = 'Heading One';
+----
+bold	true
+
+# ---------------------------------------------------------------------------
+# THE SPINE IS THE READING ORDER, and no writer's output can test that: pandoc and
+# LibreOffice both emit books whose ZIP member order happens to match their spine, so
+# neither can tell "follows the spine" from "reads members in archive order".
+# spine_order.epub stores chapter two FIRST and puts it second in the spine.
+# ---------------------------------------------------------------------------
+query II
+SELECT content, attributes['heading_level'] FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+First Chapter	1
+Second Chapter	1
+
+# The same fixture's package document lives in its own directory, so every manifest href
+# climbs out with ../ and one chapter's name carries a percent-encoded space. Finding the
+# second chapter at all is the assertion. pandoc cannot read this book: it concatenates
+# without normalising and fails with "No entry on path: OEBPS/pkg/../text/ch1.xhtml",
+# which is why this fixture is panduck-only and not in the differential suite.
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content = 'Read me second, stored me first.';
+----
+1
+
+# ---------------------------------------------------------------------------
+# Link and image attributes. NOTE THERE IS NO [1] HERE: map['key'] already yields the
+# VARCHAR, and attributes['heading_level'][1] -- which three reader tests and the
+# differential validator all used -- indexes the STRING and takes its first character. It
+# passed everywhere because every heading level is one digit. This is the first
+# multi-character attribute in the suite, and it is what exposed that.
+# ---------------------------------------------------------------------------
+query III
+SELECT element_type, content, attributes['href'] FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'link';
+----
+link	cross reference	ch%202.xhtml#top
+
+# src is resolved to an ARCHIVE MEMBER because a consumer extracting the image needs that
+# and '../images/cover.png' is meaningless without knowing which chapter said it. href
+# above is deliberately left as authored: a link may point outside the book, and carries a
+# #fragment that resolution would drop.
+query III
+SELECT element_type, content, attributes['src'] FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'image';
+----
+image	a cover	OEBPS/images/cover.png
+
+# ---------------------------------------------------------------------------
+# CSS is read only as far as it NAMES formatting. font-weight: 700 is bold (the spec puts
+# the boundary at 600); a descendant selector and an id selector are ignored, because
+# being half-right about the cascade is worse than not reading it.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('loud', 'quiet', 'struck', 'bold') ORDER BY element_order;
+----
+bold	loud
+italic	quiet
+strikethrough	struck
+bold	bold
+
+# ---------------------------------------------------------------------------
+# <li>text</li> and <li><p>text</p></li> mean the same thing and are both legal, so the
+# item's text is read wherever the writer put it.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_order BETWEEN
+  (SELECT min(element_order) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'list_item')
+  AND (SELECT max(element_order) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'blockquote')
+ORDER BY element_order;
+----
+list_item	tight item
+list_item	NULL
+paragraph	loose item
+blockquote	NULL
+
+# <pre> keeps its whitespace -- that is what a <pre> means -- where every other block
+# folds runs of spaces.
+query II
+SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'code';
+----
+code	  indented   code
+
+# An empty <div> is layout scaffolding and is dropped; pandoc's own EPUB writer emits an
+# empty <section class="titlepage"> in every book it makes. An <hr/> is kept, because
+# writing one is an authorial act.
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'hr';
+----
+1
+
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'div' AND element_order > 20;
+----
+0
+
+# ---------------------------------------------------------------------------
+# Unicode survives the ZIP + XML path.
+# ---------------------------------------------------------------------------
+query II
+SELECT length(content) < strlen(content), contains(content, 'café')
+FROM read_epub_blocks('test/fixtures/pandoc.epub') WHERE content LIKE 'Unicode:%';
+----
+true	true
+
+# ---------------------------------------------------------------------------
+# Canonical duck_block shape, so read_panduck_doc's flat branch passes it straight through.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding <> 'text';
+----
+0
+
+# POSITIVE COMPANION: the guard above is satisfied by an empty document.
+query I
+SELECT count(*) > 25 FROM read_epub_blocks('test/fixtures/spine_order.epub');
+----
+true
+
+# ---------------------------------------------------------------------------
+# The dispatcher is indistinguishable from the reader, all three fixtures. Symmetric,
+# because a one-directional EXCEPT would miss rows the dispatcher drops.
+# ---------------------------------------------------------------------------
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/pandoc.epub'))
+                       EXCEPT (SELECT * FROM read_epub_blocks('test/fixtures/pandoc.epub'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_epub_blocks('test/fixtures/pandoc.epub'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/pandoc.epub'))));
+----
+0
+
+query I
+SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/spine_order.epub'))
+                       EXCEPT (SELECT * FROM read_epub_blocks('test/fixtures/spine_order.epub'))))
+     + (SELECT count(*) FROM ((SELECT * FROM read_epub_blocks('test/fixtures/spine_order.epub'))
+                       EXCEPT (SELECT * FROM read_panduck_doc('test/fixtures/spine_order.epub'))));
+----
+0
+
+# ---------------------------------------------------------------------------
+# Errors distinguish three failures: not a ZIP, a ZIP that is not an EPUB, and an EPUB
+# whose container.xml points at a package document that is not there.
+# META-INF/container.xml is the only path the format fixes, which is what makes its
+# absence mean "a ZIP, but not a book".
+# ---------------------------------------------------------------------------
+statement error
+SELECT * FROM read_epub_blocks('test/fixtures/pandoc_outlinelevel.rtf');
+----
+not a readable ZIP archive
+
+statement error
+SELECT * FROM read_epub_blocks('test/fixtures/pandoc_pstyle.docx');
+----
+has no META-INF/container.xml

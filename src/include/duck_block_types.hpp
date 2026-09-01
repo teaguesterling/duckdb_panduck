@@ -1,5 +1,15 @@
 #pragma once
 
+// The duck_block vocabulary comes from duck_block_utils' PUBLISHED header via the
+// submodule -- not copied. That header is link-free by design ("Sibling extensions are
+// expected to consume this via a submodule rather than copying it; copies drift
+// silently"), so including it costs no linking and there is now exactly one definition
+// of every element_type name in this build.
+//
+// Pinned to a BRANCH commit (feat-doc-query-pipeline @ 628dcd7) rather than main,
+// deliberately and temporarily: the header has not landed on main yet. Repoint at main
+// when it does -- a branch pin is a weaker guarantee than a tag or a merged commit.
+#include "duck_block_vocabulary.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types.hpp"
 
@@ -25,7 +35,7 @@ namespace duckdb {
  * For headings, the heading level (1-6) is stored in attributes['heading_level'],
  * not in the 'level' field. The 'level' field is reserved for hierarchy depth.
  */
-class DuckBlockTypes {
+class DuckBlockTypes : public DuckBlockVocabulary {
 public:
 	// Create the doc_element type (unified type for both blocks and inlines)
 	static LogicalType DuckBlockType() {
@@ -67,38 +77,10 @@ public:
 	static constexpr idx_t ELEMENT_ORDER_IDX = 6;
 
 	// Kind values
-	static constexpr const char *KIND_BLOCK = "block";
-	static constexpr const char *KIND_INLINE = "inline";
 
 	// Core block type names
-	static constexpr const char *TYPE_HEADING = "heading";
-	static constexpr const char *TYPE_PARAGRAPH = "paragraph";
-	static constexpr const char *TYPE_CODE = "code";
-	static constexpr const char *TYPE_BLOCKQUOTE = "blockquote";
-	static constexpr const char *TYPE_LIST = "list";
-	static constexpr const char *TYPE_TABLE = "table";
-	static constexpr const char *TYPE_HR = "hr";
-	static constexpr const char *TYPE_METADATA = "metadata";
-	static constexpr const char *TYPE_IMAGE = "image";
-	static constexpr const char *TYPE_RAW = "raw";
 
 	// Inline element type names
-	static constexpr const char *INLINE_TEXT = "text";
-	static constexpr const char *INLINE_BOLD = "bold";
-	static constexpr const char *INLINE_ITALIC = "italic";
-	static constexpr const char *INLINE_CODE = "code";
-	static constexpr const char *INLINE_LINK = "link";
-	static constexpr const char *INLINE_IMAGE = "image";
-	static constexpr const char *INLINE_SPACE = "space";
-	static constexpr const char *INLINE_SOFTBREAK = "softbreak";
-	static constexpr const char *INLINE_LINEBREAK = "linebreak";
-	static constexpr const char *INLINE_STRIKETHROUGH = "strikethrough";
-	static constexpr const char *INLINE_SUPERSCRIPT = "superscript";
-	static constexpr const char *INLINE_SUBSCRIPT = "subscript";
-	static constexpr const char *INLINE_UNDERLINE = "underline";
-	static constexpr const char *INLINE_SMALLCAPS = "smallcaps";
-	static constexpr const char *INLINE_SPAN = "span";
-	static constexpr const char *INLINE_RAW = "raw";
 
 	// Valid encoding values
 	static constexpr const char *ENCODING_TEXT = "text";
@@ -113,34 +95,6 @@ public:
 	// Attribute keys
 	static constexpr const char *ATTR_HEADING_LEVEL = "heading_level";
 
-	// ---- Added to close the gap against duck_block_utils' published vocabulary ----
-	// Sourced VERBATIM from duck_block_utils/src/include/duck_block_vocabulary.hpp at
-	// 628dcd7. Where the two headers already overlapped they agreed exactly -- this copy
-	// was incomplete, never wrong, so nothing panduck emitted was incorrect.
-	//
-	// THIS IS A STOPGAP. That header is published link-free specifically so siblings can
-	// consume it via a submodule instead of copying it, and copying is the defect it
-	// exists to prevent -- this is the fourth copy in the portfolio. The submodule is
-	// blocked on the header reaching duck_block_utils' main: pinning a build to an
-	// unmerged feature branch is a heavier commitment than tracking type names.
-	//
-	// The drift detector is db_block_types() / db_block_kinds(), asserted at test time.
-	// Blocked on panduck's CI being able to depend on duck_block_utils being installed.
-
-	static constexpr const char *INLINE_CITE = "cite";
-	static constexpr const char *INLINE_GENERIC = "generic";
-	static constexpr const char *INLINE_MATH = "math";
-	static constexpr const char *INLINE_NOTE = "note";
-	static constexpr const char *INLINE_QUOTED = "quoted";
-	static constexpr const char *KIND_VALUE = "value";
-	static constexpr const char *TYPE_CAPTION = "caption";
-	static constexpr const char *TYPE_DEFLIST = "deflist";
-	static constexpr const char *TYPE_DIV = "div";
-	static constexpr const char *TYPE_FIGURE = "figure";
-	static constexpr const char *TYPE_GENERIC = "generic";
-	static constexpr const char *TYPE_LINEBLOCK = "lineblock";
-	static constexpr const char *TYPE_LIST_ITEM = "list_item";
-	static constexpr const char *TYPE_SECTION = "section";
 	// Helper to create an attributes MAP from a std::map
 	static Value CreateAttributesMap(const std::map<std::string, std::string> &attrs) {
 		vector<Value> keys;

@@ -24,7 +24,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(pugixml CONFIG REQUIRED)
 find_package(miniz CONFIG REQUIRED)
 
-include_directories(src/include)
+include_directories(src/include duck_block_utils/src/include)
 
 set(EXTENSION_SOURCES
     src/docx_reader.cpp

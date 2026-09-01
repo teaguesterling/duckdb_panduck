@@ -211,6 +211,11 @@ void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = n
 			*captured = text.substr(k + 1, close - k - 1);
 		}
 		text = text.substr(close + 1);
+		// Token::raw is the SOURCE of the whole run, so cutting the run leaves it describing
+		// bytes that are no longer there. Dropping it says "no source spelling is known any
+		// more", and a literal Flatten then falls back to the resolved text -- which is what
+		// an option list is read as anyway. Keeping a stale copy would be the silent bug.
+		toks[start].raw.clear();
 		i = start;
 		return;
 	}
@@ -244,7 +249,9 @@ void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = n
 			continue;
 		}
 		toks[j].text = toks[j].text.substr(found + 1);
+		toks[j].raw.clear(); // stale once the run is cut -- see the in-token case above
 		text.clear();
+		toks[start].raw.clear();
 		i = j;
 		return;
 	}
@@ -259,7 +266,12 @@ void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = n
 //! NON-CONST because it shares SkipOptional with the parsing path, and that helper cuts
 //! the optional argument out of the TEXT token it lives inside. Both callers already hand
 //! over a token group they own and do not read again.
-void Flatten(std::vector<Token> &toks, std::string &out);
+//! `literal` takes every TEXT run as the SOURCE spelled it rather than as the tokenizer
+//! resolved it -- see Token::raw. It is set for exactly the arguments that are machine
+//! readable rather than prose: a link target and an image path. `\href{http://x/~bob}{y}`
+//! must yield a tilde, because U+00A0 makes the URL unresolvable and does not look wrong;
+//! the LABEL beside it is prose and goes through the ordinary path, ligatures and all.
+void Flatten(std::vector<Token> &toks, std::string &out, bool literal = false);
 
 void FlattenAppend(std::string &out, const std::string &text) {
 	for (char c : text) {
@@ -273,12 +285,12 @@ void FlattenAppend(std::string &out, const std::string &text) {
 	}
 }
 
-void Flatten(std::vector<Token> &toks, std::string &out) {
+void Flatten(std::vector<Token> &toks, std::string &out, bool literal) {
 	for (size_t i = 0; i < toks.size(); i++) {
 		const auto &tok = toks[i];
 		switch (tok.kind) {
 		case TokenKind::TEXT:
-			FlattenAppend(out, tok.text);
+			FlattenAppend(out, literal && !tok.raw.empty() ? tok.raw : tok.text);
 			break;
 		case TokenKind::CONTROL_SYMBOL:
 			if (IsEscapedLiteral(tok.text)) {
@@ -339,7 +351,7 @@ void Flatten(std::vector<Token> &toks, std::string &out) {
 			// formatting, which is the point of flattening.
 			int content_arg = entry->content_arg >= 0 ? entry->content_arg : 0;
 			if (content_arg < (int)args.size()) {
-				Flatten(args[content_arg], out);
+				Flatten(args[content_arg], out, literal);
 			}
 			break;
 		}
@@ -352,6 +364,13 @@ void Flatten(std::vector<Token> &toks, std::string &out) {
 std::string FlattenTrimmed(std::vector<Token> &toks) {
 	std::string out;
 	Flatten(toks, out);
+	return Trim(out);
+}
+
+//! FlattenTrimmed for an argument that is a machine-readable string rather than prose.
+std::string FlattenLiteralTrimmed(std::vector<Token> &toks) {
+	std::string out;
+	Flatten(toks, out, true);
 	return Trim(out);
 }
 
@@ -968,14 +987,17 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 	inl.element_type = element_type;
 	std::vector<LatexInline> children;
 	if (element_type == DuckBlockTypes::INLINE_IMAGE) {
-		// An image's argument is a FILENAME, not content: there is no child to nest.
-		inl.src = FlattenTrimmed(arg_at(0));
+		// An image's argument is a FILENAME, not content: there is no child to nest, and no
+		// ligature either -- `\includegraphics{~/img.png}` is a path with a tilde in it.
+		inl.src = FlattenLiteralTrimmed(arg_at(0));
 	} else {
 		if (element_type == DuckBlockTypes::INLINE_LINK) {
 			// \href{url}{text} and \url{url} differ only in whether the target is also the
 			// label, which content_arg already encodes: argument 0 is the target either way.
 			// Read BEFORE descending, because descending mutates the token group it reads.
-			inl.href = FlattenTrimmed(arg_at(0));
+			// LITERAL: the target is a URL, so `~` and `--` are the bytes pandoc wrote and
+			// not typography. The label -- argument 1, parsed below -- is prose and is not.
+			inl.href = FlattenLiteralTrimmed(arg_at(0));
 		}
 		// NESTING, AND THE RULE THAT DECIDES IT. \textbf{\emph{x}} is a tree in the source;
 		// flattening the argument to text dropped the inner \emph without trace. So the
@@ -988,12 +1010,16 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 		if (children.empty()) {
 			inl.content = std::move(text);
 		}
-		if (element_type == DuckBlockTypes::INLINE_LINK && inl.content.empty() && children.empty()) {
-			// \href{url}{} HAS NO LABEL, and a link with NULL content and no children is the
-			// one shape a consumer can neither render nor index -- the same objection that
-			// makes \section{} not a heading. \url{url} already answers it by labelling the
-			// link with its target; an empty \href label is the same question, so it gets the
-			// same answer rather than a second convention.
+		if (element_type == DuckBlockTypes::INLINE_LINK && children.empty() &&
+		    (entry->content_arg <= 0 || inl.content.empty())) {
+			// TWO CASES, ONE ANSWER: THE LABEL IS THE TARGET. `\url{x}` says so by
+			// construction -- its content argument IS argument 0 -- and there the label has
+			// to be the target AS WRITTEN, or a URL with a `~` in it renders with a
+			// non-breaking space that no reader can see and no browser can follow.
+			// `\href{url}{}` has no label at all, and a link with NULL content and no
+			// children is the one shape a consumer can neither render nor index -- the same
+			// objection that makes \section{} not a heading -- so it gets the same answer
+			// rather than a second convention.
 			inl.content = inl.href;
 		}
 	}

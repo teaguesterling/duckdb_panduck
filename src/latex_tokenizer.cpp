@@ -184,11 +184,25 @@ size_t LexMathBody(const std::string &src, size_t i, const std::string &closer, 
 std::vector<Token> Tokenize(const std::string &src) {
 	std::vector<Token> out;
 	std::string text;
+	// The same run as `text` but with every ligature left as the source spelled it. Kept in
+	// lockstep so a consumer that needs the bytes rather than the typography -- a URL, an
+	// image path -- has them; see Token::raw for why that is not optional.
+	std::string raw;
 	auto flush = [&]() {
 		if (!text.empty()) {
-			out.push_back(Token {TokenKind::TEXT, text, false});
-			text.clear();
+			Token tok {TokenKind::TEXT, text, false};
+			if (raw != text) {
+				tok.raw = raw;
+			}
+			out.push_back(std::move(tok));
 		}
+		text.clear();
+		raw.clear();
+	};
+	// Append a ligature: its resolved form to `text`, its source spelling to `raw`.
+	auto ligature = [&](const char *resolved, const char *spelling) {
+		text += resolved;
+		raw += spelling;
 	};
 
 	for (size_t i = 0; i < src.size();) {
@@ -299,6 +313,7 @@ std::vector<Token> Tokenize(const std::string &src) {
 				continue;
 			}
 			text.push_back('\n');
+			raw.push_back('\n');
 			i++;
 			continue;
 		}
@@ -321,24 +336,27 @@ std::vector<Token> Tokenize(const std::string &src) {
 		// them alone returns backticks and tildes where the SAME document read as DOCX or
 		// EPUB returns real punctuation, which is exactly the equivalence this reader
 		// exists to provide. Math and verbatim never reach here: both were cut out as raw
-		// bytes upstream, before this loop ever sees them.
+		// bytes upstream, before this loop ever sees them. The one remaining place a
+		// ligature is WRONG is an argument that is machine readable rather than prose -- a
+		// URL, an image path -- and that cannot be decided lexically, because `\href` has
+		// one of each; `raw` below carries the source spelling so the reader can decide it.
 		if (c == '-' && src.compare(i, 3, "---") == 0) {
-			text += "—"; // em dash
+			ligature("—", "---"); // em dash
 			i += 3;
 			continue;
 		}
 		if (c == '-' && src.compare(i, 2, "--") == 0) {
-			text += "–"; // en dash
+			ligature("–", "--"); // en dash
 			i += 2;
 			continue;
 		}
 		if (c == '`' && src.compare(i, 2, "``") == 0) {
-			text += "“"; // left double quotation mark
+			ligature("“", "``"); // left double quotation mark
 			i += 2;
 			continue;
 		}
 		if (c == '\'' && src.compare(i, 2, "''") == 0) {
-			text += "”"; // right double quotation mark
+			ligature("”", "''"); // right double quotation mark
 			i += 2;
 			continue;
 		}
@@ -347,13 +365,15 @@ std::vector<Token> Tokenize(const std::string &src) {
 		// without a parser for prose. The doubled forms have no such ambiguity.
 		if (c == '~') {
 			// A TIE IS A SPACE THAT CANNOT BREAK, not a tilde character: `Dr.~Smith` is two
-			// words with a space between them, and rendering it as `Dr.~Smith` is wrong in
-			// a way a reader downstream cannot undo.
-			text += "\u00A0"; // U+00A0, spelled as an escape because the byte is invisible
+			// words with a space between them. It is also the ligature with the most to lose
+			// in a URL, where the tilde is a byte and the tie is nonsense -- which is why
+			// `raw` exists rather than a rule that only some documents get.
+			ligature("\u00A0", "~"); // U+00A0, spelled as an escape because the byte is invisible
 			i++;
 			continue;
 		}
 		text.push_back(c);
+		raw.push_back(c);
 		i++;
 	}
 	flush();

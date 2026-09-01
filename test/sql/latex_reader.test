@@ -769,6 +769,72 @@ SELECT content FROM read_latex_blocks_string('$a~b``c''''d$') WHERE element_type
 ----
 a~b``c''d
 
+# ...and NOT IN A URL. `~` is a tie in PROSE; in a machine-readable argument it is a tilde,
+# and this is not a hypothetical shape -- it is what pandoc writes:
+#   $ pandoc -f markdown -t latex <<< '[x](http://example.com/~bob)'
+#   \href{http://example.com/~bob}{x}
+# Folding it to U+00A0 there makes the URL unresolvable AND LOOKS FINE ON SCREEN, which is
+# the worst pair of properties a bug can have. The tilde is asserted twice over: once by
+# equality, and once by the absence of chr(160), because the two render identically.
+query II
+SELECT attributes['href'], contains(attributes['href'], chr(160)) FROM read_latex_blocks_string(
+  '\href{http://example.com/~bob}{label}') WHERE element_type = 'link';
+----
+http://example.com/~bob	false
+
+# \url{} is the same target read twice -- as the href AND as the label -- so BOTH have to
+# be the bytes pandoc wrote. Labelling the link with a U+00A0 would put an unfollowable
+# string in front of the reader while the href beside it was correct.
+query II
+SELECT content, attributes['href'] FROM read_latex_blocks_string(
+  '\url{http://example.com/~bob}') WHERE element_type = 'link';
+----
+http://example.com/~bob	http://example.com/~bob
+
+# An image's argument is a PATH, and `~/` is where a tilde most often appears in one.
+query I
+SELECT attributes['src'] FROM read_latex_blocks_string('\includegraphics{~/img.png}')
+WHERE element_type = 'image';
+----
+~/img.png
+
+# ...including when an optional argument stands between the macro and the path, because
+# that is the argument scan's other route through the same tokens.
+query I
+SELECT attributes['src'] FROM read_latex_blocks_string('\includegraphics[width=2cm]{~/img.png}')
+WHERE element_type = 'image';
+----
+~/img.png
+
+# THE LABEL IS STILL PROSE. Only the TARGET is taken as written: one \href carries both a
+# machine-readable argument and a human-readable one, and the same document must get
+# different treatment for each. Asserted in one row so a fix that turns ligatures off for
+# the whole macro fails here rather than passing quietly.
+query II
+SELECT replace(content, chr(160), '<NB>'), attributes['href'] FROM read_latex_blocks_string(
+  '\href{http://x}{Dr.~Smith}') WHERE element_type = 'link';
+----
+Dr.<NB>Smith	http://x
+
+# `--` IS SUBJECT TO THE SAME REASONING and gets the same answer, dash ligatures having
+# been in the tokenizer far longer than the tie: a URL path segment `a--b` is two hyphens.
+query II
+SELECT content, attributes['href'] FROM read_latex_blocks_string(
+  '\url{http://example.com/a--b} and \href{http://example.com/c---d}{lbl}')
+WHERE element_type = 'link' ORDER BY element_order;
+----
+http://example.com/a--b	http://example.com/a--b
+lbl	http://example.com/c---d
+
+# An ESCAPED literal in a URL is still resolved -- pandoc writes `\%` and `\#` for the
+# characters TeX would otherwise eat -- so taking the target as written means "as the
+# SOURCE spelled it", not "as raw bytes". Both rules run on the same argument.
+query I
+SELECT attributes['href'] FROM read_latex_blocks_string(
+  '\href{http://example.com/a\%20b_c\#frag}{esc}') WHERE element_type = 'link';
+----
+http://example.com/a%20b_c#frag
+
 # FLATTEN AND THE PARSING PATH SHARE ONE OPTIONAL-ARGUMENT SCAN. They used to have a copy
 # each and the copies diverged: Flatten never learned to skip `[...]`, so a heading -- the
 # one thing doc_toc returns -- came out titled "Fig [width=2cm]f.png end" while the main

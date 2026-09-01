@@ -17,6 +17,17 @@ struct Token {
 	TokenKind kind;
 	std::string text;         //!< the word for CONTROL_WORD, the char for CONTROL_SYMBOL, the run for TEXT
 	bool display_math = false; //!< MATH_SHIFT only: $$..$$ and \[..\] rather than $..$
+	//! TEXT only, and only when a ligature rewrote the run: the SOURCE SPELLING of `text`.
+	//! Empty means the run already is its own source.
+	//!
+	//! A ligature is a fact about PROSE. `Dr.~Smith` is two words with an unbreakable space
+	//! between them, but `http://example.com/~bob` is a tilde in a machine-readable string,
+	//! and once the tokenizer has folded it to U+00A0 no consumer downstream can tell the
+	//! two apart or undo either -- the URL is simply broken, and invisibly so. Carrying the
+	//! source alongside the resolved text costs one string per run that actually contains a
+	//! ligature and lets the reader take a link target or an image path AS WRITTEN while
+	//! every other use of the same token keeps the typography.
+	std::string raw;
 };
 
 //! Tokenize a whole LaTeX source. Never throws: malformed input degrades.

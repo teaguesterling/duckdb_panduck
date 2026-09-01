@@ -582,3 +582,77 @@ SELECT element_type, content FROM read_latex_blocks_string(
 ----
 paragraph	before
 paragraph	after
+
+# ---------------------------------------------------------------------------
+# TASK 7: math, verbatim's degradation guarantees, and malformed input, on a fixture the
+# matched pair cannot carry (adding these cases to handwritten.tex or pandoc.tex would
+# break the two-writer equivalence assertion at the top of this file).
+# ---------------------------------------------------------------------------
+
+# MATH IS OPAQUE: the TeX is kept verbatim as content and nothing is parsed. `display`
+# distinguishes $..$ from $$..$$.
+query III
+SELECT element_type, content, attributes['display'] FROM read_latex_blocks('test/fixtures/edge_cases.tex')
+WHERE element_type = 'math' ORDER BY element_order;
+----
+math	x^2	inline
+math	y = mx + b	block
+
+# VERBATIM SUSPENDS EVERYTHING. Its body is bytes: the \section inside must NOT become a
+# heading and the % must NOT be stripped as a comment.
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/edge_cases.tex')
+WHERE element_type = 'heading' AND content = 'not a heading';
+----
+0
+
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/edge_cases.tex')
+WHERE element_type = 'code' AND content LIKE '%not a comment%';
+----
+1
+
+# MALFORMED INPUT DEGRADES, IT DOES NOT THROW. An unclosed brace closes at EOF. A reader
+# that refuses a slightly-broken document is worse than one that returns most of it, and
+# TeX in the wild is frequently slightly broken.
+query I
+SELECT count(*) > 0 FROM read_latex_blocks('test/fixtures/edge_cases.tex');
+----
+1
+
+# \( \) IS THE OTHER SPELLING OF INLINE MATH, and \[ \] of display math -- both lex to
+# MATH_SHIFT with the same `display` flag $ and $$ do, so the reader must not special-case
+# the dollar spelling.
+query III
+SELECT element_type, content, attributes['display']
+FROM read_latex_blocks_string('\(a+b\) and \[c = d\]') WHERE element_type = 'math' ORDER BY element_order;
+----
+math	a+b	inline
+math	c = d	block
+
+# EMPTY MATH IS NOT AN ELEMENT, the same rule an empty formatted run already follows: $$
+# with nothing between the shifts contributes nothing rather than a `math` row with NULL
+# content that no consumer could render.
+query I
+SELECT count(*) FROM read_latex_blocks_string('$$');
+----
+0
+
+# THE CARRIED FINDING: \usepackage, \PassOptionsToPackage and \documentclass were absent
+# from the macro table, so an unknown macro dropped its NAME but left its brace group
+# TRANSPARENT -- and in the fragment path (a preamble with no \begin{document}), that
+# leaked the argument as prose. \usepackage{ulem} must contribute nothing, not a paragraph
+# reading "ulem".
+query I
+SELECT count(*) FROM read_latex_blocks_string(
+  '\documentclass{article}\usepackage{ulem}\PassOptionsToPackage{final}{hyperref}Body text.')
+WHERE content LIKE '%ulem%' OR content LIKE '%hyperref%' OR content LIKE '%final%';
+----
+0
+
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  '\documentclass{article}\usepackage{ulem}\PassOptionsToPackage{final}{hyperref}Body text.')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	Body text.

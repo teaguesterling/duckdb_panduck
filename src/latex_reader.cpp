@@ -261,6 +261,42 @@ std::string FlattenTrimmed(const std::vector<Token> &toks) {
 	return Trim(out);
 }
 
+//! Replay a math span's tokens back into TeX source, verbatim. This is deliberately NOT
+//! Flatten(): Flatten resolves macros and drops braces because it is building prose, and
+//! math is the opposite -- $x^2$ means nothing to this reader, so the only correct move is
+//! to hand the formula back exactly as written and let whatever reads `math` later decide
+//! what x^2 means. A control word's trailing space is restored because the tokenizer
+//! already consumed the real one (`\alpha x` would otherwise read back as `\alphax`).
+std::string MathText(const std::vector<Token> &toks, size_t begin, size_t end) {
+	std::string out;
+	for (size_t k = begin; k < end; k++) {
+		const auto &tok = toks[k];
+		switch (tok.kind) {
+		case TokenKind::TEXT:
+			out += tok.text;
+			break;
+		case TokenKind::CONTROL_WORD:
+			out += "\\" + tok.text + " ";
+			break;
+		case TokenKind::CONTROL_SYMBOL:
+			out += "\\" + tok.text;
+			break;
+		case TokenKind::BEGIN_GROUP:
+			out += "{";
+			break;
+		case TokenKind::END_GROUP:
+			out += "}";
+			break;
+		case TokenKind::PAR_BREAK:
+			out += "\n\n";
+			break;
+		default:
+			break; // MATH_SHIFT and END cannot occur inside the span; nothing else carries text
+		}
+	}
+	return Trim(out);
+}
+
 void Parser::AppendText(const std::string &text) {
 	for (char c : text) {
 		if (!IsSpace(c)) {
@@ -976,15 +1012,26 @@ void Parser::Run(std::vector<Token> &toks) {
 			i++;
 			break;
 		case TokenKind::MATH_SHIFT: {
-			// Math is Task 7. Skip to the closing shift so the formula's guts do not leak
-			// into the surrounding paragraph as prose.
-			i++;
-			while (i < toks.size() && toks[i].kind != TokenKind::MATH_SHIFT && toks[i].kind != TokenKind::END) {
-				i++;
+			// MATH IS OPAQUE. The span between this shift and its match is not parsed,
+			// ligatured, or macro-expanded -- it is replayed back to source and carried as
+			// an inline `math` run, exactly where it sits in whatever text surrounds it.
+			// `display` distinguishes $$..$$ / \[..\] from $..$ / \(..\), which is the one
+			// fact the tokenizer already decided and the reader only has to relay.
+			bool display = toks[i].display_math;
+			size_t start = i + 1;
+			size_t j = start;
+			while (j < toks.size() && toks[j].kind != TokenKind::MATH_SHIFT && toks[j].kind != TokenKind::END) {
+				j++;
 			}
-			if (i < toks.size() && toks[i].kind == TokenKind::MATH_SHIFT) {
-				i++;
+			auto content = MathText(toks, start, j);
+			if (!content.empty()) {
+				LatexInline inl;
+				inl.element_type = DuckBlockTypes::INLINE_MATH;
+				inl.content = content;
+				inl.display = display ? "block" : "inline";
+				PushInline(std::move(inl), {});
 			}
+			i = j < toks.size() && toks[j].kind == TokenKind::MATH_SHIFT ? j + 1 : j;
 			break;
 		}
 		case TokenKind::CONTROL_SYMBOL: {

@@ -55,6 +55,16 @@ const MacroEntry MACROS[] = {
     {"protect", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
 
     // DROPPED -- macro AND arguments. Presentational or metadata.
+    // documentclass, usepackage and PassOptionsToPackage are PREAMBLE macros: Parse()
+    // already special-cases \documentclass to read the class name and find where the
+    // preamble ends, but a FRAGMENT with no \begin{document} never reaches that logic for
+    // anything past it, and an unclaimed macro's brace group is TRANSPARENT, not dropped --
+    // so \usepackage{ulem} in a bare preamble leaked "ulem" into the output as a paragraph.
+    // Claiming all three here closes that for the fragment path the same way the preamble
+    // scan already closes it for a full document.
+    {"documentclass", Disposition::DROPPED, nullptr, 1, -1, nullptr},
+    {"usepackage", Disposition::DROPPED, nullptr, 1, -1, nullptr},
+    {"PassOptionsToPackage", Disposition::DROPPED, nullptr, 2, -1, nullptr},
     {"label", Disposition::DROPPED, nullptr, 1, -1, nullptr},
     {"tightlist", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"maketitle", Disposition::DROPPED, nullptr, 0, -1, nullptr},

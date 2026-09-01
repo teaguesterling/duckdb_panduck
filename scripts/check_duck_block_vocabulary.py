@@ -123,8 +123,15 @@ INTENTIONAL_GAPS = {
     "VALUE_BLOCKS": "value kind unused -- see KIND_VALUE",
     "VALUE_INLINES": "value kind unused -- see KIND_VALUE",
     "VALUE_VERSION": "value kind unused -- see KIND_VALUE",
-    "TYPE_METADATA": "no reader extracts document metadata yet; docx/odt/epub all "
-                     "have it available and none read it",
+    "TYPE_METADATA": "no reader extracts document metadata yet; docx/odt/epub all have it "
+                     "available and none read it. NOT A NEUTRAL GAP -- this is a DISCARD. "
+                     "Every document's title, author and date is dropped, and LaTeX drops "
+                     "\\title/\\author/\\maketitle explicitly. A leak into the body would "
+                     "be visible and correctable; a discard is unrecoverable and looks like "
+                     "a document that never had a title. Filed behind fidelity work for a "
+                     "day, which was too generous -- by this project's own gap-versus-"
+                     "discard rule it is on the wrong side. Closing it needs the `value` "
+                     "kind as well as this type",
     "TYPE_PAGE": "physical pagination, added upstream 2026-08-31. No panduck source "
                  "format exposes page boundaries: docx/odt paginate at layout time, "
                  "epub paginates by spine document. NOTE: 'page_break' also collides "

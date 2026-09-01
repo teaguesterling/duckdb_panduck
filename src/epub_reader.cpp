@@ -508,15 +508,6 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				block.level = depth;
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
-			} else if (type == DuckBlockTypes::TYPE_LIST_ITEM) {
-				// <li>text</li>: the item owns no content of its own under spec 2.0, so
-				// its words become a paragraph child rather than sitting on the item.
-				EpubBlock item;
-				item.element_type = type;
-				item.container = true;
-				item.level = depth;
-				out.push_back(std::move(item));
-				EmitBlock(child, DuckBlockTypes::TYPE_PARAGRAPH, 0, ctx, out, depth + 1);
 			} else {
 				EmitBlock(child, type, 0, ctx, out, depth);
 			}

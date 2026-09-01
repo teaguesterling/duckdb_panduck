@@ -1,0 +1,36 @@
+% A LaTeX document as a PERSON writes one, which is not how pandoc writes one.
+%
+% pandoc wraps every heading in \hypertarget{id}{%\n\section{...}\label{id}} -- the
+% \section sits two braces deep, behind a comment token. A human writes \section at the
+% top level and never emits \hypertarget at all. That is the same shape as the RTF and
+% DOCX heading split, except the second "writer" here is a person rather than a program.
+%
+% This comment must not appear in any block.
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{ulem}
+\title{Handwritten}
+\author{Nobody}
+
+\begin{document}
+\maketitle
+
+\section{Heading One}
+\label{sec:one}
+
+A paragraph with \textbf{bold}, \emph{italic}, and \sout{strike} text.
+
+\subsection{Heading Two}
+
+\begin{itemize}
+  \item bullet one
+  \item bullet two
+\end{itemize}
+
+\begin{quote}
+A block quote.
+\end{quote}
+
+Unicode: café --- em-dash, and a tab.
+
+\end{document}

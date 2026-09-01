@@ -747,6 +747,73 @@ pugi::xml_document ParseXml(const std::string &xml, const std::string &path, con
 
 } // namespace
 
+//! The OPF's Dublin Core, as duck_block `value` elements.
+//!
+//! Every EPUB carried this and panduck dropped all of it -- a DISCARD, not a fidelity
+//! gap, and the only unrecoverable one this reader had. The OPF was already parsed for
+//! the manifest and spine; the metadata sat in the same tree, unread.
+//!
+//! KEYS ARE PANDOC'S, NOT DUBLIN CORE'S. dc:creator -> author, dc:title -> title.
+//! Measured against pandoc 3.1.3 rather than assumed: preserving the `dc:` prefixes is
+//! the obvious reading and nothing in the vocabulary would have objected to it, so a
+//! consumer would have got `dc:title` from an EPUB and `title` from everything else.
+//!
+//! SHAPE IS MetaInlines, which is what pandoc emits for every one of these -- so
+//! `value`/`inlines` with the text as an inline CHILD, not `value`/`string` with the text
+//! in content. A title read from a panduck EPUB and one read through
+//! pandoc_ast_to_blocks have to be the same shape or the vocabulary buys nothing.
+//!
+//! ORDER IS ALPHABETICAL BY KEY. Pandoc's Meta is a map and serialises sorted, so this
+//! matches what the converter produces for the same document. OPF document order would
+//! be more faithful to the file and less comparable to the reference; the reference wins,
+//! because disagreeing with it is the expensive kind of difference.
+void CollectMetadata(const pugi::xml_node &package, std::vector<EpubBlock> &out) {
+	// Only the fields pandoc actually extracts. dcterms:modified and the rest of the OPF's
+	// <meta> soup are deliberately absent: emitting fields pandoc does not would put
+	// panduck ahead of the reference in a direction nobody has asked for, and the gap is
+	// recorded rather than silently filled.
+	static const std::pair<const char *, const char *> DC_TO_PANDOC[] = {
+	    {"dc:creator", "author"},   {"dc:date", "date"},   {"dc:identifier", "identifier"},
+	    {"dc:language", "language"}, {"dc:title", "title"},
+	};
+	auto meta = package.child("metadata");
+	if (!meta) {
+		return;
+	}
+	std::map<std::string, std::string> found; // sorted by pandoc key, which is the emission order
+	for (auto &pair : DC_TO_PANDOC) {
+		auto node = meta.child(pair.first);
+		if (!node) {
+			continue;
+		}
+		// AN EMPTY FIELD IS STILL A FIELD. <dc:title/> is emitted, with no inline child.
+		//
+		// I had this the other way -- skipping empties on the reasoning that a blank value
+		// asserts nothing. duck_block_utils measured pandoc and ruled against it: pandoc
+		// emits the KEY with an empty value in every format that has one. Present-and-empty
+		// is not absent, and a consumer cannot recover "the document declared a title and
+		// left it blank" from silence. Dropping it discards a fact the reference preserved.
+		found[pair.second] = Trim(node.child_value());
+	}
+	for (auto &kv : found) {
+		EpubBlock block;
+		block.kind = DuckBlockTypes::KIND_VALUE;
+		block.element_type = DuckBlockTypes::VALUE_INLINES;
+		block.key = kv.first;
+		block.level = 1;
+		if (!kv.second.empty()) {
+			// No child for an empty field: `value`/`inlines` with no inline children IS the
+			// empty spelling, matching pandoc's MetaInlines []. A child carrying "" would
+			// be a run of no text, which is a different and meaningless claim.
+			EpubInline text;
+			text.element_type = DuckBlockTypes::INLINE_TEXT;
+			text.content = kv.second;
+			block.inlines.push_back(std::move(text));
+		}
+		out.push_back(std::move(block));
+	}
+}
+
 std::vector<EpubBlock> ParseEpubFile(const std::string &path) {
 	ZipContainer zip(path, "read_epub_blocks");
 
@@ -834,6 +901,8 @@ std::vector<EpubBlock> ParseEpubFile(const std::string &path) {
 
 		WalkBlocks(html.child("body"), ctx, blocks, 1);
 	}
+	// AFTER the blocks, which spec 6.2 makes a contract rather than a convenience.
+	CollectMetadata(package, blocks);
 	return blocks;
 }
 
@@ -877,7 +946,7 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 	int32_t order = 0;
 	for (auto &block : epub::ParseEpubFile(input.inputs[0].GetValue<string>())) {
 		EpubRow row;
-		row.kind = DuckBlockTypes::KIND_BLOCK;
+		row.kind = block.kind.empty() ? DuckBlockTypes::KIND_BLOCK : block.kind;
 		row.element_type = block.element_type;
 		row.content = block.content;
 		if (!block.encoding.empty()) {
@@ -889,6 +958,9 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		}
 		if (!block.role.empty()) {
 			row.attributes[DuckBlockTypes::ATTR_ROLE] = block.role;
+		}
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, deliberately. attributes['ordered'] is the CANONICAL name --

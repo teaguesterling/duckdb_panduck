@@ -25,7 +25,7 @@ than assumed to be panduck's fault.
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 # Inline markers. The syntax is deliberately unlike anything a document contains, so a
 # marker in the output is always structure and never literal text.
@@ -219,10 +219,26 @@ def duckblocks_to_canonical(rows) -> List[CBlock]:
     own here, so the children's own markers carry the structure.
     """
     out: List[CBlock] = []
+    # kind='value' is document METADATA and is NOT body content. It is compared on its own
+    # axis (see meta_from_duckblocks) because pandoc carries it in a separate `meta` field
+    # rather than in `blocks`, so folding it in here would compare it against nothing.
+    #
+    # The inline children have to be skipped WITH it. A value's text arrives as an inline
+    # row exactly like a paragraph's, and the inline branch below attaches to the last
+    # block -- so dropping the value row alone silently appended every title and author to
+    # the end of the document body. That is what this looked like before the skip existed,
+    # and it read as a text-level divergence in the body rather than as metadata at all.
+    in_value = False
     for row in rows:
         kind = row.get("kind")
         etype = row.get("element_type") or ""
         content = row.get("content") or ""
+        if kind == "value":
+            in_value = True
+            continue
+        if kind == "inline" and in_value:
+            continue
+        in_value = False
         if kind == "block":
             level = 0
             attrs = row.get("attributes") or {}
@@ -284,3 +300,94 @@ def level2(blocks: List[CBlock]):
 
 
 LEVELS = {"text": level0, "skeleton": level1, "marked": level2}
+
+
+def meta_from_duckblocks(rows) -> Dict[str, str]:
+    """Document metadata from kind='value' rows: {key: flattened text}.
+
+    Two shapes reach here, and both are pandoc's for the same logical field:
+
+        value/inlines  key=title    -> text from its inline children
+        value/list     key=author   -> value/inlines children at level+1, space-joined
+
+    LaTeX's \\author yields MetaList even for ONE author while its \\title yields
+    MetaInlines, so `author` cannot be generalised from `title`. Org concatenates repeated
+    #+AUTHOR: into a single MetaInlines instead -- a third arrangement of the same field.
+
+    An unhandled value element_type RAISES rather than folding to empty: a shape this does
+    not know comparing as absent would make a real divergence look like agreement, which
+    is the failure this whole comparison exists to catch.
+    """
+    meta: Dict[str, str] = {}
+    key = None          # the key currently accumulating
+    in_list = False     # inside a value/list, so nested value/inlines belong to it
+    for row in rows:
+        kind = row.get("kind")
+        etype = row.get("element_type") or ""
+        if kind == "value":
+            attrs = row.get("attributes") or {}
+            row_key = attrs.get("key")
+            if row_key:
+                if etype not in ("inlines", "list", "string", "bool"):
+                    raise AssertionError(
+                        f"value/{etype} is not folded by this comparison. Extend it rather "
+                        f"than letting a new value shape compare as absent."
+                    )
+                key = row_key
+                in_list = etype == "list"
+                meta.setdefault(key, "")
+                if etype in ("string", "bool"):
+                    meta[key] = (row.get("content") or "").strip()
+                    key = None
+            elif not in_list:
+                # A keyless value outside a list has nowhere to belong.
+                key = None
+            continue
+        if kind == "inline" and key is not None:
+            piece = row.get("content") or ""
+            existing = meta.get(key, "")
+            # Space-joined, matching how pandoc_meta_to_flat joins a MetaList.
+            meta[key] = (existing + " " + piece).strip() if existing else piece.strip()
+            continue
+        if kind == "block":
+            key = None
+            in_list = False
+    return meta
+
+
+def pandoc_meta_to_flat(meta) -> Dict[str, str]:
+    """pandoc's `meta` as {key: flattened text}, matching meta_from_duckblocks.
+
+    MetaInlines and MetaString are folded to their text; MetaList is joined with a space,
+    which is what pandoc's own EPUB and Org readers produce for a repeated field. A shape
+    this does not know raises rather than flattening to empty -- an unhandled MetaValue
+    comparing as absent would make a real divergence look like agreement.
+    """
+    def flat(v):
+        t = v.get("t")
+        if t in ("MetaInlines", "MetaBlocks"):
+            return normalize_text(_inline_text(v.get("c") or []))
+        if t == "MetaString":
+            return normalize_text(v.get("c") or "")
+        if t == "MetaBool":
+            return "true" if v.get("c") else "false"
+        if t == "MetaList":
+            return normalize_text(" ".join(flat(i) for i in (v.get("c") or [])))
+        raise AssertionError(
+            f"unhandled MetaValue {t!r}; extend pandoc_meta_to_flat rather than letting "
+            f"it compare as empty"
+        )
+    return {k: flat(v) for k, v in (meta or {}).items()}
+
+
+def _inline_text(items) -> str:
+    out = []
+    for i in items:
+        t = i.get("t")
+        if t == "Str":
+            out.append(i.get("c") or "")
+        elif t in ("Space", "SoftBreak", "LineBreak"):
+            out.append(" ")
+        elif isinstance(i.get("c"), list):
+            out.append(_inline_text(i["c"]))
+    return "".join(out)

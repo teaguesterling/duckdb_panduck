@@ -43,6 +43,12 @@ struct EpubInline {
 };
 
 struct EpubBlock {
+	//! duck_block kind. Empty means `block`, which is everything a document body
+	//! produces. `value` is document METADATA -- a discrete field, not body content.
+	std::string kind;
+	//! `value` only: the field name, in attributes['key']. PANDOC'S namespace, not the
+	//! source's -- dc:creator is `author`.
+	std::string key;
 	std::string element_type; //!< heading, paragraph, list_item, blockquote, div, code, hr
 	std::string content;      //!< flattened text; empty when inlines are populated
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise

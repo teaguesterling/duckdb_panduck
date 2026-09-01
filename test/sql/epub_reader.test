@@ -570,3 +570,65 @@ list_item	inner	5
 paragraph	louter	4
 list_item	linner	5
 
+
+# ---------------------------------------------------------------------------
+# DOCUMENT METADATA -> kind='value'. Every EPUB's Dublin Core was DROPPED: title, author,
+# date, language and identifier all sat in the OPF, already parsed for the manifest and
+# spine, and none of it reached the output. Not a fidelity gap -- a DISCARD, and the only
+# unrecoverable one panduck had.
+#
+# TWO HOMES, AND THIS IS THE OTHER ONE. A `metadata` BLOCK is a verbatim blob you must not
+# reinterpret (a .toml file, YAML frontmatter). Discrete FIELDS are kind='value'. The spec
+# names EPUB Dublin Core in the second row explicitly.
+#
+# KEYS ARE PANDOC'S NAMESPACE, NOT THE SOURCE'S. dc:creator becomes `author`, dc:title
+# becomes `title`. Measured against pandoc 3.1.3 rather than assumed -- preserving the
+# `dc:` prefixes would have been the obvious reading and nothing in the vocabulary would
+# have objected.
+#
+# SHAPE FOLLOWS MetaInlines, which is what pandoc emits for every one of these: a
+# `value`/`inlines` element at level 1 carrying attributes['key'], with EMPTY content and
+# the text as an inline child at level 2. Not `value`/`string` -- that is the shape for a
+# scalar, and a consumer reading a title from a panduck EPUB and from pandoc_ast_to_blocks
+# must get the same answer.
+#
+# ORDER IS ALPHABETICAL BY KEY, not OPF document order. Pandoc's Meta is a map and
+# serialises sorted, so this is what pandoc_ast_to_blocks produces for the same document.
+# Document order would be more faithful to the file and less comparable to the reference.
+query IIII
+SELECT kind, element_type, attributes['key'], content
+FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE kind = 'value' ORDER BY element_order;
+----
+value	inlines	author	NULL
+value	inlines	identifier	NULL
+value	inlines	language	NULL
+value	inlines	title	NULL
+
+# METADATA IS APPENDED AFTER THE BLOCKS -- spec 6.2 makes that a CONTRACT rather than a
+# convenience. Asserted as "every value element comes after every block element", which is
+# the property, rather than by pinning element_order numbers that shift whenever the body
+# changes.
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/libreoffice.epub') b
+WHERE b.kind = 'value'
+  AND b.element_order < (SELECT max(element_order) FROM read_epub_blocks('test/fixtures/libreoffice.epub') WHERE kind = 'block');
+----
+0
+
+# Each value carries its text as an INLINE CHILD at level 2, and the value itself has NULL
+# content. Both halves matter: content on the parent AND a child would duplicate the text.
+query IIII
+SELECT kind, element_type, level, content
+FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE element_order >= (SELECT min(element_order) FROM read_epub_blocks('test/fixtures/libreoffice.epub') WHERE kind = 'value')
+ORDER BY element_order;
+----
+value	inlines	1	NULL
+inline	text	2	Unknown Author
+value	inlines	1	NULL
+inline	text	2	3166c61e-50f8-4bd4-bd7a-2cfe6306f21b
+value	inlines	1	NULL
+inline	text	2	en
+value	inlines	1	NULL
+inline	text	2	Unknown Title

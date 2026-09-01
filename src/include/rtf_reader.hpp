@@ -32,6 +32,10 @@ struct RtfInline {
 
 //! One block-level element.
 struct RtfBlock {
+	//! duck_block kind. Empty means `block`. `value` is document METADATA.
+	std::string kind;
+	//! `value` only: field name for attributes['key'], in PANDOC's namespace.
+	std::string key;
 	std::string element_type;       //!< "heading" or "paragraph"
 	std::string content;            //!< flattened text; empty when inlines are populated
 	int heading_level = 0;          //!< 1-6 for headings, 0 otherwise

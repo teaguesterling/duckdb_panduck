@@ -30,13 +30,28 @@ WHERE element_type = 'heading' ORDER BY element_order;
 Heading One	1
 Heading Two	2
 
-# \maketitle MUST EMIT NOTHING. handwritten.tex has \title/\author/\maketitle and
-# pandoc.tex has none of them in its body, so the two documents are equivalent ONLY if
-# \maketitle produces no block. Consistent with every other panduck reader: none extracts
-# document metadata yet.
+# \maketitle MUST EMIT NO BLOCK. handwritten.tex has \title/\author/\maketitle and
+# pandoc.tex has none of them in its body, so the two documents are equivalent at the
+# BLOCK level only if \maketitle produces nothing there.
+#
+# This used to assert the title text appeared NOWHERE, on the grounds that no panduck
+# reader extracted metadata. That is no longer true, and the weaker assertion would now
+# pass for the wrong reason -- so it is sharpened rather than deleted: the text must appear
+# EXACTLY on the metadata axis and never on the block one. A reader that emitted \title as
+# a heading would fail this; one that dropped it entirely would too.
+query II
+SELECT kind, count(*) FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE content = 'Handwritten' OR content = 'Nobody'
+GROUP BY kind ORDER BY kind;
+----
+inline	2
+
+# ...and nothing carrying that text is a BLOCK, which is the half that keeps \maketitle
+# honest. Asserted separately because a GROUP BY that returns no 'block' row proves it
+# only if you notice the row is absent -- an explicit zero cannot be overlooked.
 query I
 SELECT count(*) FROM read_latex_blocks('test/fixtures/handwritten.tex')
-WHERE content = 'Handwritten' OR content = 'Nobody';
+WHERE kind = 'block' AND (content = 'Handwritten' OR content = 'Nobody');
 ----
 0
 
@@ -223,10 +238,16 @@ WHERE element_type = 'text' AND trim(content) = 'kept';
 # is a `plain`, a block-level text run with NO paragraph semantics -- Pandoc's Plain
 # constructor, and exactly what the source wrote. Both attribute spellings are emitted:
 # list_type is canonical, `ordered` is the legacy alias a v1-era consumer reads.
+# `kind = 'block'` IS LOAD-BEARING HERE, not defensive noise. `list` is an element_type in
+# TWO kinds: a bullet/ordered/definition list of blocks, and a `value/list` holding a
+# metadata field's entries. \author yields the second, so a query filtering on
+# element_type alone picks up the author list and reports four list rows where the document
+# has one. An element_type is only meaningful TOGETHER WITH its kind, and `list` is the
+# only name that collides across the two -- measured against the vocabulary, not assumed.
 query IIIII
 SELECT element_type, content, level, attributes['list_type'], attributes['ordered']
 FROM read_latex_blocks('test/fixtures/pandoc.tex')
-WHERE element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
+WHERE kind = 'block' AND element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
 ----
 list	NULL	1	bullet	false
 list_item	bullet one	2	NULL	NULL
@@ -238,7 +259,7 @@ list_item	bullet two	2	NULL	NULL
 # here and nowhere else.
 query III
 SELECT element_type, content, level FROM read_latex_blocks('test/fixtures/handwritten.tex')
-WHERE element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
+WHERE kind = 'block' AND element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
 ----
 list	NULL	1
 list_item	bullet one	2

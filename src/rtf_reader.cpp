@@ -97,6 +97,8 @@ struct GroupState {
 	int uc = 1;         //!< how many fallback chars follow a \uN
 	bool skip = false;  //!< inside an ignored destination
 	bool style = false; //!< inside {\stylesheet}
+	bool in_info = false;   //!< inside {\info}, where a few children ARE wanted
+	std::string meta_key;   //!< non-empty: text goes to metadata under this pandoc key
 };
 
 class RtfParser {
@@ -136,6 +138,28 @@ public:
 			}
 		}
 		FlushParagraph();
+		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract. Sorted, because
+		// std::map iterates sorted and that is also pandoc's Meta serialisation order.
+		for (auto &kv : meta_) {
+			auto text = kv.second;
+			// Trimmed here rather than via a helper: this TU has none, and RTF pads a
+			// destination's text with the space that separates a control word from its
+			// argument -- `{\title The Title}` arrives as " The Title".
+			size_t b = text.find_first_not_of(" \t\r\n");
+			size_t e = text.find_last_not_of(" \t\r\n");
+			text = (b == std::string::npos) ? std::string() : text.substr(b, e - b + 1);
+			RtfBlock block;
+			block.kind = DuckBlockTypes::KIND_VALUE;
+			block.element_type = DuckBlockTypes::VALUE_INLINES;
+			block.key = kv.first;
+			if (!text.empty()) {
+				RtfInline run;
+				run.element_type = DuckBlockTypes::INLINE_TEXT;
+				run.content = text;
+				block.inlines.push_back(std::move(run));
+			}
+			blocks_.push_back(std::move(block));
+		}
 		return std::move(blocks_);
 	}
 
@@ -223,12 +247,43 @@ private:
 				g.style = true;
 				return;
 			}
+			if (word == "info") {
+				// {\info} IS SKIPPED BY DEFAULT AND SELECTIVELY OPENED. Most of its children
+				// are timestamps -- \creatim, \revtim, \printim -- which pandoc does not
+				// map to anything, so descending wholesale would put date fragments in the
+				// document. Marking the group instead lets \title, \author and \subject
+				// re-open it for themselves below.
+				g.skip = true;
+				g.in_info = true;
+				return;
+			}
 			if (IsSkippedDestination(word)) {
 				g.skip = true;
 				return;
 			}
 		}
 
+		// METADATA CAPTURE, and it must come before the g.skip early-return below: these
+		// words arrive INSIDE a group already marked skip, and their whole job is to
+		// re-open it.
+		//
+		// RTF's `author` is a single MetaInlines, NOT a list -- measured. LaTeX's \author
+		// yields MetaList for the same logical field and Org concatenates repeated
+		// #+AUTHOR: into one MetaInlines. Three formats, three arrangements, all pandoc's,
+		// so no reader here may generalise its author handling from another's.
+		if (g.in_info && (word == "title" || word == "author" || word == "subject")) {
+			g.skip = false;
+			g.meta_key = word;
+			return;
+		}
+		if (word == "generator") {
+			// NOT inside {\info}: `{\*\generator ...}` is a top-level ignorable
+			// destination. Assuming RTF metadata lives in \info would have missed it, and
+			// it is the only metadata the LibreOffice fixture actually carries.
+			g.skip = false;
+			g.meta_key = "generator";
+			return;
+		}
 		if (g.style) {
 			// Inside the stylesheet: capture "\sN ... Style Name;" entries.
 			if (word == "s" && has_param) {
@@ -292,6 +347,10 @@ private:
 
 	void AppendText(const std::string &text) {
 		auto &g = stack_.back();
+		if (!g.meta_key.empty()) {
+			meta_[g.meta_key] += text;
+			return;
+		}
 		if (g.skip) {
 			return;
 		}
@@ -428,6 +487,8 @@ private:
 	std::vector<GroupState> stack_;
 	std::vector<Run> runs_;
 	std::vector<RtfBlock> blocks_;
+	//! Captured {\info} fields and {\*\generator}, keyed by PANDOC's names.
+	std::map<std::string, std::string> meta_;
 
 	int style_id_ = -1;
 	int outline_level_ = -1;
@@ -498,8 +559,11 @@ unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBind
 	int32_t order = 0;
 	for (auto &block : rtf::ParseRtfDocument(data)) {
 		BlockRow row;
-		row.kind = DuckBlockTypes::KIND_BLOCK;
+		row.kind = block.kind.empty() ? DuckBlockTypes::KIND_BLOCK : block.kind;
 		row.element_type = block.element_type;
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
+		}
 		row.content = block.content;
 		row.element_order = order++;
 		if (block.heading_level > 0) {

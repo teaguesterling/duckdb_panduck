@@ -41,6 +41,10 @@ struct LatexInline {
 };
 
 struct LatexBlock {
+	//! duck_block kind. Empty means `block`. `value` is document METADATA.
+	std::string kind;
+	//! `value` only: the field name for attributes['key'], in PANDOC's namespace.
+	std::string key;
 	std::string element_type;
 	std::string content;      //!< empty when a container, or when inlines are populated
 	std::string list_type;    //!< list only: DuckBlockTypes::LIST_TYPE_* value

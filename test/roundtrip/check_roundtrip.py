@@ -53,7 +53,7 @@ REFERENCE_WRONG = "reference-wrong"
 NOT_IMPLEMENTED = "not-implemented"
 AMBIGUOUS = "ambiguous"
 
-LADDER = ["text", "skeleton", "marked"]
+LADDER = ["text", "skeleton", "marked", "meta"]
 
 
 class Case:
@@ -276,7 +276,9 @@ def read_pandoc(path, fmt):
     )
     if raw.returncode != 0:
         raise RuntimeError(f"pandoc failed on {path}:\n{raw.stderr}")
-    return canonical.pandoc_blocks_to_canonical(json.loads(raw.stdout)["blocks"])
+    doc = json.loads(raw.stdout)
+    return Doc(canonical.pandoc_blocks_to_canonical(doc["blocks"]),
+               canonical.pandoc_meta_to_flat(doc.get("meta") or {}))
 
 
 def read_panduck(path, reader, duckdb_bin, extension=None):
@@ -293,7 +295,8 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
         "SELECT kind, element_type, content, "
         "attributes['heading_level'] AS heading_level, "
         "attributes['href'] AS href, "
-        "attributes['src'] AS src "
+        "attributes['src'] AS src, "
+        "attributes['key'] AS key "
         f"FROM {reader}('{path}') ORDER BY element_order;"
     )
     # CI runs a stock duckdb against the extension artifact the build matrix already
@@ -316,17 +319,42 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
             attrs["href"] = r["href"]
         if r.get("src") is not None:
             attrs["src"] = r["src"]
+        if r.get("key") is not None:
+            attrs["key"] = r["key"]
         r["attributes"] = attrs
-    return canonical.duckblocks_to_canonical(rows)
+    return Doc(canonical.duckblocks_to_canonical(rows),
+               canonical.meta_from_duckblocks(rows))
+
+
+class Doc:
+    """A document's two axes. Metadata is not body content and pandoc does not carry it in
+    `blocks`, so folding the two together would compare each against the other's absence."""
+
+    def __init__(self, blocks, meta):
+        self.blocks = blocks
+        self.meta = meta
 
 
 def compare(level, a, b):
+    if level == "meta":
+        return a.meta == b.meta, a.meta, b.meta
     fn = canonical.LEVELS[level]
-    return fn(a) == fn(b), fn(a), fn(b)
+    return fn(a.blocks) == fn(b.blocks), fn(a.blocks), fn(b.blocks)
 
 
 def render_diff(level, got, ref, limit=6):
     lines = []
+    if level == "meta":
+        # A DICT, not a list of blocks. Indexing it positionally raised KeyError and took
+        # the whole run down BEFORE the two LaTeX cases ran -- so a crash in the diff
+        # renderer hid two real metadata failures behind one. Third instance today of an
+        # abort making later checks invisible, and this one was mine, written an hour
+        # after committing a Makefile comment about exactly this.
+        for key in sorted(set(got) | set(ref)):
+            g, r = got.get(key), ref.get(key)
+            if g != r:
+                lines.append(f"      {key}: panduck={g!r} pandoc={r!r}")
+        return lines[:limit]
     if level == "text":
         lines.append(f"      panduck: {got[:160]!r}")
         lines.append(f"      pandoc : {ref[:160]!r}")

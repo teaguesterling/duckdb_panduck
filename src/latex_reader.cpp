@@ -165,6 +165,11 @@ private:
 	void ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &name, std::string *raw);
 	//! tabular -> a spec 5.0 native table. Consumes through \end{<name>}.
 	void EmitTabular(std::vector<Token> &toks, size_t &i, const std::string &name);
+	//! \title/\author/\date -> kind='value'. Returns true if `name` was one of them.
+	bool CaptureMetadata(const std::string &name, std::vector<Token> &arg);
+	void EmitMetadata();
+	//! title/date -> one flattened string. author -> one entry per \and-separated name.
+	std::map<std::string, std::vector<std::string>> meta;
 	void StartItem(std::vector<Token> &toks, size_t &i);
 	void ResolveList(EnvFrame &frame);
 	void NoteParagraphBreak();
@@ -859,6 +864,88 @@ void Parser::ResolveList(EnvFrame &frame) {
 	}
 }
 
+bool Parser::CaptureMetadata(const std::string &name, std::vector<Token> &arg) {
+	// \title, \author and \date were DROPPED with their arguments -- the text was parsed
+	// and thrown away. A discard, not a fidelity gap, and the only unrecoverable one this
+	// reader had.
+	//
+	// They stay OFF the block path: \maketitle must still emit nothing, or a document with
+	// a title block stops being equivalent to the same document without one. The text goes
+	// to the metadata axis instead, which is where pandoc puts it too.
+	if (name != "title" && name != "author" && name != "date") {
+		return false;
+	}
+	if (name != "author") {
+		meta[name] = {FlattenTrimmed(arg)};
+		return true;
+	}
+	// \author IS A LIST, ALWAYS. Measured: pandoc yields MetaList even for a single
+	// author, where \title of the same document yields MetaInlines. Two shapes for what
+	// looks like the same kind of field, and both are pandoc's -- so `author` cannot be
+	// generalised from `title` in this reader, nor from Org's, where two \#+AUTHOR: lines
+	// concatenate into ONE MetaInlines instead.
+	std::vector<std::string> names;
+	std::vector<Token> current;
+	for (auto &tok : arg) {
+		if (tok.kind == TokenKind::CONTROL_WORD && tok.text == "and") {
+			auto one = FlattenTrimmed(current);
+			if (!one.empty()) {
+				names.push_back(std::move(one));
+			}
+			current.clear();
+			continue;
+		}
+		current.push_back(tok);
+	}
+	auto last = FlattenTrimmed(current);
+	if (!last.empty()) {
+		names.push_back(std::move(last));
+	}
+	// `\author{}` yields an EMPTY list, not a list holding one empty name -- pandoc emits
+	// MetaList [] for it. The key is still present: an empty field is a field, and a
+	// consumer cannot recover "declared and left blank" from silence.
+	meta[name] = std::move(names);
+	return true;
+}
+
+void Parser::EmitMetadata() {
+	// AFTER the blocks -- spec 6.2 makes the ordering a contract. std::map iterates sorted,
+	// which is also pandoc's Meta serialisation order, so a consumer comparing panduck's
+	// output against pandoc_ast_to_blocks sees the same sequence.
+	for (auto &kv : meta) {
+		LatexBlock block;
+		block.kind = DuckBlockTypes::KIND_VALUE;
+		block.key = kv.first;
+		block.level = 1;
+		if (kv.first != "author") {
+			block.element_type = DuckBlockTypes::VALUE_INLINES;
+			if (!kv.second.empty() && !kv.second[0].empty()) {
+				LatexInline text;
+				text.element_type = DuckBlockTypes::INLINE_TEXT;
+				text.content = kv.second[0];
+				text.level = 2;
+				block.inlines.push_back(std::move(text));
+			}
+			blocks.push_back(std::move(block));
+			continue;
+		}
+		block.element_type = DuckBlockTypes::VALUE_LIST;
+		blocks.push_back(std::move(block));
+		for (auto &one : kv.second) {
+			LatexBlock item;
+			item.kind = DuckBlockTypes::KIND_VALUE;
+			item.element_type = DuckBlockTypes::VALUE_INLINES;
+			item.level = 2;
+			LatexInline text;
+			text.element_type = DuckBlockTypes::INLINE_TEXT;
+			text.content = one;
+			text.level = 3;
+			item.inlines.push_back(std::move(text));
+			blocks.push_back(std::move(item));
+		}
+	}
+}
+
 void Parser::EmitTabular(std::vector<Token> &toks, size_t &i, const std::string &name) {
 	FlushRun();
 	SkipOptional(toks, i); // \begin{tabular}[t]{...}: vertical positioning, presentational
@@ -1144,6 +1231,11 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 		return args[index];
 	};
 
+	if (entry->disposition == Disposition::DROPPED &&
+	    CaptureMetadata(name, const_cast<std::vector<Token> &>(arg_at(0)))) {
+		return;
+	}
+
 	switch (entry->disposition) {
 	case Disposition::DROPPED:
 		// The macro AND its arguments vanish. \maketitle is the load-bearing case: it must
@@ -1335,6 +1427,24 @@ std::vector<LatexBlock> Parser::Parse() {
 			i = j > i ? j - 1 : i;
 			continue;
 		}
+		if (tokens[i].text == "title" || tokens[i].text == "author" || tokens[i].text == "date") {
+			// METADATA LIVES IN THE PREAMBLE, which the body pass never sees: Parse() runs
+			// tokens from body_start onward, so \title{X} before \begin{document} reached
+			// ControlWord exactly never. Capturing it in the body pass alone emitted nothing
+			// and looked like the macros were still being dropped -- the capture worked, the
+			// tokens simply never arrived.
+			//
+			// Scanned here rather than by widening the body, because the preamble is not
+			// prose: running it as body is what the body_start machinery above exists to
+			// prevent.
+			size_t j = i + 1;
+			std::vector<Token> arg;
+			if (ReadGroup(tokens, j, arg)) {
+				CaptureMetadata(tokens[i].text, arg);
+				i = j > i ? j - 1 : i;
+			}
+			continue;
+		}
 		if (tokens[i].text == "begin") {
 			size_t j = i + 1;
 			std::vector<Token> arg;
@@ -1360,6 +1470,10 @@ std::vector<LatexBlock> Parser::Parse() {
 	while (!env_stack.empty()) {
 		PopEnvironment();
 	}
+	// Metadata is appended AFTER every block, including the ones a truncated source leaves
+	// to be closed above -- spec 6.2 makes body-then-metadata a contract, and closing the
+	// containers first is what keeps it true for a document that was cut short.
+	EmitMetadata();
 	return std::move(blocks);
 }
 
@@ -1417,7 +1531,7 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 	int32_t order = 0;
 	for (auto &block : latex::ParseLatexString(source)) {
 		BlockRow row;
-		row.kind = DuckBlockTypes::KIND_BLOCK;
+		row.kind = block.kind.empty() ? DuckBlockTypes::KIND_BLOCK : block.kind;
 		row.element_type = block.element_type;
 		row.content = block.content;
 		if (!block.encoding.empty()) {
@@ -1429,6 +1543,9 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			// heading_level 2; the two are different facts and conflating them renders a
 			// heading by where it sits rather than what it is.
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+		}
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
 		}
 		if (!block.role.empty()) {
 			row.attributes[DuckBlockTypes::ATTR_ROLE] = block.role;

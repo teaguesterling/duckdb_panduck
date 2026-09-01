@@ -85,3 +85,39 @@ ORDER BY 1;
 ----
 converter	12	print("hi")<NL>
 native org	11	print("hi")
+
+# ---------------------------------------------------------------------------
+# DISPATCH: reachable by format := 'pandoc', and NEVER by extension.
+#
+# `.json` is already claimed as a DATA format, a Pandoc AST file is also a .json, and
+# dispatch cannot tell them apart by suffix -- the overwhelming majority of .json files in
+# the world are data. Auto-routing would silently change what every existing .json query
+# returns to serve a rare case, which is the wrong direction to be wrong in.
+query II
+SELECT element_type, content FROM read_panduck_doc(
+  'test/fixtures/handwritten.org.pandoc.json', format := 'pandoc')
+WHERE kind = 'block' AND element_type = 'heading' ORDER BY element_order;
+----
+heading	Heading One
+heading	Heading Two
+
+# THE NEGATIVE IS THE LOAD-BEARING HALF. .json must still resolve to `data`, and the
+# pandoc format must claim NO registry row -- a format with no extension is unroutable by
+# suffix by construction, which is the property that keeps existing .json reads working.
+query I
+SELECT format FROM panduck_reader_registry() WHERE ext = '.json';
+----
+data
+
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE format = 'pandoc';
+----
+0
+
+# ...and it is still DECLARED, so `panduck_supported_extensions()` reports a format panduck
+# can read even though nothing routes to it automatically. Declared-but-unroutable is the
+# right shape here, and is different from planned-but-unimplemented: there IS a reader.
+query II
+SELECT format, reader FROM panduck_supported_extensions() WHERE format = 'pandoc';
+----
+pandoc	read_pandoc_blocks

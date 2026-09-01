@@ -431,6 +431,13 @@ SELECT * FROM query(
                  ELSE error('panduck: ' || src || ' needs the ' ||
                             panduck_reader_extension_for(src) || ' extension') END
 
+        -- PANDOC'S OWN AST, reached by format := 'pandoc' and never by extension. The
+        -- generic branch above derives its reader from the file's SUFFIX, and this format
+        -- deliberately claims none -- so it needs a branch of its own or it is
+        -- unreachable through dispatch entirely.
+        WHEN panduck_resolved_format(src, format) = 'pandoc'
+            THEN 'SELECT * FROM read_pandoc_blocks(' || panduck_quote(src) || ')'
+
         -- LIST-producing branches: these unpack BY NAME.
         WHEN panduck_resolved_format(src, format) = 'html'
             THEN CASE WHEN panduck_ensure_extension('webbed')

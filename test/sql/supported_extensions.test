@@ -46,6 +46,7 @@ ipynb	read_ipynb_blocks
 latex	read_latex_blocks
 odt	read_odt_blocks
 org	read_org_blocks
+pandoc	read_pandoc_blocks
 rst	read_rst_blocks
 rtf	read_rtf_blocks
 
@@ -86,6 +87,7 @@ latex
 mediawiki
 odt
 org
+pandoc
 rst
 rtf
 

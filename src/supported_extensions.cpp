@@ -14,6 +14,11 @@ static const char *const EXT_EPUB[] = {"epub", nullptr};
 static const char *const EXT_LATEX[] = {"tex", "latex", nullptr};
 static const char *const EXT_RST[] = {"rst", nullptr};
 static const char *const EXT_IPYNB[] = {"ipynb", nullptr};
+//! NO EXTENSION, deliberately. A Pandoc AST file is a .json, and .json is already claimed
+//! as a DATA format -- dispatch cannot tell an AST from any other JSON by its suffix, and
+//! the overwhelming majority of .json files in the world are data. Auto-routing would
+//! silently change what every existing .json query returns to serve a rare case.
+static const char *const EXT_PANDOC[] = {nullptr};
 static const char *const EXT_ORG[] = {"org", nullptr};
 static const char *const EXT_MEDIAWIKI[] = {"wiki", "mediawiki", nullptr};
 static const char *const EXT_RTF[] = {"rtf", nullptr};
@@ -48,6 +53,15 @@ const FormatReader FORMATS[] = {
      "items, blockquotes, divs, links and images; run formatting resolves through CSS "
      "classes because LibreOffice's export emits no semantic markup at all. Tables and "
      "footnotes are not read yet"},
+    {"pandoc", EXT_PANDOC, "read_pandoc_blocks", STATUS_IMPLEMENTED,
+     "pandoc's own JSON AST, and the widest interface panduck has: `json` is what "
+     "`pandoc -t json` emits, so this one reader makes ALL 42 of pandoc's input formats "
+     "reachable with no per-format code, for anyone who has pandoc installed. Reached ONLY "
+     "by format := 'pandoc' or by calling read_pandoc_blocks directly -- it claims no "
+     "extension, because .json is already a data format and dispatch cannot tell an AST "
+     "from any other JSON by its suffix. Does NOT make pandoc a dependency: the seven "
+     "native readers still need no external binary, and a user piping `pandoc -t json` has "
+     "made that choice explicitly, once, rather than having it made per document"},
     {"ipynb", EXT_IPYNB, "read_ipynb_blocks", STATUS_IMPLEMENTED,
      "a Jupyter notebook, parsed with the yyjson DuckDB already vendors -- so .ipynb needs "
      "NO third-party extension, unlike the toml and yaml paths. Each cell is a `div` "

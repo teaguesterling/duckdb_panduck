@@ -7,6 +7,7 @@
 #include "latex_reader.hpp"
 #include "org_reader.hpp"
 #include "ipynb_reader.hpp"
+#include "pandoc_reader.hpp"
 #include "rst_reader.hpp"
 #include "latex_tokenizer.hpp"
 #include "odt_reader.hpp"
@@ -74,6 +75,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	org::RegisterOrgReader(loader);
 	rst::RegisterRstReader(loader);
 	ipynb::RegisterIpynbReader(loader);
+	RegisterPandocReader(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

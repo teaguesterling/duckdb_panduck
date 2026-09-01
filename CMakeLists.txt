@@ -44,6 +44,9 @@ set(EXTENSION_SOURCES
     src/rst_reader.cpp
     src/rst_scanner.cpp
     src/ipynb_reader.cpp
+    src/pandoc_block_convert.cpp
+    src/pandoc_inline_convert.cpp
+    src/pandoc_reader.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp
     src/rtf_reader.cpp

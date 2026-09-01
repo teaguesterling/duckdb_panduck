@@ -363,6 +363,12 @@ list_item	bullet two	4	NULL
 # This fixture carries the only ordered list in the suite. Every <ol> in the two
 # real-writer EPUBs sits in a nav or toc document, which is outside the spine and therefore
 # never read -- so this whole code path was unexercised until the fixture gained one.
+#
+# The trailing definition list is the spec 5.0 <dl> shape, and it appears HERE rather than
+# only in the deflist assertion below because this query is the one that says how many
+# lists exist. A <dl> that stopped being a `list` would leave the row count here unchanged
+# only if something else broke in a compensating way -- so this is the assertion that the
+# definition list is a list AT ALL, separate from the one that checks its items.
 query IIIIII
 SELECT element_type, level, attributes['ordered'], attributes['list_type'],
        attributes['start'], attributes['number_style']
@@ -375,6 +381,7 @@ list	2	false	bullet	NULL	NULL
 list	4	false	bullet	NULL	NULL
 list	2	false	bullet	NULL	NULL
 list	4	false	bullet	NULL	NULL
+list	2	false	definition	NULL	NULL
 
 # ---------------------------------------------------------------------------
 # A DEFINITION LIST IS NOT A BULLET LIST, and the reader must not claim it is. <dl> briefly
@@ -382,24 +389,35 @@ list	4	false	bullet	NULL	NULL
 # list_type='bullet' -- a straight falsehood about the document, and invisible because no
 # fixture contained a <dl> at all.
 #
-# duck_block has no settled shape for definition lists: `deflist` still carries an opaque
-# JSON tuple and its structural form is an open question upstream. So <dl> stays on the
-# transparent path and <dt>/<dd> keep the placeholder list_item mapping they already had.
+# It then stayed on the TRANSPARENT path, deliberately, on the grounds that duck_block had
+# no settled shape for definition lists and guessing a parent type is how a format grows a
+# shape nobody can consume. That was correct when written and is now STALE: spec 5.0
+# settled it. `deflist` is deprecated -- duck_blocks_lint warns on it -- and a definition
+# list is a LIST KIND:
 #
-# The `plain` rule is deliberately NOT propagated into them. It keys on the <li> TAG rather
-# than the list_item TYPE, because dt/dd mapping to list_item is a workaround for a gap
-# rather than a statement that a definition IS a list item -- and extending a rule through
-# a shared placeholder type would invent a shape for something upstream left open. That is
-# the fifth-shape failure this file keeps recording.
-query IIII
-SELECT element_type, content, level, attributes['list_type']
+#     <dl>  ->  list       attributes['list_type'] = 'definition'
+#     <dt>  ->  list_item  attributes['role'] = 'term'
+#     <dd>  ->  list_item  attributes['role'] = 'definition'
+#
+# So the deferral is discharged, not abandoned. Note the LEVELS move: while <dl> was
+# transparent its <dt>/<dd> sat at the dl's own depth; now that the list is a real
+# container they are one deeper. That shift is the assertion that the container actually
+# exists, rather than the items merely being relabelled.
+#
+# The `plain` rule now DOES reach them, because dt/dd being list_items is no longer a
+# placeholder standing in for a gap -- 5.0 says a definition list IS a list, so its items
+# are list_items in fact and the content rule applies to them like any other.
+query IIIII
+SELECT element_type, content, level, attributes['list_type'], attributes['role']
 FROM read_epub_blocks('test/fixtures/spine_order.epub')
-WHERE content IN ('term', 'definition') OR (element_type = 'list' AND attributes['list_type'] = 'ordered')
+WHERE content IN ('term', 'definition')
+   OR (element_type = 'list' AND attributes['list_type'] IN ('ordered', 'definition'))
 ORDER BY element_order;
 ----
-list	NULL	2	ordered
-list_item	term	2	NULL
-list_item	definition	2	NULL
+list	NULL	2	ordered	NULL
+list	NULL	2	definition	NULL
+list_item	term	3	NULL	term
+list_item	definition	3	NULL	definition
 
 # ---------------------------------------------------------------------------
 # <section> IS A `section`, NOT A `div`. duck_block has both and the distinction is a
@@ -459,6 +477,12 @@ plain	cell two
 # Worth recording that the names lining up with HTML5 is evidence worth nothing on its own
 # -- it is the reason this was asked upstream rather than inferred -- and it happens to be
 # correct here only because the spec deliberately adopted that set.
+# The two list_item rows are NOT strays. This query asks for everything carrying a role,
+# and since spec 5.0 `role` has two users here: the seven sectioning kinds, and the two
+# halves of a definition list. That is the vocabulary's own design -- one type plus a role
+# rather than a type per variant -- so the query is left broad deliberately. Narrowing it
+# to sections would hide the next producer that starts using role, which is exactly what
+# this assertion is for.
 query III
 SELECT element_type, attributes['role'], content
 FROM read_epub_blocks('test/fixtures/spine_order.epub')
@@ -466,6 +490,8 @@ WHERE attributes['role'] IS NOT NULL OR content IN ('art','side','navi','head','
 ORDER BY element_order;
 ----
 section	section	NULL
+list_item	term	term
+list_item	definition	definition
 section	article	NULL
 paragraph	NULL	art
 section	aside	NULL

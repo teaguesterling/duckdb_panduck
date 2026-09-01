@@ -241,7 +241,7 @@ const std::set<std::string> BLOCK_LEAF = {"p",  "h1", "h2", "h3",  "h4",        
 //! Tags that contribute structure and are walked through without emitting a block of
 //! their own. ul/ol/dl are here because pandoc's own model has no list-wrapper block --
 //! its BulletList is the wrapper, and the items are what survive canonicalisation.
-const std::set<std::string> TRANSPARENT = {"body", "figure", "hgroup", "ul", "ol", "dl"};
+const std::set<std::string> TRANSPARENT = {"body", "figure", "hgroup", "ul", "ol"};
 
 //! HTML5's sectioning set, which is EXACTLY duck_block's `role` vocabulary -- the spec
 //! adopted it deliberately rather than by coincidence. Each becomes a `section` naming its
@@ -396,7 +396,7 @@ struct DocContext {
 };
 
 void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int heading_level, const DocContext &ctx,
-               std::vector<EpubBlock> &out, int depth) {
+               std::vector<EpubBlock> &out, int depth, const std::string &role = std::string()) {
 	std::vector<Run> runs;
 	CollectRuns(node, RunFormat(), std::string(), ctx.rules, ctx.base_dir, runs);
 
@@ -416,6 +416,7 @@ void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int 
 	block.element_type = element_type;
 	block.heading_level = heading_level;
 	block.level = depth;
+	block.role = role;
 	// Headings always flatten -- see the RTF, DOCX and ODT readers for why.
 	if (!any_format || heading_level > 0) {
 		block.content = Trim(all);
@@ -487,24 +488,28 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			}
 			block.content = text;
 			out.push_back(std::move(block));
-		} else if (tag == "ul" || tag == "ol") {
+		} else if (tag == "ul" || tag == "ol" || tag == "dl") {
 			// A LIST IS A CONTAINER. Previously these fell through to the
 			// unknown-element branch, which recursed and dropped the grouping: the
 			// <li>s came out as bare list_items with nothing saying they belonged
 			// together, or whether they were bulleted or numbered.
 			//
-			// <dl> IS DELIBERATELY NOT HERE. It was, briefly, and that was wrong: a
-			// definition list would have been emitted as list_type='bullet', which is a
-			// straight falsehood about the document. duck_block has no settled shape for
-			// definition lists -- `deflist` still carries an opaque JSON tuple and its
-			// structural form is an open question upstream -- so <dl> stays on the
-			// transparent path until there is a real answer to conform to. Guessing a
-			// parent type is how a format grows a shape nobody can consume.
+			// <dl> IS HERE NOW, and the route it took matters. It was briefly emitted as
+			// list_type='bullet' -- a straight falsehood about the document -- then moved
+			// to the transparent path deliberately, because duck_block had no settled
+			// shape for definition lists and guessing a parent type is how a format grows
+			// a shape nobody can consume.
+			//
+			// Spec 5.0 settled it: a definition list IS a list kind. `deflist` is
+			// deprecated and duck_blocks_lint warns on it. So the deferral is DISCHARGED
+			// rather than abandoned -- the condition it was waiting on ("until there is a
+			// real answer to conform to") was met upstream, and this comment is the only
+			// thing that would have said so.
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_LIST;
 			block.container = true;
 			block.level = depth;
-			block.list_type = (tag == "ol") ? "ordered" : "bullet";
+			block.list_type = (tag == "ol") ? "ordered" : (tag == "dl") ? "definition" : "bullet";
 			if (tag == "ol") {
 				std::string start = child.attribute("start").value();
 				block.list_start = start.empty() ? "1" : start;
@@ -545,6 +550,9 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			auto type = (tag == "li" || tag == "dt" || tag == "dd") ? DuckBlockTypes::TYPE_LIST_ITEM
 			            : tag == "figcaption" || tag == "caption"   ? DuckBlockTypes::TYPE_CAPTION
 			                                                        : DuckBlockTypes::TYPE_PARAGRAPH;
+			// spec 5.0: role distinguishes the two halves of a definition list, the same
+			// discriminator `section` uses for its seven sectioning kinds.
+			std::string item_role = (tag == "dt") ? "term" : (tag == "dd") ? "definition" : std::string();
 			if (HasBlockChildren(child)) {
 				// <li><p>..</p></li>: the LOOSE form. The item is a container and its text
 				// is read by the blocks inside it -- a real `paragraph`, because the source
@@ -553,6 +561,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				block.element_type = type;
 				block.container = true;
 				block.level = depth;
+				block.role = item_role;
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
 			} else {
@@ -570,7 +579,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				// it -- but 6.0 carries it through the CONTENT RULE rather than the type:
 				// tight puts the text on the item, loose grows a paragraph. Emitting
 				// `plain` there said "this run had nowhere to go" about a run that did.
-				EmitBlock(child, type, 0, ctx, out, depth);
+				EmitBlock(child, type, 0, ctx, out, depth, item_role);
 			}
 		} else {
 			// Unknown or transparent element: recurse. Never drop, for the same reason as

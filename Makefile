@@ -15,6 +15,29 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 check-vocabulary:
 	python3 scripts/check_duck_block_vocabulary.py
 
+# Check every reader's output against duck_block_utils' pure-SQL conformance macros.
+# Until this target existed, panduck's test suite checked panduck's own behaviour and
+# NOTHING about duck_block conformance -- every such claim came from loading
+# duck_block_utils by hand, once, interactively.
+#
+# The macros are READ FROM the upstream checkout, not copied into this tree: upstream
+# already compares them against its own extension, and a copy here would be a third
+# party to that agreement, checked by nobody. Skips cleanly (exit 0) when the checkout
+# is absent; --strict makes that a failure. Override with:
+#     python3 scripts/check_duck_block_conformance.py --upstream <path>
+#
+# They are pure SQL, which matters because panduck's duckdb submodule tracks the BRANCH
+# v1.5-variegata rather than a tag. It sits on the v1.5.5 release commit today, so the
+# real validator loads; one `git submodule update --remote` moves it off-release and the
+# validator becomes unloadable by any route, while these keep working.
+#
+# The script self-tests against five constructed documents FIRST and fails if the
+# defects are not caught or the conforming control is rejected -- a check that cannot
+# fire reports the same clean output as one that can.
+.PHONY: check-conformance
+check-conformance:
+	python3 scripts/check_duck_block_conformance.py
+
 # Verify panduck's Pandoc AST mapping against a real pandoc binary. Skips cleanly (exit
 # 0) when pandoc is not installed, so it is safe to chain onto other targets.
 .PHONY: test_pandoc_alignment

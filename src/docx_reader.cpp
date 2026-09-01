@@ -169,13 +169,34 @@ void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &ou
 			// MIRRORING, and pandoc extracts nothing at all from DOCX and ODT, so there is
 			// no empty field of pandoc's to mirror and nothing is being discarded.
 			//
-			// What is actually here is boilerplate: LibreOffice writes <dc:title/>,
-			// <dc:creator/>, <dc:subject/> and <dc:description/> into every file it saves.
-			// Emitting them would put four or five empty rows in every LibreOffice document
-			// -- diverging from the reference to convey nothing, and weakening the case for
-			// exceeding pandoc at all, which rests on RECOVERING DATA the file contains.
+			// THAT GROUND WAS INCOMPLETE, and the ruling's second one has to be answered
+			// on its own terms: a consumer cannot recover "the author declared a title and
+			// left it blank" from silence. That argument never mentions pandoc, so pandoc's
+			// absence does not dispose of it.
 			//
-			// So the exception is kept as narrow as its justification: fields with content.
+			// Answered directly it points the same way and gives a better rule than "docx
+			// and odt are different": PRESENT-AND-EMPTY CARRIES INFORMATION ONLY WHEN
+			// PRESENCE IS A CHOICE. Emit an empty field when its presence is authorial;
+			// skip it when the format's writer emits the element unconditionally. That
+			// yields this behaviour here and the opposite for YAML and Org, from one
+			// principle rather than an exception.
+			//
+			// MEASURED ACROSS TWO INDEPENDENT PRODUCERS rather than assumed from one:
+			//
+			//     LibreOffice  dc:title, dc:creator, dc:subject, dc:description  all EMPTY
+			//     Pandoc       dc:title, dc:creator EMPTY; subject/description ABSENT
+			//
+			// Both write an empty title and creator into every file, so presence there is a
+			// constant rather than an authorial act. Emitting them would put four empty
+			// rows in every document and invite exactly the misreading the original rule
+			// protects against -- a deliberate blanking that never happened.
+			//
+			// BOUNDED DELIBERATELY: Word and Pages are UNMEASURED. If some producer writes
+			// <dc:title/> only when a title was set and then cleared, the element IS
+			// authorial in those files and this skip is wrong for them. A reader cannot see
+			// which producer wrote a file, so per-format is the implementable
+			// approximation. Recorded as a measurement about named producers rather than a
+			// law, so it can be revisited instead of inherited.
 			continue;
 		}
 		found[field.key] = {text, field.source};

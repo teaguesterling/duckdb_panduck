@@ -42,8 +42,8 @@ WHERE element_type IN ('list', 'list_item', 'blockquote', 'div', 'section') ORDE
 section	NULL
 section	NULL
 list	NULL
-list_item	NULL
-list_item	NULL
+list_item	bullet one
+list_item	bullet two
 blockquote	NULL
 
 # ---------------------------------------------------------------------------
@@ -240,8 +240,7 @@ WHERE element_order BETWEEN
   AND (SELECT max(element_order) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'blockquote')
 ORDER BY element_order;
 ----
-list_item	NULL
-plain	tight item
+list_item	tight item
 list_item	NULL
 paragraph	loose item
 blockquote	NULL
@@ -345,10 +344,8 @@ WHERE element_type IN ('list', 'list_item', 'plain') OR content LIKE 'bullet%'
 ORDER BY element_order;
 ----
 list	NULL	3	bullet
-list_item	NULL	4	NULL
-plain	bullet one	5	NULL
-list_item	NULL	4	NULL
-plain	bullet two	5	NULL
+list_item	bullet one	4	NULL
+list_item	bullet two	4	NULL
 
 # ---------------------------------------------------------------------------
 # ORDERED LISTS, AND BOTH SPELLINGS OF ORDEREDNESS. attributes['ordered'] is the CANONICAL
@@ -504,13 +501,19 @@ paragraph	NULL	mainly
 # Asserting only one spelling would pass against the wrong rule: a reader keyed on "has
 # block children" makes both forms identical, and either row alone looks correct. The two
 # DIFFERING is what discriminates.
+#
+# Note what each row shows. `outer` stays `plain` because its run has a BLOCK SIBLING --
+# the nested list -- so it genuinely has nowhere else to live. `inner` is a lone run in a
+# tight item, so it becomes that item's CONTENT and no child is emitted. Both follow from
+# one rule applied to different neighbourhoods, which is why the pair is the assertion
+# rather than either half.
 query III
 SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
 WHERE content IN ('outer', 'inner', 'louter', 'linner')
 ORDER BY element_order;
 ----
 plain	outer	4
-plain	inner	6
+list_item	inner	5
 paragraph	louter	4
-plain	linner	6
+list_item	linner	5
 

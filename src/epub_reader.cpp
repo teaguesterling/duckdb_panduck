@@ -555,31 +555,21 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				block.level = depth;
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
-			} else if (tag == "li") {
-				// <li>text</li>: the TIGHT form. Its bare run becomes a `plain` -- a
-				// block-level text run with NO paragraph semantics, which is precisely
-				// Pandoc's Plain constructor and precisely what this markup is.
-				//
-				// KEYED ON THE TAG, NOT THE TYPE, and the difference matters: <dt> and <dd>
-				// also map to list_item here, and that mapping is a workaround for a gap
-				// rather than a statement that a definition IS a list item. duck_block has
-				// no settled shape for definition lists, so propagating the plain rule into
-				// them on the strength of a shared placeholder type would be inventing a
-				// shape for something upstream has explicitly left open.
-				//
-				// The tight/loose distinction is real: the two forms render with different
-				// spacing, and HTML, Pandoc and duck_block all carry it. It lives in the
-				// TYPE rather than an attribute because what was missing was a constructor
-				// nothing represented, not a variation nothing annotated -- and a reader
-				// that maps both onto `paragraph` destroys it silently, which is the
-				// mechanism by which duck_block_utils' own reader lost it too.
-				EpubBlock item;
-				item.element_type = type;
-				item.container = true;
-				item.level = depth;
-				out.push_back(std::move(item));
-				EmitBlock(child, DuckBlockTypes::TYPE_PLAIN, 0, ctx, out, depth + 1);
 			} else {
+				// <li>text</li>: the TIGHT form, and its run belongs on the ITEM.
+				//
+				// duck_block 6.0: `content` is populated IF AND ONLY IF the container's
+				// only child is a plain text run, and `plain` is for a run with NOWHERE
+				// ELSE to live -- beside a block sibling, or at the document root. A lone
+				// run inside a list item has somewhere, so it is content and no child is
+				// emitted at all. EmitBlock already implements exactly that rule.
+				//
+				// This briefly emitted `list_item(NULL) > plain(text)` instead. The
+				// tight/loose distinction it was reaching for is real -- the two forms
+				// render with different spacing, and HTML, Pandoc and duck_block all carry
+				// it -- but 6.0 carries it through the CONTENT RULE rather than the type:
+				// tight puts the text on the item, loose grows a paragraph. Emitting
+				// `plain` there said "this run had nowhere to go" about a run that did.
 				EmitBlock(child, type, 0, ctx, out, depth);
 			}
 		} else {

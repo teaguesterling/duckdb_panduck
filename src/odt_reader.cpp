@@ -1,3 +1,4 @@
+#include "doc_metadata.hpp"
 #include "odt_reader.hpp"
 
 #include "duck_block_types.hpp"
@@ -119,9 +120,85 @@ void CollectRuns(const pugi::xml_node &node, const RunFormat &inherited, const s
 
 } // namespace
 
+//! meta.xml as `value` elements, appended after the blocks.
+//!
+//! Every field EXCEEDS pandoc, which extracts nothing from ODT -- see doc_metadata.hpp --
+//! so each carries attributes['source_type'] with its original spelling, marking it as
+//! format-derived rather than pandoc-derived.
+void CollectOdtMetadata(const std::string &meta_xml, std::vector<OdtBlock> &out) {
+	if (meta_xml.empty()) {
+		return;
+	}
+	pugi::xml_document doc;
+	if (!doc.load_buffer(meta_xml.data(), meta_xml.size())) {
+		// A malformed metadata part must not fail the document -- the body is what the
+		// caller asked for.
+		return;
+	}
+	auto meta = doc.child("office:document-meta").child("office:meta");
+	if (!meta) {
+		return;
+	}
+	std::map<std::string, std::pair<std::string, std::string>> found; // key -> {text, source}
+	for (auto &field : ODT_META_FIELDS) {
+		auto node = meta.child(field.source);
+		if (!node) {
+			continue;
+		}
+		auto text = TrimMetaText(node.child_value());
+		if (text.empty()) {
+			// EMPTY FIELDS ARE SKIPPED HERE, and this is the one place that differs from
+			// the EPUB/LaTeX/RTF readers, deliberately.
+			//
+			// The ruling is "an empty field is still a field", and its stated ground is
+			// that "emitting nothing would discard a fact PANDOC PRESERVED" -- pandoc emits
+			// the key with an empty value, so a reader mirrors it. That reasoning is about
+			// MIRRORING, and pandoc extracts nothing at all from DOCX and ODT, so there is
+			// no empty field of pandoc's to mirror and nothing is being discarded.
+			//
+			// What is actually here is boilerplate: LibreOffice writes <dc:title/>,
+			// <dc:creator/>, <dc:subject/> and <dc:description/> into every file it saves.
+			// Emitting them would put four or five empty rows in every LibreOffice document
+			// -- diverging from the reference to convey nothing, and weakening the case for
+			// exceeding pandoc at all, which rests on RECOVERING DATA the file contains.
+			//
+			// So the exception is kept as narrow as its justification: fields with content.
+			continue;
+		}
+		found[field.key] = {text, field.source};
+	}
+	if (!found.count("date")) {
+		// meta:creation-date ONLY when dc:date is absent. Both carry the same instant in
+		// every fixture measured, and two sources feeding one key is how the two drift
+		// apart -- so the Dublin Core spelling wins and this is the fallback, not a peer.
+		auto created = meta.child("meta:creation-date");
+		auto created_text = created ? TrimMetaText(created.child_value()) : std::string();
+		if (!created_text.empty()) {
+			found["date"] = {created_text, "meta:creation-date"};
+		}
+	}
+	for (auto &kv : found) {
+		OdtBlock block;
+		block.kind = DuckBlockTypes::KIND_VALUE;
+		block.element_type = DuckBlockTypes::VALUE_INLINES;
+		block.key = kv.first;
+		block.source_type = kv.second.second;
+		if (!kv.second.first.empty()) { // always true here; see the skip above
+			OdtInline run;
+			run.element_type = DuckBlockTypes::INLINE_TEXT;
+			run.content = kv.second.first;
+			block.inlines.push_back(std::move(run));
+		}
+		out.push_back(std::move(block));
+	}
+}
+
 std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	ZipContainer zip(path, "read_odt_blocks");
 	auto content_xml = zip.ReadRequired("content.xml");
+	// OPTIONAL: a missing meta.xml is a document that declared no metadata, not an error.
+	std::string meta_xml;
+	zip.Read("meta.xml", meta_xml);
 
 	pugi::xml_document doc;
 	// parse_ws_pcdata for the same reason DOCX needs it: a whitespace-only text node
@@ -198,6 +275,8 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		}
 		blocks.push_back(std::move(block));
 	}
+	// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract.
+	CollectOdtMetadata(meta_xml, blocks);
 	return blocks;
 }
 
@@ -236,7 +315,13 @@ unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input,
 	int32_t order = 0;
 	for (auto &block : odt::ParseOdtFile(input.inputs[0].GetValue<string>())) {
 		OdtRow row;
-		row.kind = DuckBlockTypes::KIND_BLOCK;
+		row.kind = block.kind.empty() ? DuckBlockTypes::KIND_BLOCK : block.kind;
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
+		}
+		if (!block.source_type.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = block.source_type;
+		}
 		row.element_type = block.element_type;
 		row.content = block.content;
 		row.element_order = order++;

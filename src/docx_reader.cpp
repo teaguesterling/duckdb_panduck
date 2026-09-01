@@ -1,3 +1,4 @@
+#include "doc_metadata.hpp"
 #include "docx_reader.hpp"
 
 #include "duck_block_types.hpp"
@@ -130,6 +131,71 @@ int ParagraphHeadingLevel(const pugi::xml_node &ppr, const std::map<std::string,
 
 } // namespace
 
+//! docProps/core.xml as `value` elements, appended after the blocks.
+//!
+//! Every field here EXCEEDS pandoc, which extracts nothing from DOCX -- see
+//! doc_metadata.hpp. Each carries attributes['source_type'] with its original spelling so
+//! a consumer can tell format-derived metadata from pandoc-derived, which is the condition
+//! the approval to exceed came with.
+void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &out) {
+	if (core_xml.empty()) {
+		return;
+	}
+	pugi::xml_document doc;
+	if (!doc.load_buffer(core_xml.data(), core_xml.size())) {
+		// A malformed metadata part must not fail the document. The body is what the
+		// caller asked for; metadata is enrichment, and losing it is a smaller harm than
+		// refusing a file whose prose reads perfectly.
+		return;
+	}
+	auto props = doc.child("cp:coreProperties");
+	if (!props) {
+		return;
+	}
+	std::map<std::string, std::pair<std::string, std::string>> found; // key -> {text, source}
+	for (auto &field : DOCX_CORE_FIELDS) {
+		auto node = props.child(field.source);
+		if (!node) {
+			continue;
+		}
+		auto text = TrimMetaText(node.child_value());
+		if (text.empty()) {
+			// EMPTY FIELDS ARE SKIPPED HERE, and this is the one place that differs from
+			// the EPUB/LaTeX/RTF readers, deliberately.
+			//
+			// The ruling is "an empty field is still a field", and its stated ground is
+			// that "emitting nothing would discard a fact PANDOC PRESERVED" -- pandoc emits
+			// the key with an empty value, so a reader mirrors it. That reasoning is about
+			// MIRRORING, and pandoc extracts nothing at all from DOCX and ODT, so there is
+			// no empty field of pandoc's to mirror and nothing is being discarded.
+			//
+			// What is actually here is boilerplate: LibreOffice writes <dc:title/>,
+			// <dc:creator/>, <dc:subject/> and <dc:description/> into every file it saves.
+			// Emitting them would put four or five empty rows in every LibreOffice document
+			// -- diverging from the reference to convey nothing, and weakening the case for
+			// exceeding pandoc at all, which rests on RECOVERING DATA the file contains.
+			//
+			// So the exception is kept as narrow as its justification: fields with content.
+			continue;
+		}
+		found[field.key] = {text, field.source};
+	}
+	for (auto &kv : found) {
+		DocxBlock block;
+		block.kind = DuckBlockTypes::KIND_VALUE;
+		block.element_type = DuckBlockTypes::VALUE_INLINES;
+		block.key = kv.first;
+		block.source_type = kv.second.second;
+		if (!kv.second.first.empty()) { // always true here; see the skip above
+			DocxInline run;
+			run.element_type = DuckBlockTypes::INLINE_TEXT;
+			run.content = kv.second.first;
+			block.inlines.push_back(std::move(run));
+		}
+		out.push_back(std::move(block));
+	}
+}
+
 std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	ZipContainer zip(path, "read_docx_blocks");
 	auto document_xml = zip.ReadRequired("word/document.xml");
@@ -137,6 +203,11 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	zip.Read("word/styles.xml", styles_xml); // optional: a minimal DOCX may omit it
 
 	auto styles = ParseStyleNames(styles_xml);
+
+	// OPTIONAL: a DOCX need not carry docProps/core.xml, and a missing part is not an
+	// error -- it is a document that declared no metadata.
+	std::string core_xml;
+	zip.Read("docProps/core.xml", core_xml);
 
 	pugi::xml_document doc;
 	// parse_ws_pcdata is REQUIRED, not a tuning knob. pandoc emits inter-word spacing as
@@ -228,6 +299,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 		blocks.push_back(std::move(block));
 	}
+	// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract.
+	CollectDocxMetadata(core_xml, blocks);
 	return blocks;
 }
 
@@ -268,7 +341,13 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 	int32_t order = 0;
 	for (auto &block : docx::ParseDocxFile(input.inputs[0].GetValue<string>())) {
 		DocxRow row;
-		row.kind = DuckBlockTypes::KIND_BLOCK;
+		row.kind = block.kind.empty() ? DuckBlockTypes::KIND_BLOCK : block.kind;
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
+		}
+		if (!block.source_type.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = block.source_type;
+		}
 		row.element_type = block.element_type;
 		row.content = block.content;
 		row.element_order = order++;

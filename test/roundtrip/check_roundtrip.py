@@ -118,6 +118,25 @@ ODT_SCOPE = (
     "text level caught.",
 )
 
+OFFICE_META = (
+    REFERENCE_WRONG,
+    "panduck recovers document metadata that pandoc drops. MEASURED: `pandoc file.docx "
+    "-t json` and `pandoc file.odt -t json` both return an EMPTY meta, on every fixture "
+    "here, even though the files plainly carry dcterms:created, dc:language and "
+    "meta:generator. Its DOCX and ODT readers do not populate Meta at all -- unlike its "
+    "EPUB, LaTeX and RTF readers, where panduck agrees with it exactly.\n\n"
+    "This is a DELIBERATE, APPROVED EXCEPTION and the only place panduck exceeds the "
+    "reference on metadata. It is narrow in two ways that matter. Every field emitted "
+    "carries attributes['source_type'] with its original spelling (`dcterms:created`, "
+    "`meta:generator`), so a consumer can always tell format-derived metadata from "
+    "pandoc-derived -- without that marker panduck's output stops being reproducible from "
+    "`pandoc -t json` and the next person to diff the two reads recovered data as a bug. "
+    "And EMPTY fields are skipped here, unlike in the other three readers: LibreOffice "
+    "writes <dc:title/> and <dc:creator/> into every file it saves, so emitting them would "
+    "diverge from the reference to convey nothing. Every field listed as divergent below "
+    "carries real content.",
+)
+
 EPUB_SECTION_DIV = (
     REFERENCE_WRONG,
     "panduck maps <section> to the `section` element_type; pandoc emits a generic Div. "
@@ -179,28 +198,28 @@ CASES = [
         "test/fixtures/pandoc_pstyle.docx",
         "docx",
         "read_docx_blocks",
-        expect={"skeleton": DOCX_SCOPE, "marked": DOCX_SCOPE},  # text must AGREE
+        expect={"skeleton": DOCX_SCOPE, "marked": DOCX_SCOPE, "meta": OFFICE_META},  # text must AGREE
         note="pandoc-generated DOCX: headings via w:pStyle",
     ),
     Case(
         "test/fixtures/libreoffice_outlinelvl.docx",
         "docx",
         "read_docx_blocks",
-        expect={"skeleton": DOCX_LO, "marked": DOCX_LO},  # text must AGREE
+        expect={"skeleton": DOCX_LO, "marked": DOCX_LO, "meta": OFFICE_META},  # text must AGREE
         note="LibreOffice-generated DOCX: headings via w:outlineLvl",
     ),
     Case(
         "test/fixtures/pandoc.odt",
         "odt",
         "read_odt_blocks",
-        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE},  # text must AGREE
+        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE, "meta": OFFICE_META},  # text must AGREE
         note="pandoc-generated ODT",
     ),
     Case(
         "test/fixtures/libreoffice.odt",
         "odt",
         "read_odt_blocks",
-        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE},  # text must AGREE
+        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE, "meta": OFFICE_META},  # text must AGREE
         note="LibreOffice-generated ODT",
     ),
     Case(

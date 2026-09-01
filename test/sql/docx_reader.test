@@ -148,3 +148,59 @@ heading	Heading One	1
 paragraph	NULL	1
 text	A paragraph with 	2
 bold	bold	2
+
+# ---------------------------------------------------------------------------
+# DOCUMENT METADATA -> kind='value', AND THIS READER EXCEEDS PANDOC ON PURPOSE.
+#
+# Measured: `pandoc file.docx -t json` returns an EMPTY meta on both fixtures, though both
+# carry docProps/core.xml with real fields. Pandoc's DOCX reader does not populate Meta at
+# all -- unlike its EPUB, LaTeX and RTF readers, where panduck agrees with it exactly.
+#
+# Recovering fields the user's file plainly contains beats matching that blind spot, and
+# the exception is approved. It is narrow in two ways, both asserted here.
+#
+# FIRST, attributes['source_type'] CARRIES THE ORIGINAL SPELLING. That is the condition
+# the approval came with: a format-derived field must be distinguishable from a
+# pandoc-derived one, or panduck's output stops being reproducible from `pandoc -t json`
+# and the next person to diff the two reads recovered data as a bug. `dcterms:created` and
+# `dc:language` also record what the field was called before the pandoc key namespace
+# flattened it -- one marker doing both jobs.
+query IIIIII
+SELECT kind, element_type, level, attributes['key'], attributes['source_type'], content
+FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+WHERE element_order >= (SELECT min(element_order) FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx') WHERE kind = 'value')
+ORDER BY element_order;
+----
+value	inlines	1	language	dc:language	NULL
+inline	text	2	NULL	NULL	en-US
+
+# The pandoc-written fixture carries a different field, which is the point of having both:
+# dcterms:created rather than dc:language, mapping to the same `date` key every other
+# reader uses.
+query IIII
+SELECT kind, attributes['key'], attributes['source_type'], content
+FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE element_order >= (SELECT min(element_order) FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx') WHERE kind = 'value')
+ORDER BY element_order;
+----
+value	date	dcterms:created	NULL
+inline	NULL	NULL	2026-08-31T19:34:31Z
+
+# SECOND, AN EMPTY FIELD IS SKIPPED HERE -- the one place this differs from the EPUB,
+# LaTeX and RTF readers, which emit empty fields.
+#
+# The ruling is "an empty field is still a field", and its stated ground is that emitting
+# nothing would discard a fact PANDOC PRESERVED. That reasoning is about mirroring, and
+# pandoc extracts nothing from DOCX, so there is no empty field of pandoc's to mirror.
+# What is actually present is boilerplate: LibreOffice writes <dc:title/>, <dc:creator/>,
+# <dc:subject/> and <dc:description/> into every file it saves. Emitting them would put
+# four empty rows in every LibreOffice document -- diverging from the reference to convey
+# nothing, and weakening the case for exceeding pandoc, which rests on RECOVERING DATA.
+#
+# The fixture really does contain all four, so this asserts the skip rather than an
+# absence: without it these would be present-and-empty.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+WHERE kind = 'value' AND attributes['key'] IN ('title', 'author', 'subject', 'description');
+----
+0

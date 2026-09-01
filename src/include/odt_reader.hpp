@@ -33,6 +33,13 @@ struct OdtInline {
 };
 
 struct OdtBlock {
+	//! duck_block kind. Empty means `block`. `value` is document METADATA.
+	std::string kind;
+	//! `value` only: the field name for attributes['key'], in PANDOC's namespace.
+	std::string key;
+	//! `value` only: the ORIGINAL field spelling, marking this as format-derived rather
+	//! than pandoc-derived. See doc_metadata.hpp for why the marker is required.
+	std::string source_type;
 	std::string element_type; //!< "heading" or "paragraph"
 	std::string content;      //!< flattened text; empty when inlines are populated
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise

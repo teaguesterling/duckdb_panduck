@@ -119,3 +119,36 @@ statement error
 SELECT * FROM read_odt_blocks('test/fixtures/pandoc_pstyle.docx');
 ----
 has no content.xml
+
+# ---------------------------------------------------------------------------
+# DOCUMENT METADATA -> kind='value'. Same approved exception as the DOCX reader: pandoc
+# returns an EMPTY meta for both ODT fixtures while meta.xml carries real fields, so this
+# reader exceeds the reference and marks every field it emits with
+# attributes['source_type'].
+#
+# BOTH FIXTURES CARRY meta:generator, which is how a document says what wrote it, and it
+# is the field most likely to be wanted from an ODT -- the two values differ (LibreOffice
+# vs Pandoc), so the pair also proves the reader is reading the file rather than a default.
+query IIII
+SELECT kind, attributes['key'], attributes['source_type'], content
+FROM read_odt_blocks('test/fixtures/pandoc.odt')
+WHERE element_order >= (SELECT min(element_order) FROM read_odt_blocks('test/fixtures/pandoc.odt') WHERE kind = 'value')
+ORDER BY element_order;
+----
+value	date	dc:date	NULL
+inline	NULL	NULL	2026-09-01T01:11:24Z
+value	generator	meta:generator	NULL
+inline	NULL	NULL	Pandoc/3.1.3
+
+# dc:date WINS OVER meta:creation-date when both are present, and libreoffice.odt has
+# both. They carry the same instant in every fixture measured, and two sources feeding one
+# key is how the two drift apart -- so the Dublin Core spelling is preferred and
+# meta:creation-date is a fallback rather than a peer. source_type is what makes that
+# choice visible: a consumer can see WHICH element the date came from.
+query II
+SELECT attributes['key'], attributes['source_type']
+FROM read_odt_blocks('test/fixtures/libreoffice.odt')
+WHERE kind = 'value' ORDER BY element_order;
+----
+date	dc:date
+generator	meta:generator

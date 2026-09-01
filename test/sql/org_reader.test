@@ -1,0 +1,210 @@
+# name: test/sql/org_reader.test
+# description: read_org_blocks() -- a line-scanned reader for Org-mode
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# THE LEADING `*` IS THREE DIFFERENT THINGS, and this is the reader's one real parsing
+# hazard. `* text` at column 0 is a HEADING; `  * text` indented is a BULLET; `*bold*`
+# mid-line is EMPHASIS. All three begin with the same character, and column position plus
+# the trailing space is what separates them.
+#
+# Asserted in ONE query on purpose: a reader that gets two of the three right looks correct
+# on almost every document, and only a source carrying all three at once discriminates.
+query IIII
+SELECT kind, element_type, level, content FROM read_org_blocks_string(
+  E'* Heading\nHas *bold* here.\n\n  - bullet\n') ORDER BY element_order;
+----
+block	heading	1	Heading
+block	paragraph	1	NULL
+inline	text	2	Has 
+inline	bold	2	bold
+inline	text	2	 here.
+block	list	1	NULL
+block	list_item	2	bullet
+
+# Heading depth is the star count, capped at 6 as everywhere else in panduck.
+query II
+SELECT attributes['heading_level'], content FROM read_org_blocks_string(
+  E'* One\n** Two\n*** Three\n') WHERE element_type = 'heading' ORDER BY element_order;
+----
+1	One
+2	Two
+3	Three
+
+# ---------------------------------------------------------------------------
+# INLINE MARKERS. `=code=` and `~verbatim~` BOTH become `code`: pandoc distinguishes them
+# by a class -- `=code=` carries ["verbatim"] and `~verbatim~` carries none, the opposite
+# way round from the names -- and duck_block's `code` inline has no class field. Collapsing
+# them is deliberate; the surprising direction is recorded because it is exactly what a
+# later reader would "correct" the wrong way.
+query II
+SELECT element_type, content FROM read_org_blocks_string(
+  '*b* /i/ _u_ =c= ~v~ +s+') WHERE kind = 'inline' AND element_type <> 'text'
+ORDER BY element_order;
+----
+bold	b
+italic	i
+underline	u
+code	c
+code	v
+strikethrough	s
+
+# A MARKER NEEDS A WORD BOUNDARY. Without that rule `2 + 2 = 4` becomes emphasis and
+# arithmetic in a paragraph turns into markup -- the most common false positive in every
+# lightweight-markup reader. Nothing here is emphasis.
+query I
+SELECT count(*) FROM read_org_blocks_string('Costs 2 + 2 = 4 dollars / each')
+WHERE kind = 'inline' AND element_type <> 'text';
+----
+0
+
+# Both link spellings. A bare [[url]] uses the target as its text, which is what pandoc
+# does -- not an empty label.
+query III
+SELECT element_type, content, attributes['href'] FROM read_org_blocks_string(
+  'See [[http://x.com][label]] and [[http://y.com]].')
+WHERE element_type = 'link' ORDER BY element_order;
+----
+link	label	http://x.com
+link	http://y.com	http://y.com
+
+# ---------------------------------------------------------------------------
+# LISTS. Ordered lists always carry start/number_style/number_delim, including at their
+# defaults, matching the stricter of the two upstream producers so there is one shape
+# rather than two.
+query IIIII
+SELECT element_type, level, attributes['list_type'], attributes['start'], content
+FROM read_org_blocks_string(E'3. first\n4. second\n') ORDER BY element_order;
+----
+list	1	ordered	3	NULL
+list_item	2	NULL	NULL	first
+list_item	2	NULL	NULL	second
+
+# NESTING IS BY INDENT, and the nested list is a CHILD of the outer item -- one level
+# deeper, not a sibling. A reader that emitted both lists at the same level would produce
+# the same rows in the same order and be wrong about the structure.
+query III
+SELECT element_type, level, content FROM read_org_blocks_string(
+  E'- outer\n  - inner\n') ORDER BY element_order;
+----
+list	1	NULL
+list_item	2	outer
+list	2	NULL
+list_item	3	inner
+
+# A DEFINITION LIST IS AN ORDINARY BULLET PLUS ` :: `. Org has no separate marker, so the
+# separator is what decides the shape -- and ONE item produces TWO rows, as in the EPUB and
+# LaTeX readers.
+query IIII
+SELECT element_type, level, attributes['role'], content FROM read_org_blocks_string(
+  '- term :: the definition') ORDER BY element_order;
+----
+list	1	NULL	NULL
+list_item	2	term	term
+list_item	2	definition	the definition
+
+# ---------------------------------------------------------------------------
+# BLOCKS. #+BEGIN_SRC carries its language; #+BEGIN_EXAMPLE carries NONE -- pandoc gives
+# EXAMPLE the class "example", which is not a language, and recording it as one would make
+# a consumer highlight text as a dialect that does not exist.
+query III
+SELECT element_type, attributes['language'], content FROM read_org_blocks_string(
+  E'#+BEGIN_SRC python\nprint(1)\n#+END_SRC\n\n#+BEGIN_EXAMPLE\nplain\n#+END_EXAMPLE\n')
+WHERE element_type = 'code' ORDER BY element_order;
+----
+code	python	print(1)
+code	NULL	plain
+
+# A quote's body is a PARAGRAPH INSIDE the blockquote, not the blockquote's own content.
+query III
+SELECT element_type, level, content FROM read_org_blocks_string(
+  E'#+BEGIN_QUOTE\nQuoted.\n#+END_QUOTE\n') ORDER BY element_order;
+----
+blockquote	1	NULL
+paragraph	2	Quoted.
+
+# ---------------------------------------------------------------------------
+# TABLES carry the spec 5.0 native schema, and a rule row after the first row promotes it.
+# MEASURED against pandoc for Org rather than carried over from the LaTeX reader -- the two
+# formats are unrelated and pandoc's readers share no logic. They agree, but as a
+# measurement.
+query III
+SELECT element_type, encoding, content FROM read_org_blocks_string(
+  E'| H1 | H2 |\n|----+----|\n| a  | b  |\n') ORDER BY element_order;
+----
+table	json	{"headers":["H1","H2"],"rows":[["a","b"]]}
+
+# No rule row: no header. Every row is a body row, which is what pandoc does.
+query I
+SELECT content FROM read_org_blocks_string(E'| a | b |\n| c | d |\n');
+----
+{"headers":[],"rows":[["a","b"],["c","d"]]}
+
+# ---------------------------------------------------------------------------
+# THINGS THAT MUST PRODUCE NOTHING, and must produce nothing by being DROPPED rather than
+# by falling through as prose.
+#
+# The drawer case is not hypothetical: pandoc's own Org writer emits :PROPERTIES: under
+# every heading, and before this was handled the body read
+# ":PROPERTIES: :CUSTOM_ID: x :END: Body text". Losing structure is a gap; emitting
+# non-content as prose is a bug, and scoping a construct OUT has to mean dropped, not
+# leaked.
+query I
+SELECT count(*) FROM read_org_blocks_string(
+  E'# a comment\n:PROPERTIES:\n:CUSTOM_ID: x\n:END:\nBody.\n')
+WHERE content LIKE '%comment%' OR content LIKE '%PROPERTIES%' OR content LIKE '%CUSTOM_ID%';
+----
+0
+
+# ...and the body itself survives, which is the half that proves the drop is a drop and not
+# a swallow.
+query II
+SELECT element_type, content FROM read_org_blocks_string(
+  E'# a comment\n:PROPERTIES:\n:CUSTOM_ID: x\n:END:\nBody.\n') WHERE kind = 'block';
+----
+paragraph	Body.
+
+query I
+SELECT element_type FROM read_org_blocks_string(E'-----\n');
+----
+hr
+
+# ---------------------------------------------------------------------------
+# METADATA -> kind='value', appended AFTER the blocks (spec 6.2 makes that a contract).
+#
+# REPEATED #+AUTHOR: CONCATENATES INTO ONE VALUE. Measured: pandoc yields a single
+# MetaInlines for two #+AUTHOR: lines, where LaTeX's \author yields a MetaList for the same
+# logical field. Two formats, two shapes, both pandoc's -- so this reader cannot generalise
+# from the LaTeX one, and asserting it here is what stops someone "fixing" the difference.
+query IIII
+SELECT kind, element_type, attributes['key'], content FROM read_org_blocks_string(
+  E'#+TITLE: T\n#+AUTHOR: Alice\n#+AUTHOR: Bob\n\nBody.\n') ORDER BY element_order;
+----
+block	paragraph	NULL	Body.
+value	inlines	author	NULL
+inline	text	NULL	Alice Bob
+value	inlines	title	NULL
+inline	text	NULL	T
+
+# An EMPTY field is still a field: the key is present with no child, matching pandoc's
+# MetaInlines []. A consumer cannot recover "declared and left blank" from silence.
+query III
+SELECT kind, element_type, attributes['key'] FROM read_org_blocks_string(E'#+AUTHOR:\n\nBody.\n')
+WHERE kind = 'value';
+----
+value	inlines	author
+
+# ---------------------------------------------------------------------------
+# THE FILE READER AND THE STRING READER ARE THE SAME READER. Asserted rather than assumed:
+# two entry points is two chances for one to drift.
+query I
+SELECT count(*) FROM (
+  (SELECT kind, element_type, content FROM read_org_blocks('test/fixtures/handwritten.org'))
+  EXCEPT
+  (SELECT kind, element_type, content FROM read_org_blocks_string(
+     E'#+TITLE: Handwritten\n#+AUTHOR: Nobody\n\n* Heading One\nBody text with *bold* and /italic/.\n\n- bullet one\n- bullet two\n\n** Heading Two\nA [[http://example.com][link]] here.\n\n#+BEGIN_SRC python\nprint("hi")\n#+END_SRC\n'))
+);
+----
+0

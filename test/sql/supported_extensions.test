@@ -44,6 +44,7 @@ docx	read_docx_blocks
 epub	read_epub_blocks
 latex	read_latex_blocks
 odt	read_odt_blocks
+org	read_org_blocks
 rtf	read_rtf_blocks
 
 # reader is NULL exactly when the format is not implemented, and never otherwise. A

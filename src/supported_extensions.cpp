@@ -59,7 +59,13 @@ const FormatReader FORMATS[] = {
      "verbatim as content, never parsed or macro-expanded. Tables and \\newcommand "
      "expansion are not read yet"},
     {"rst", EXT_RST, nullptr, STATUS_PLANNED, "roadmap phase 5"},
-    {"org", EXT_ORG, nullptr, STATUS_PLANNED, "roadmap phase 5"},
+    {"org", EXT_ORG, "read_org_blocks", STATUS_IMPLEMENTED,
+     "line-scanned, not tokenized: Org's block structure is entirely line prefixes and "
+     "only inline markup is character-level. TODO keywords, tags, property drawers, "
+     "timestamps, footnotes, #+INCLUDE and babel are OUT OF SCOPE -- Org's agenda and "
+     "literate-programming layers, which are real Org and are not document structure. "
+     "Drawers are DROPPED rather than left to fall through as prose; scoping a construct "
+     "out has to mean dropped, not leaked"},
     {"mediawiki", EXT_MEDIAWIKI, nullptr, STATUS_PLANNED, "roadmap phase 5"},
     {"rtf", EXT_RTF, "read_rtf_blocks", STATUS_IMPLEMENTED,
      "headings via \\outlinelevel or a {\\stylesheet} \\sN reference; paragraphs and inline "

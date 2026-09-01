@@ -261,6 +261,25 @@ CASES = [
         note="LibreOffice-generated RTF: headings via {\\stylesheet} \\sN",
     ),
     Case(
+        "test/fixtures/handwritten.org",
+        "org",
+        "read_org_blocks",
+        expect={},
+        note="hand-written Org: no property drawers -- what a person types",
+    ),
+    Case(
+        "test/fixtures/pandoc.org",
+        "org",
+        "read_org_blocks",
+        # PANDOC'S OWN ORG WRITER emits a :PROPERTIES: drawer under every heading, which a
+        # person never writes. That pair caught a real defect the moment it existed: the
+        # drawer fell through to TEXT and joined the following paragraph, so the body read
+        # ":PROPERTIES: :CUSTOM_ID: heading-one :END: Body text...". The handwritten
+        # fixture alone would never have found it.
+        expect={},
+        note="pandoc-generated Org: :PROPERTIES: drawers under every heading",
+    ),
+    Case(
         "test/fixtures/handwritten.tex",
         "latex",
         "read_latex_blocks",

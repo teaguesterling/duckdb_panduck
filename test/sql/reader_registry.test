@@ -238,3 +238,48 @@ statement error
 CALL panduck_register_doc_reader('x', 'y', []::VARCHAR[]);
 ----
 at least one file extension
+
+# ---------------------------------------------------------------------------
+# EVERY READER EMITS A RECONSTRUCTIBLE TREE. `level` and adjacency are the WHOLE of
+# duck_block's structure -- there is no parent pointer and no child list -- so a depth-first
+# emission must obey three rules, all of which duck_block_utils' validator enforces as of
+# spec 3.0:
+#
+#   level is never NULL      a NULL is not a depth; it is the absence of the one fact
+#                            that says where an element sits
+#   level is never below 1   the document root is 1
+#   level never JUMPS by >1  depth-first descends one at a time, so a jump means the
+#                            parent is not in the list at all and the tree cannot be
+#                            rebuilt -- this is what a reader emitting list_items with no
+#                            enclosing list looks like from the outside
+#
+# A decrease of any size is legal: that is simply closing several containers at once.
+#
+# This is asserted across all four readers at once because it is a property of the
+# vocabulary rather than of any one format, and because the cheap version of this test --
+# checking a single reader -- would have passed while three others were broken. It would
+# have FAILED before the structural-level migration, when every block carried NULL.
+query IIII
+WITH r AS (
+  SELECT 'a_docx' AS src, element_order, level FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+  UNION ALL SELECT 'b_odt', element_order, level FROM read_odt_blocks('test/fixtures/pandoc.odt')
+  UNION ALL SELECT 'c_rtf', element_order, level FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
+  UNION ALL SELECT 'd_epub', element_order, level FROM read_epub_blocks('test/fixtures/pandoc.epub')
+  UNION ALL SELECT 'e_epub_spine', element_order, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
+  UNION ALL SELECT 'f_epub_libre', element_order, level FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+), d AS (
+  SELECT src, level, level - lag(level) OVER (PARTITION BY src ORDER BY element_order) AS delta FROM r
+)
+SELECT src,
+       count(*) FILTER (WHERE level IS NULL),
+       count(*) FILTER (WHERE level < 1),
+       count(*) FILTER (WHERE delta > 1)
+FROM d GROUP BY src ORDER BY src;
+----
+a_docx	0	0	0
+b_odt	0	0	0
+c_rtf	0	0	0
+d_epub	0	0	0
+e_epub_spine	0	0	0
+f_epub_libre	0	0	0
+

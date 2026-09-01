@@ -630,6 +630,52 @@ FROM read_latex_blocks_string('\(a+b\) and \[c = d\]') WHERE element_type = 'mat
 math	a+b	inline
 math	c = d	block
 
+# ---------------------------------------------------------------------------
+# MATH IS OPAQUE MEANS OPAQUE, NOT "OPAQUE EXCEPT FOR RULES THAT RUN OVER ORDINARY TEXT
+# TOO". The ligature rule (`---` -> em dash) and the comment rule (`%` to end of line) both
+# run in the tokenizer's main scan, upstream of anything the reader controls -- so getting
+# math right here required cutting its body out at the LEXER, in LexMathBody
+# (latex_tokenizer.cpp), the same way LexVerbatim already does for \begin{verbatim}. This
+# had ZERO coverage from every other math assertion above: none of x^2, y = mx + b, a+b or
+# c = d contains a dash run or an unescaped %, so the suite stayed green while the
+# guarantee was broken.
+# ---------------------------------------------------------------------------
+
+# --- must NOT become an em dash inside math, the way it does in ordinary text.
+query I
+SELECT content FROM read_latex_blocks_string('$a --- b$') WHERE element_type = 'math';
+----
+a --- b
+
+# % must NOT start a comment inside math: the rest of the line -- and the newline itself --
+# survives, where outside math it would be eaten to the next line's leading whitespace.
+# (the embedded newline is flattened to the two characters \n for this assertion -- an
+# expected block containing a literal newline reads as two rows, not one value with a
+# newline in it.)
+query I
+SELECT replace(content, chr(10), '\n') FROM read_latex_blocks_string(E'$a % a comment\nb$') WHERE element_type = 'math';
+----
+a % a comment\nb
+
+# \% (an ESCAPED percent) still reads back as the two characters `\%`, not as a literal `%`
+# and not as the start of a comment -- math is not parsed, so no escape is resolved either.
+# Combined with an unescaped `---` and a macro name in the same span, this is the brief's
+# own three-part guarantee (no ligatures, no comment stripping, no macro expansion) in one
+# formula rather than three separate ones.
+query I
+SELECT content FROM read_latex_blocks_string('$a --- b \alpha c\% d$') WHERE element_type = 'math';
+----
+a --- b \alpha c\% d
+
+# A KNOWN MACRO NAME INSIDE MATH IS NOT EXPANDED OR EVEN RECOGNISED. \LaTeX has a TEXT
+# disposition in the macro table (-> "LaTeX") everywhere else in this file; inside math it
+# must come back as the literal four characters `\LaTeX`, because math never reaches the
+# macro table at all.
+query I
+SELECT content FROM read_latex_blocks_string('$\LaTeX \alpha$') WHERE element_type = 'math';
+----
+\LaTeX \alpha
+
 # EMPTY MATH IS NOT AN ELEMENT, the same rule an empty formatted run already follows: $$
 # with nothing between the shifts contributes nothing rather than a `math` row with NULL
 # content that no consumer could render.

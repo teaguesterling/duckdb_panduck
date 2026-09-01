@@ -99,6 +99,42 @@ bool LexVerbatim(const std::string &src, size_t &i, std::vector<Token> &out) {
 	return true;
 }
 
+//! Called with `i` just past an opening math shift. Math is opaque, the same way verbatim
+//! is: its content is bytes, not tokens, so the body has to be cut out HERE -- before the
+//! ligature rule (`---` -> em dash) and the comment rule (`%` to end of line) get a chance
+//! to run over it -- rather than reconstructed downstream from tokens that have already
+//! lost the information. Without this, `$a --- b$` tokenizes `---` exactly like prose does
+//! and math stops being verbatim by the time the reader ever sees it.
+//!
+//! `closer` is the exact byte sequence that ends the span ("$", "$$", "\)" or "\]"). The
+//! closer is matched BEFORE the escape rule runs (see below), so a `\$`-escaped dollar
+//! inside `$..$` is a literal dollar sign rather than the end of the formula, while `\)`
+//! and `\]` -- which ARE their own closer, backslash included -- still close. Returns the
+//! position just past the closer, or src.size() if the source ran out first; `body` is a
+//! raw substring of `src` between the two, byte for byte -- nothing is unescaped, decoded,
+//! or otherwise interpreted, because math has no shape here to interpret it INTO.
+size_t LexMathBody(const std::string &src, size_t i, const std::string &closer, std::string &body) {
+	size_t start = i;
+	while (i < src.size()) {
+		// THE CLOSER IS CHECKED BEFORE THE ESCAPE RULE, and the order is load-bearing: `\)`
+		// and `\]` ARE the closer for the parenthesis/bracket spellings, backslash and all,
+		// so testing the escape rule first would consume the very bytes this function exists
+		// to find and math would never close. `\$` has no such conflict -- its closer is a
+		// single `$` with no leading backslash -- so this ordering costs it nothing.
+		if (src.compare(i, closer.size(), closer) == 0) {
+			body = src.substr(start, i - start);
+			return i + closer.size();
+		}
+		if (src[i] == '\\' && i + 1 < src.size()) {
+			i += 2;
+			continue;
+		}
+		i++;
+	}
+	body = src.substr(start);
+	return src.size();
+}
+
 } // namespace
 
 std::vector<Token> Tokenize(const std::string &src) {
@@ -139,15 +175,32 @@ std::vector<Token> Tokenize(const std::string &src) {
 			}
 			continue;
 		}
-		// \( \) \[ \] are the OTHER spelling of math, and pandoc prefers them. They
-		// lex as control symbols, so without this branch -- placed BEFORE the generic
+		// \( \[ are the OTHER spelling of math, and pandoc prefers them. They lex as
+		// control symbols, so without this branch -- placed BEFORE the generic
 		// control-symbol case below -- display math is silently dropped -- the macro table
 		// never sees math at all, because math is a tokenizer construct rather than a
-		// macro.
-		if (c == '\\' && i + 1 < src.size() && (src[i + 1] == '(' || src[i + 1] == ')' ||
-		                                        src[i + 1] == '[' || src[i + 1] == ']')) {
+		// macro. Like `$`, the body is cut out with LexMathBody so ligatures and comments
+		// cannot run over it.
+		if (c == '\\' && i + 1 < src.size() && (src[i + 1] == '(' || src[i + 1] == '[')) {
 			flush();
-			bool display = src[i + 1] == '[' || src[i + 1] == ']';
+			bool display = src[i + 1] == '[';
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			std::string body;
+			size_t after = LexMathBody(src, i + 2, display ? "\\]" : "\\)", body);
+			if (!body.empty()) {
+				out.push_back(Token {TokenKind::TEXT, body, false});
+			}
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			i = after;
+			continue;
+		}
+		// A STRAY \) or \] -- no opener seen -- is emitted as a bare MATH_SHIFT rather
+		// than falling through to ordinary text, so a reader degrades it the same way it
+		// already degrades any other unbalanced construct instead of leaking a spurious
+		// `)` or `]` into the surrounding paragraph.
+		if (c == '\\' && i + 1 < src.size() && (src[i + 1] == ')' || src[i + 1] == ']')) {
+			flush();
+			bool display = src[i + 1] == ']';
 			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
 			i += 2;
 			continue;
@@ -204,7 +257,13 @@ std::vector<Token> Tokenize(const std::string &src) {
 			flush();
 			bool display = i + 1 < src.size() && src[i + 1] == '$';
 			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
-			i += display ? 2 : 1;
+			std::string body;
+			size_t after = LexMathBody(src, i + (display ? 2 : 1), display ? "$$" : "$", body);
+			if (!body.empty()) {
+				out.push_back(Token {TokenKind::TEXT, body, false});
+			}
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			i = after;
 			continue;
 		}
 		if (c == '-' && src.compare(i, 3, "---") == 0) {

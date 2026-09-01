@@ -261,37 +261,22 @@ std::string FlattenTrimmed(const std::vector<Token> &toks) {
 	return Trim(out);
 }
 
-//! Replay a math span's tokens back into TeX source, verbatim. This is deliberately NOT
-//! Flatten(): Flatten resolves macros and drops braces because it is building prose, and
-//! math is the opposite -- $x^2$ means nothing to this reader, so the only correct move is
-//! to hand the formula back exactly as written and let whatever reads `math` later decide
-//! what x^2 means. A control word's trailing space is restored because the tokenizer
-//! already consumed the real one (`\alpha x` would otherwise read back as `\alphax`).
+//! Concatenate a math span's tokens back into its content. This is deliberately NOT
+//! Flatten(): Flatten resolves macros and drops braces because it is building prose. Math
+//! needs none of that reconstruction any more -- LexMathBody (latex_tokenizer.cpp) already
+//! cut the raw source out before ligatures or comment-stripping could run over it, the same
+//! way LexVerbatim does for \begin{verbatim}, so a well-formed span is always exactly one
+//! TEXT token here. Non-TEXT tokens are skipped rather than reconstructed: they should not
+//! occur inside a span LexMathBody produced, and math is opaque regardless -- there is no
+//! shape here worth guessing at for a token that reaches this function unexpectedly. The
+//! one departure from byte-exact is the trailing Trim(): leading/trailing whitespace is cut
+//! the same way it is from every other block and inline `content` in this reader, so `$
+//! x^2 $` and `$x^2$` are the same element -- internal whitespace is untouched either way.
 std::string MathText(const std::vector<Token> &toks, size_t begin, size_t end) {
 	std::string out;
 	for (size_t k = begin; k < end; k++) {
-		const auto &tok = toks[k];
-		switch (tok.kind) {
-		case TokenKind::TEXT:
-			out += tok.text;
-			break;
-		case TokenKind::CONTROL_WORD:
-			out += "\\" + tok.text + " ";
-			break;
-		case TokenKind::CONTROL_SYMBOL:
-			out += "\\" + tok.text;
-			break;
-		case TokenKind::BEGIN_GROUP:
-			out += "{";
-			break;
-		case TokenKind::END_GROUP:
-			out += "}";
-			break;
-		case TokenKind::PAR_BREAK:
-			out += "\n\n";
-			break;
-		default:
-			break; // MATH_SHIFT and END cannot occur inside the span; nothing else carries text
+		if (toks[k].kind == TokenKind::TEXT) {
+			out += toks[k].text;
 		}
 	}
 	return Trim(out);
@@ -1012,11 +997,12 @@ void Parser::Run(std::vector<Token> &toks) {
 			i++;
 			break;
 		case TokenKind::MATH_SHIFT: {
-			// MATH IS OPAQUE. The span between this shift and its match is not parsed,
-			// ligatured, or macro-expanded -- it is replayed back to source and carried as
-			// an inline `math` run, exactly where it sits in whatever text surrounds it.
-			// `display` distinguishes $$..$$ / \[..\] from $..$ / \(..\), which is the one
-			// fact the tokenizer already decided and the reader only has to relay.
+			// MATH IS OPAQUE. LexMathBody (latex_tokenizer.cpp) already cut this span's
+			// content out as raw bytes -- untouched by ligatures, comment-stripping or macro
+			// lookup -- so this only carries it into an inline `math` run, exactly where it
+			// sits in whatever text surrounds it. `display` distinguishes $$..$$ / \[..\]
+			// from $..$ / \(..\), which is the one fact the tokenizer already decided and the
+			// reader only has to relay.
 			bool display = toks[i].display_math;
 			size_t start = i + 1;
 			size_t j = start;

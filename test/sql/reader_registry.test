@@ -6,6 +6,13 @@
 # Everything here runs on panduck alone. Assertions that would need markdown, toml or
 # sitting_duck installed are deliberately absent rather than gated with `require`, which
 # would skip the whole file and take these with it.
+#
+# That exclusion has a cost, and it was paid: the toml and yaml branches are the only two
+# in reader_registry.cpp that BUILD a duck_block by hand rather than passing one up from a
+# reader, and they shipped a NULL `level` -- which duck_blocks_validate rejects outright --
+# because nothing here could reach them. Coverage for those branches lives in
+# `make check-conformance`, which reads test/fixtures/config.{toml,yaml} and degrades to a
+# per-fixture skip when the optional extension is absent instead of taking the run down.
 
 require panduck
 

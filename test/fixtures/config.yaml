@@ -1,0 +1,8 @@
+# Companion to config.toml -- see that file for why these exist.
+title: Quarterly Report
+draft: false
+author:
+  name: A. Writer
+  affiliations:
+    - Institute
+    - University

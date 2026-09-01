@@ -450,10 +450,19 @@ SELECT * FROM query(
         -- carrying the parsed document as JSON rather than being flattened to a string or
         -- refused. When kind='value' lands in duck_block_utils this should become value
         -- elements -- MetaMap is the shape a nested key-value tree actually wants.
+        --
+        -- `level` is 1 and not NULL. It was NULL until 2026-09-01, which duck_blocks_validate
+        -- rejects outright: "level is NULL; every element carries an explicit structural
+        -- depth". Nothing here objected because there was no .toml or .yaml fixture, so the
+        -- only two branches in this file that build a block by hand were also the only two
+        -- the test suite never read. This is the same defect duck_block_utils records
+        -- against duckdb_webbed, whose metadata blocks carried a NULL level for three major
+        -- spec versions -- and for the same reason: the element a producer synthesises
+        -- itself is the one no reader test covers.
         WHEN panduck_resolved_format(src, format) = 'toml'
             THEN CASE WHEN panduck_ensure_extension('toml')
                  THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
-                      'parse_toml(content)::VARCHAR AS content, NULL::INTEGER AS level, ' ||
+                      'parse_toml(content)::VARCHAR AS content, 1 AS level, ' ||
                       '''json'' AS encoding, MAP {''source_type'': ''toml''} AS attributes, ' ||
                       '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
                  ELSE error('panduck: toml needs the toml extension') END
@@ -461,7 +470,7 @@ SELECT * FROM query(
         WHEN panduck_resolved_format(src, format) = 'yaml'
             THEN CASE WHEN panduck_ensure_extension('yaml')
                  THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
-                      'yaml_to_json(content::yaml)::VARCHAR AS content, NULL::INTEGER AS level, ' ||
+                      'yaml_to_json(content::yaml)::VARCHAR AS content, 1 AS level, ' ||
                       '''json'' AS encoding, MAP {''source_type'': ''yaml''} AS attributes, ' ||
                       '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
                  ELSE error('panduck: yaml needs the yaml extension') END

@@ -45,7 +45,10 @@ EXTENSION = os.path.join(ROOT, "build", "release", "extension", "panduck",
 # be a third party to a two-party agreement, checked by nobody.
 DEFAULT_UPSTREAM = os.path.join(os.path.dirname(ROOT), "duckdb_duck_block_utils")
 MACROS_RELPATH = os.path.join("conformance", "duck_block_conformance.sql")
-FIXTURE_GLOBS = ("*.rtf", "*.docx", "*.odt", "*.epub", "*.tex")
+# .toml/.yaml are here deliberately: those two registry branches synthesise a block by
+# hand instead of passing one up from a reader, which is exactly the kind of element a
+# reader test never covers. They shipped a NULL level because of it.
+FIXTURE_GLOBS = ("*.rtf", "*.docx", "*.odt", "*.epub", "*.tex", "*.toml", "*.yaml")
 
 SEP = "|"
 
@@ -139,36 +142,45 @@ def check_fixtures(macros):
     if not fixtures:
         return [], []
 
-    # Materialise each fixture before the macro sees it. The macro body does
-    # `FROM unnest(<arg>)`, and DuckDB rejects a FUNCTION CALL there with "Table
-    # function cannot contain subqueries" -- a message naming a construct the caller
-    # never wrote. This applies to panduck_read_blocks, which is a SCALAR, so the
-    # restriction is not specific to table functions as the vendored file's usage note
-    # claims; measured both ways at 2026-09-01.
-    sql = [preamble(macros)]
-    for i, f in enumerate(fixtures):
+    # One process PER FIXTURE. A shared process aborts the whole run on the first
+    # error, and .toml/.yaml depend on optional community extensions that may not be
+    # installed -- that must degrade to a per-fixture note, not take the gate down.
+    #
+    # Materialise before the macro sees it: the macro body does `FROM unnest(<arg>)`,
+    # and DuckDB rejects a FUNCTION CALL there with "Table function cannot contain
+    # subqueries", a message naming a construct the caller never wrote. This applies to
+    # panduck_read_blocks, which is a SCALAR, so the restriction is not specific to
+    # table functions; measured both ways 2026-09-01.
+    results, failures, skipped = [], [], []
+    for f in fixtures:
         rel = os.path.relpath(f, ROOT)
-        sql.append("CREATE TEMP TABLE fx%d AS SELECT panduck_read_blocks('%s') AS blk;"
-                   % (i, rel))
-        sql.append("SELECT '%s' || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
-                   "coalesce(list_aggregate(duck_blocks_undeclared_types(blk), "
-                   "'string_agg', ','), '') FROM fx%d;" % (rel, SEP, SEP, i))
-
-    results, failures = [], []
-    for line in run_sql("\n".join(sql)):
-        parts = line.split(SEP)
-        if len(parts) < 3:
+        sql = (preamble(macros) +
+               "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks('%s') AS blk;\n"
+               "SELECT '%s' || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
+               "coalesce(list_aggregate(duck_blocks_undeclared_types(blk), "
+               "'string_agg', ','), '') FROM fx;\n" % (rel, rel, SEP, SEP))
+        try:
+            lines = run_sql(sql)
+        except RuntimeError as exc:
+            detail = str(exc)
+            if "needs the" in detail and "extension" in detail:
+                skipped.append((rel, "optional extension not installed"))
+            else:
+                failures.append("%s: %s" % (rel, detail.strip().splitlines()[-1]))
             continue
-        rel, valid_s, undecl_s = parts[0], parts[1].strip(), parts[2].strip()
-        valid = valid_s.lower() == "true"
-        undecl = [u for u in undecl_s.split(",") if u]
-        results.append((rel, valid, undecl))
-        if not valid:
-            failures.append("%s: duck_blocks_are_valid returned false" % rel)
-        if undecl:
-            failures.append("%s: element types outside the vocabulary: %s"
-                            % (rel, ", ".join(undecl)))
-    return results, failures
+        for line in lines:
+            parts = line.split(SEP)
+            if len(parts) < 3:
+                continue
+            valid = parts[1].strip().lower() == "true"
+            undecl = [u for u in parts[2].strip().split(",") if u]
+            results.append((rel, valid, undecl))
+            if not valid:
+                failures.append("%s: duck_blocks_are_valid returned false" % rel)
+            if undecl:
+                failures.append("%s: element types outside the vocabulary: %s"
+                                % (rel, ", ".join(undecl)))
+    return results, failures, skipped
 
 
 def main():
@@ -216,8 +228,8 @@ def main():
     print("  %d/%d constructed cases classified correctly.\n"
           % (len(SELF_TESTS), len(SELF_TESTS)))
 
-    results, failures = check_fixtures(macros)
-    if not results:
+    results, failures, skipped = check_fixtures(macros)
+    if not results and not skipped:
         msg = "SKIP: no fixtures found under test/fixtures/"
         if args.strict:
             print(msg.replace("SKIP", "FAIL"))
@@ -225,12 +237,14 @@ def main():
         print(msg)
         return 0
 
-    width = max(len(r[0]) for r in results)
+    width = max([len(r[0]) for r in results] + [len(s[0]) for s in skipped])
     for rel, valid, undecl in results:
         note = "conformant" if valid and not undecl else "NOT CONFORMANT"
         if undecl:
             note += " (undeclared: %s)" % ", ".join(undecl)
         print("  %-*s  %s" % (width, rel, note))
+    for rel, why in skipped:
+        print("  %-*s  skipped -- %s" % (width, rel, why))
 
     if failures:
         print("\nFAIL: %d conformance problem(s):\n" % len(failures))
@@ -238,7 +252,8 @@ def main():
             print("  - %s" % f)
         return 1
 
-    print("\nOK: %d fixtures, all conformant (shape and vocabulary)." % len(results))
+    tail = "" if not skipped else " (%d skipped for missing optional extensions)" % len(skipped)
+    print("\nOK: %d fixtures, all conformant (shape and vocabulary).%s" % (len(results), tail))
     return 0
 
 

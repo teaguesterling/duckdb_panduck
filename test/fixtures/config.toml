@@ -1,0 +1,10 @@
+# A config tree read as a single metadata block. Exists because the toml and yaml
+# branches in reader_registry.cpp are the only two that BUILD a duck_block by hand
+# rather than passing one up from a reader, and until this file they were also the
+# only two no test ever read -- which is how they shipped a NULL level.
+title = "Quarterly Report"
+draft = false
+
+[author]
+name = "A. Writer"
+affiliations = ["Institute", "University"]

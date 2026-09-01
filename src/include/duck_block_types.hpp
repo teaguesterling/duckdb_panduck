@@ -30,10 +30,9 @@
 // later added ~88 lines of guidance without moving one name or value. A text diff screams
 // at that, gets muted, and then catches nothing on the day it matters.
 //
-// Copied from duck_block_utils main @ dd0781c; the header itself was last touched by
-// 4b98612 ("VENDORING THIS FILE" guidance). Being behind by commits is not the same as
-// being wrong -- what makes the copy correct is that check-vocabulary reports it in sync,
-// not that the sha is the newest.
+// Copied from duck_block_utils main @ a91d00a, SPEC_VERSION 4.0. Being behind by commits
+// is not the same as being wrong -- what makes the copy correct is that check-vocabulary
+// reports it in sync, not that the sha is the newest.
 //
 // WHAT THIS COPY DOES NOT COVER. It is a COMPILE-TIME dependency on constant names, and
 // nothing more. The functions panduck calls at runtime -- db_blocks_toc and friends, used

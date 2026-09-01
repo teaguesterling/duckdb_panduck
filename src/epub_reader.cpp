@@ -500,14 +500,32 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			            : tag == "figcaption" || tag == "caption"   ? DuckBlockTypes::TYPE_CAPTION
 			                                                        : DuckBlockTypes::TYPE_PARAGRAPH;
 			if (HasBlockChildren(child)) {
-				// <li><p>..</p></li>: the item is a container and its text is read by the
-				// blocks inside it.
+				// <li><p>..</p></li>: the LOOSE form. The item is a container and its text
+				// is read by the blocks inside it -- a real `paragraph`, because the source
+				// wrote one.
 				EpubBlock block;
 				block.element_type = type;
 				block.container = true;
 				block.level = depth;
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
+			} else if (type == DuckBlockTypes::TYPE_LIST_ITEM) {
+				// <li>text</li>: the TIGHT form. Its bare run becomes a `plain` -- a
+				// block-level text run with NO paragraph semantics, which is precisely
+				// Pandoc's Plain constructor and precisely what this markup is.
+				//
+				// The tight/loose distinction is real: the two forms render with different
+				// spacing, and HTML, Pandoc and duck_block all carry it. It lives in the
+				// TYPE rather than an attribute because what was missing was a constructor
+				// nothing represented, not a variation nothing annotated -- and a reader
+				// that maps both onto `paragraph` destroys it silently, which is the
+				// mechanism by which duck_block_utils' own reader lost it too.
+				EpubBlock item;
+				item.element_type = type;
+				item.container = true;
+				item.level = depth;
+				out.push_back(std::move(item));
+				EmitBlock(child, DuckBlockTypes::TYPE_PLAIN, 0, ctx, out, depth + 1);
 			} else {
 				EmitBlock(child, type, 0, ctx, out, depth);
 			}

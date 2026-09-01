@@ -55,8 +55,27 @@
 //      Fetch upstream and compare BY NAME AND VALUE -- parse both sides, do
 //      not diff the text:
 //
+//      DO NOT fetch the /main/ raw url directly. raw.githubusercontent.com serves
+//      branch urls from a CDN that is only EVENTUALLY consistent with the branch,
+//      so a check running shortly after an upstream push compares against the
+//      PREVIOUS version, finds no difference, and reports a clean bill of health.
+//      That window is precisely when a drift check matters most, and the failure
+//      is in the reassuring direction, which is the direction nobody re-checks.
+//      (Found by duckdb_markdown, whose check reported "in sync" against a copy
+//      two spec versions old; it only surfaced because a human said otherwise.)
+//
+//      Resolve the branch to a commit sha first, then fetch the SHA-PINNED url,
+//      which is immutable and therefore cannot be stale:
+//
+//        https://api.github.com/repos/teaguesterling/duckdb_duck_block_utils/commits/main
 //        https://raw.githubusercontent.com/teaguesterling/
-//          duckdb_duck_block_utils/main/src/include/duck_block_vocabulary.hpp
+//          duckdb_duck_block_utils/<sha>/src/include/duck_block_vocabulary.hpp
+//
+//      Print the sha alongside the verdict, so the output says what it actually
+//      compared against. And when the sha lookup fails -- rate limit, outage,
+//      offline -- falling back to the branch url is fine, but that path must NEVER
+//      print OK: "no drift seen" from a copy you could not date is not a clean
+//      bill of health, and reporting it as one is the same defect again.
 //
 //      A plain `diff` over this file fires on comment edits and cosmetic churn
 //      -- commit 3957f36 rewrote every idx_t to uint64_t and changed no name
@@ -69,7 +88,12 @@
 //      should report without failing. GAPS is the arm that earns its keep -- it
 //      is what surfaced inline `generic` losing source_type in two extensions
 //      in the same week. Carry an explicit allowlist of intentional gaps, or an
-//      unexplained one and a deliberate one look identical.
+//      unexplained one and a deliberate one look identical. Filter NUMERIC-valued
+//      constants out when selecting the vocabulary by name prefix -- otherwise
+//      KIND_IDX and the other struct field offsets get reported as published-but-
+//      unhandled types, and a check whose first run on a new consumer is a false
+//      positive has already taught that consumer to ignore it. (panduck hit exactly
+//      this while adopting the arm from this recommendation.)
 //
 //      duckdb_markdown has a working implementation of exactly this, which
 //      looks in both a vendored and a submodule location:
@@ -80,7 +104,9 @@
 //
 //        SELECT duck_block_type_names();   -- every element_type
 //        SELECT duck_block_kind_names();   -- ['block','inline','value']
-//        SELECT duck_block_spec_version(); -- compare against SPEC_VERSION here
+//        SELECT duck_block_spec_version(); -- major equality + minor floor;
+//                                          see SPEC_VERSION below for why not
+//                                          plain equality
 //
 // (2) catches a stale copy; (3) catches a stale INSTALL. They fail differently
 // and neither subsumes the other.
@@ -142,15 +168,62 @@ struct DuckBlockVocabulary {
 	// attributes['key'], which is what keeps it out of a document's Pandoc `meta`.
 	static constexpr const char *VALUE_VERSION = "version";
 
-	// The duck_block spec version this build implements. Bump when the vocabulary
-	// changes in a way a consumer could observe.
-	static constexpr const char *SPEC_VERSION = "1.1";
+	// The duck_block spec version this build implements, as MAJOR.MINOR.
+	//
+	//   MAJOR bumps for a BREAKING change -- a shape or vocabulary change that a
+	//         conforming consumer must migrate for.
+	//   MINOR bumps for an ADDITIVE one -- new types or attributes that existing
+	//         consumers can ignore.
+	//
+	// ASSERT MAJOR EQUALITY AND A MINOR FLOOR, not equality on the whole string.
+	// Equality goes red on every release including ones that cannot affect you,
+	// and a check that cries wolf gets muted:
+	//
+	//     major(duck_block_spec_version()) == 2   AND   minor(...) >= <what you need>
+	//
+	// (Asked by panduck, who noticed the guidance said "compare against
+	// SPEC_VERSION" without saying compare HOW, and whose readers are untouched by
+	// 2.0 apart from lists.)
+	//
+	// HONEST HISTORY, because the numbers only mean something if they were applied
+	// consistently and one of these was not:
+	//
+	//   1.1 -> 1.2  list and blockquote became structural. BREAKING -- it broke
+	//               duckdb_markdown's writer in three places. It should have been
+	//               2.0 and the minor bump was wrong. A consumer pinning "major 1"
+	//               would have been broken by a release the numbering promised was
+	//               safe.
+	//   1.2 -> 2.0  one shape per BLOCK element_type. Breaking, numbered correctly.
+	//   2.0 -> 3.0  every element carries an EXPLICIT level; no NULLs, one scale for
+	//               blocks and inlines, and `level` is never semantic. Breaking.
+	//               The NULL-at-top-level convention 1.x and 2.0 documented was
+	//               never approved -- see docs/duck_blocks_spec.md.
+	//   3.0 -> 4.0  `plain` added: Pandoc's Plain constructor, which this reader had
+	//               been collapsing onto `paragraph`, losing the tight vs loose list
+	//               distinction. BREAKING by this contract's own rule -- a consumer
+	//               rendering `paragraph` now receives `plain` for a tight list item
+	//               -- so a MAJOR bump even though the vocabulary change is additive.
+	//               Also makes `list_type` canonical, `ordered` a legacy alias.
+	//
+	// The rule above is what will be followed from here.
+	static constexpr const char *SPEC_VERSION = "4.0";
 
 	// ========================================================================
 	// Block type names
 	// ========================================================================
 	static constexpr const char *TYPE_HEADING = "heading";
 	static constexpr const char *TYPE_PARAGRAPH = "paragraph";
+	// A block-level text run with NO paragraph semantics -- Pandoc's `Plain`, and
+	// HTML text that is not wrapped in a <p>: `<li>text</li>`, `<td>text</td>`,
+	// `<dd>text</dd>`, `<figcaption>text</figcaption>`.
+	//
+	// This existed in Pandoc all along and this reader collapsed it onto
+	// `paragraph`, which is how the TIGHT vs LOOSE list distinction was being lost
+	// -- and lost independently in webbed, by a different mechanism, with neither
+	// reader aware. Modelling it as its own type rather than an attribute keeps the
+	// mapping honest: it is a constructor we were failing to represent, not a
+	// variation we were failing to annotate.
+	static constexpr const char *TYPE_PLAIN = "plain";
 	static constexpr const char *TYPE_CODE = "code";
 	static constexpr const char *TYPE_BLOCKQUOTE = "blockquote";
 	static constexpr const char *TYPE_LIST = "list";

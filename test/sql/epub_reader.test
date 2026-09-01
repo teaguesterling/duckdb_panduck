@@ -30,11 +30,11 @@ Heading Two	2
 # EPUB is the first format panduck models structurally: XHTML says <ul><li> and
 # <blockquote> outright, where RTF, DOCX and ODT only had paragraphs wearing hats.
 #
-# A CONTAINER CARRIES content IF AND ONLY IF IT HAS A SINGLE TEXT CHILD -- duck_block v1's
-# rule, restored after spec 2.0 briefly over-broadened it to "a container never carries
-# content". pandoc writes TIGHT items, <li>bullet one</li>, whose only child is a text
-# node, so the item holds its own text. `list` and `blockquote` here wrap blocks and so
-# carry nothing.
+# A TIGHT LIST ITEM OWNS A `plain`, NOT A PARAGRAPH -- duck_block spec 4.0. `plain` is a
+# block-level text run with NO paragraph semantics: Pandoc's Plain constructor, which is
+# exactly what <li>bullet one</li> is. <li><p>x</p></li> stays a paragraph. Before `plain`
+# existed there was nowhere honest to put a bare run, so readers either hung the text on
+# the list_item or invented a paragraph the source never wrote.
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/pandoc.epub')
 WHERE element_type IN ('list', 'list_item', 'blockquote', 'div') ORDER BY element_order;
@@ -42,8 +42,8 @@ WHERE element_type IN ('list', 'list_item', 'blockquote', 'div') ORDER BY elemen
 div	NULL
 div	NULL
 list	NULL
-list_item	bullet one
-list_item	bullet two
+list_item	NULL
+list_item	NULL
 blockquote	NULL
 
 # ---------------------------------------------------------------------------
@@ -227,8 +227,11 @@ paragraph	Chapter one cannot reach me.
 # Normalising both to the paragraph form looked like an improvement -- same content, one
 # shape -- but the two spellings are the TIGHT and LOOSE list forms and they render
 # differently. Pandoc encodes the distinction as Plain versus Para inside the item, so
-# collapsing them discards information the source carried. duck_block's rule follows the
-# SOURCE: content iff a single text child, and a text node is a text child.
+# collapsing them discards information the source carried.
+#
+# `plain` is where the tight run lives: a block-level text run carrying no paragraph
+# semantics. The distinction is in the TYPE rather than an attribute because the gap was a
+# constructor nothing represented, not a variation nothing annotated.
 # ---------------------------------------------------------------------------
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
@@ -237,7 +240,8 @@ WHERE element_order BETWEEN
   AND (SELECT max(element_order) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'blockquote')
 ORDER BY element_order;
 ----
-list_item	tight item
+list_item	NULL
+plain	tight item
 list_item	NULL
 paragraph	loose item
 blockquote	NULL
@@ -337,12 +341,14 @@ has no META-INF/container.xml
 query IIII
 SELECT element_type, content, level, attributes['list_type']
 FROM read_epub_blocks('test/fixtures/pandoc.epub')
-WHERE element_type IN ('list', 'list_item') OR content LIKE 'bullet%'
+WHERE element_type IN ('list', 'list_item', 'plain') OR content LIKE 'bullet%'
 ORDER BY element_order;
 ----
 list	NULL	3	bullet
-list_item	bullet one	4	NULL
-list_item	bullet two	4	NULL
+list_item	NULL	4	NULL
+plain	bullet one	5	NULL
+list_item	NULL	4	NULL
+plain	bullet two	5	NULL
 
 # ---------------------------------------------------------------------------
 # ORDERED LISTS, AND BOTH SPELLINGS OF ORDEREDNESS. attributes['ordered'] is the CANONICAL

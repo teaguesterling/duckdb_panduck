@@ -7,7 +7,6 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
-#include <cctype>
 #include <map>
 
 namespace duckdb {
@@ -368,8 +367,29 @@ void Parser::SkipOptional(std::vector<Token> &toks, size_t &i) {
 		i = start;
 		return;
 	}
-	for (size_t j = start + 1; j < toks.size() && toks[j].kind != TokenKind::END; j++) {
-		if (toks[j].kind != TokenKind::TEXT) {
+	// A `[` whose `]` is in a LATER token is still a real optional argument --
+	// `\\includegraphics[width=\\textwidth]{img.png}` lexes as TEXT "[width=",
+	// CONTROL_WORD textwidth, TEXT "]" -- so the search has to cross tokens. It must not
+	// cross a construct an optional argument can never CONTAIN, though, and that boundary is
+	// the whole safety of this function: an UNCLOSED `[` otherwise scans to the first `]`
+	// anywhere in the rest of the document, deletes both spans and welds two paragraphs into
+	// one. Run in the preamble the same runaway consumes \\begin{document}, `body_start` is
+	// never found, and the reader returns NOTHING for a document it could mostly have read.
+	//
+	// The budget is a second belt: a pathological source with a bracket and a boundary-free
+	// tail should cost a bounded scan, not a quadratic one.
+	constexpr size_t OPTIONAL_ARG_BUDGET = 64;
+	const size_t limit = toks.size() < start + 1 + OPTIONAL_ARG_BUDGET ? toks.size() : start + 1 + OPTIONAL_ARG_BUDGET;
+	for (size_t j = start + 1; j < limit; j++) {
+		auto kind = toks[j].kind;
+		if (kind == TokenKind::END || kind == TokenKind::PAR_BREAK || kind == TokenKind::MATH_SHIFT ||
+		    kind == TokenKind::BEGIN_GROUP || kind == TokenKind::END_GROUP) {
+			break;
+		}
+		if (kind == TokenKind::CONTROL_WORD && (toks[j].text == "begin" || toks[j].text == "end")) {
+			break;
+		}
+		if (kind != TokenKind::TEXT) {
 			continue;
 		}
 		auto found = toks[j].text.find(']');
@@ -381,7 +401,8 @@ void Parser::SkipOptional(std::vector<Token> &toks, size_t &i) {
 		i = j;
 		return;
 	}
-	// No closing bracket anywhere: leave the `[` alone rather than eating the document.
+	// Unclosed, or closed only beyond a boundary an optional argument cannot cross: leave the
+	// `[` exactly where it is. It is then ordinary text, which is what it turned out to be.
 }
 
 void Parser::SkipEnvironment(std::vector<Token> &toks, size_t &i) {
@@ -413,9 +434,17 @@ void Parser::SkipEnvironment(std::vector<Token> &toks, size_t &i) {
 
 void Parser::EmitHeading(const std::string &name, std::vector<Token> &arg) {
 	FlushRun();
+	auto title = FlattenTrimmed(arg);
+	if (title.empty()) {
+		// `\\section{}`, and `\\section` at end of input, are not headings: they would emit a
+		// block with NULL content and no children to justify the NULL, which is the one shape
+		// a duck_block consumer cannot render or index. The inline path already refuses an
+		// empty formatted run for the same reason; the two have to agree.
+		return;
+	}
 	LatexBlock block;
 	block.element_type = DuckBlockTypes::TYPE_HEADING;
-	block.content = FlattenTrimmed(arg);
+	block.content = title;
 	block.heading_level = HeadingLevelFor(name, document_class);
 	block.level = depth;
 	blocks.push_back(std::move(block));
@@ -593,6 +622,13 @@ std::vector<LatexBlock> Parser::Parse() {
 					document_class = cls;
 				}
 			}
+			// EVIDENCE OF A PREAMBLE, even when \\begin{document} never arrives. Falling all
+			// the way back to token 0 for such a source re-parses \\documentclass itself as
+			// prose -- its class name is an unknown macro's transparent brace group -- so a
+			// truncated document leads with a paragraph reading "article". Claiming the
+			// narrowest thing the evidence supports (the preamble runs AT LEAST this far)
+			// beats claiming there was no preamble at all.
+			body_start = j;
 			i = j > i ? j - 1 : i;
 			continue;
 		}
@@ -607,9 +643,10 @@ std::vector<LatexBlock> Parser::Parse() {
 		}
 	}
 
-	// No \begin{document} means a FRAGMENT, and a fragment is a body. read_latex_blocks
-	// on a snippet is the common case for read_latex_blocks_string, and erroring on it
-	// would make the string form useless for exactly what it exists for.
+	// No \begin{document} means a FRAGMENT, and a fragment is a body -- from token 0 when
+	// nothing suggested a preamble, or from just past \documentclass when something did.
+	// read_latex_blocks on a snippet is the common case for read_latex_blocks_string, and
+	// erroring on it would make the string form useless for exactly what it exists for.
 	std::vector<Token> body(tokens.begin() + body_start, tokens.end());
 	Run(body);
 	FlushRun();

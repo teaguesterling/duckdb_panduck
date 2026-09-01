@@ -54,3 +54,107 @@ SELECT count(*) FROM read_latex_blocks('test/fixtures/pandoc.tex')
 WHERE content LIKE '%usepackage%' OR content LIKE '%documentclass%';
 ----
 0
+
+# ---------------------------------------------------------------------------
+# read_latex_blocks_string. The string form is not scaffolding and not a second reader:
+# it shares BuildRows with the file form, so the only thing that can differ between them
+# is where the bytes come from. These are the rules that are unreadable as a fixture file.
+# ---------------------------------------------------------------------------
+
+# THE SAME EMITTER. Both forms go through one BuildRows, so the string form owes the same
+# canonical column set and the same level rules -- a block at 1, its inlines at 2, heading
+# rank in attributes and never in `level`. Asserted on VALUES rather than a count, because
+# a count agrees while every value is wrong.
+#
+# A table function argument cannot be a subquery, so the file form's bytes cannot be piped
+# into the string form to compare them directly; this asserts the shared contract instead.
+query IIIIII
+SELECT kind, element_type, content, level, encoding, element_order
+FROM read_latex_blocks_string('\section{H} \textbf{bold}.') ORDER BY element_order;
+----
+block	heading	H	1	text	0
+block	paragraph	NULL	1	text	1
+inline	bold	bold	2	text	2
+inline	text	.	2	text	3
+
+# ...and the heading rank rides in attributes, not in `level`, for the string form too.
+query II
+SELECT level, attributes['heading_level'] FROM read_latex_blocks_string('\subsection{H}');
+----
+1	2
+
+# A FRAGMENT IS A BODY. No \begin{document} and no evidence of a preamble, so the whole
+# token stream is the document. This is what the string form exists for.
+query II
+SELECT element_type, content FROM read_latex_blocks_string('\section{Frag} and text') ORDER BY element_order;
+----
+heading	Frag
+paragraph	and text
+
+# ---------------------------------------------------------------------------
+# AN UNCLOSED `[` MUST NOT EAT THE DOCUMENT.
+#
+# `[` and `]` are ORDINARY CHARACTERS to the tokenizer -- optional arguments are a
+# convention macros implement, not TeX syntax -- so a `[` and its `]` routinely land in
+# different tokens and the search for the close has to cross them. Unbounded, that search
+# ran to the first `]` ANYWHERE in the rest of the document: it deleted the text on both
+# sides and welded two paragraphs into one. Bounded at PAR_BREAK, at a brace group and at
+# \begin/\end, an unclosed bracket is simply text.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, content FROM read_latex_blocks_string(E'one \\includegraphics[width=2cm{a.png} tail.\n\ntwo has a ] bracket.\n\nthree.')
+WHERE kind = 'block' AND content IS NOT NULL ORDER BY element_order;
+----
+paragraph	two has a ] bracket.
+paragraph	three.
+
+# ...and in the PREAMBLE the same runaway consumed \begin{document} itself, so the body
+# was never found and the reader returned NOTHING for a document it could mostly read.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(E'\\documentclass[x\n\\begin{document}\nBody one [two] three\n\\end{document}')
+ORDER BY element_order;
+----
+paragraph	Body one [two] three
+
+# THE BOUND MUST NOT BREAK THE CASE IT EXISTS FOR. `[width=\textwidth]` genuinely spans
+# three tokens -- TEXT "[width=", CONTROL_WORD textwidth, TEXT "]" -- and is still
+# consumed whole, leaving the required argument to be read as the image source.
+query II
+SELECT element_type, attributes['src'] FROM read_latex_blocks_string('\includegraphics[width=\textwidth]{img.png}')
+WHERE kind = 'inline';
+----
+image	img.png
+
+# ---------------------------------------------------------------------------
+# AN EMPTY HEADING IS NOT A HEADING. \section{} would emit a block with NULL content and
+# no inline children to justify the NULL, which is the one shape a duck_block consumer can
+# neither render nor index. The inline path already refuses an empty formatted run; the
+# third column proves the guard drops the heading WITHOUT dropping the text around it.
+# ---------------------------------------------------------------------------
+query III
+SELECT (SELECT count(*) FROM read_latex_blocks_string('\section{}')),
+       (SELECT count(*) FROM read_latex_blocks_string('\section')),
+       (SELECT count(*) FROM read_latex_blocks_string('kept. \section{}'));
+----
+0	0	1
+
+# ---------------------------------------------------------------------------
+# A PREAMBLE WITH NO \begin{document} IS STILL A PREAMBLE. Falling all the way back to
+# token 0 for a truncated document re-parses \documentclass as prose -- an unknown macro's
+# brace group is transparent, so the class name survives -- and the document then led with
+# a paragraph reading "article".
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_latex_blocks_string(E'\\documentclass{article}\n\\usepackage{ulem}\n\\section{X}\nbody')
+WHERE content = 'article';
+----
+0
+
+# ...and the body after the preamble is still read, which is the thing the fragment
+# fallback is protecting.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(E'\\documentclass{article}\n\\usepackage{ulem}\n\\section{X}\nbody')
+WHERE element_type = 'heading' OR content = 'body' ORDER BY element_order;
+----
+heading	X
+paragraph	body

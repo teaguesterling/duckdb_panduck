@@ -241,8 +241,18 @@ const std::set<std::string> BLOCK_LEAF = {"p",  "h1", "h2", "h3",  "h4",        
 //! Tags that contribute structure and are walked through without emitting a block of
 //! their own. ul/ol/dl are here because pandoc's own model has no list-wrapper block --
 //! its BulletList is the wrapper, and the items are what survive canonicalisation.
-const std::set<std::string> TRANSPARENT = {"body", "article", "aside",  "header", "footer", "main",
-                                           "nav",  "figure",  "hgroup", "ul",     "ol",     "dl"};
+const std::set<std::string> TRANSPARENT = {"body", "figure", "hgroup", "ul", "ol", "dl"};
+
+//! HTML5's sectioning set, which is EXACTLY duck_block's `role` vocabulary -- the spec
+//! adopted it deliberately rather than by coincidence. Each becomes a `section` naming its
+//! own role, following heading+heading_level rather than minting a type per variant.
+//!
+//! These were transparent, emitting no block at all, which is worse than the <section>-as
+//! -div bug they sat beside: a wrong-but-visible element can be corrected downstream or
+//! caught by a lint, while an element that emits nothing is indistinguishable from a
+//! document that never had one. Mislabelled information is recoverable; absent is not.
+const std::set<std::string> SECTIONING = {"section", "article", "aside", "nav",
+                                          "header",  "footer",  "main"};
 
 //! Not read. `table` is skipped in every panduck reader alike -- modelling tables needs
 //! table/row/cell blocks, and doing it in one reader only would make the vocabulary mean
@@ -257,7 +267,7 @@ const std::set<std::string> TRANSPARENT = {"body", "article", "aside",  "header"
 const std::set<std::string> SKIPPED = {"head", "script", "style", "template", "svg", "math"};
 
 bool IsBlockTag(const std::string &tag) {
-	return BLOCK_LEAF.count(tag) || TRANSPARENT.count(tag) || SKIPPED.count(tag) || tag == "div" || tag == "section" ||
+	return BLOCK_LEAF.count(tag) || TRANSPARENT.count(tag) || SECTIONING.count(tag) || SKIPPED.count(tag) || tag == "div" ||
 	       tag == "blockquote" || tag == "hr";
 }
 
@@ -494,7 +504,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			}
 			out.push_back(std::move(block));
 			WalkBlocks(child, ctx, out, depth + 1);
-		} else if (tag == "blockquote" || tag == "div" || tag == "section") {
+		} else if (tag == "blockquote" || tag == "div" || SECTIONING.count(tag)) {
 			bool structural = tag != "blockquote";
 			EpubBlock block;
 			// <section> IS SEMANTIC AND <div> IS NOT, and duck_block distinguishes them:
@@ -504,11 +514,11 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			// real type, which is the same defect as <dl> wearing the <ul> branch.
 			// Which kind of section lives in attributes['role'], following the
 			// heading+heading_level convention rather than minting a type per variant.
-			block.element_type = tag == "blockquote" ? DuckBlockTypes::TYPE_BLOCKQUOTE
-			                     : tag == "section"  ? DuckBlockTypes::TYPE_SECTION
-			                                         : DuckBlockTypes::TYPE_DIV;
-			if (tag == "section") {
-				block.role = "section";
+			block.element_type = tag == "blockquote"     ? DuckBlockTypes::TYPE_BLOCKQUOTE
+			                     : SECTIONING.count(tag) ? DuckBlockTypes::TYPE_SECTION
+			                                             : DuckBlockTypes::TYPE_DIV;
+			if (SECTIONING.count(tag)) {
+				block.role = tag;
 			}
 			block.container = true;
 			block.level = depth;

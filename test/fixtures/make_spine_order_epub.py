@@ -10,6 +10,16 @@ real-world multi-directory book needs and a one-file book never exercises:
   * chapters are STORED in the archive in reverse of their reading order
   * the package document sits in its own directory, so manifest hrefs climb with ../
   * one chapter's filename contains a space, so its href is percent-encoded
+  * a NESTED list, which no real-writer fixture contained. duck_block_utils' exporter
+    dropped these entirely because its branch required list_level+1 while a nested
+    list sits at +2 as a child of its item -- a defect invisible to panduck until a
+    fixture could produce the shape
+  * every HTML5 SECTIONING element -- article, aside, nav, header, footer, main --
+    which duck_block models as `section` with attributes['role']. These emitted no
+    block at all until a fixture existed for them, so their semantics vanished
+    silently: transparent is worse than mislabelled, because a wrong-but-visible
+    element can be corrected and an absent one cannot be distinguished from a
+    document that never had one
   * a TABLE, whose text must survive even though its structure cannot yet be
     represented -- losing structure is a gap, losing text is a bug
   * a DEFINITION list, which must not be mislabelled as a bullet list -- duck_block
@@ -113,8 +123,15 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <hr/>
 <pre>  indented   code</pre>
 <ol start="3"><li>third</li></ol>
+<ul><li>outer<ul><li>inner</li></ul></li></ul>
 <dl><dt>term</dt><dd>definition</dd></dl>
 <table><tr><td>cell one</td><td>cell two</td></tr></table>
+<article><p>art</p></article>
+<aside><p>side</p></aside>
+<nav><p>navi</p></nav>
+<header><p>head</p></header>
+<footer><p>foot</p></footer>
+<main><p>mainly</p></main>
 </section>
 </body>
 </html>

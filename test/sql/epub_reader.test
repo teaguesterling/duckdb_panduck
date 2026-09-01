@@ -374,6 +374,8 @@ WHERE element_type = 'list' ORDER BY element_order;
 ----
 list	2	false	bullet	NULL	NULL
 list	2	true	ordered	3	Decimal
+list	2	false	bullet	NULL	NULL
+list	4	false	bullet	NULL	NULL
 
 # ---------------------------------------------------------------------------
 # A DEFINITION LIST IS NOT A BULLET LIST, and the reader must not claim it is. <dl> briefly
@@ -439,4 +441,65 @@ WHERE content IN ('cell one', 'cell two') ORDER BY element_order;
 ----
 paragraph	cell one
 paragraph	cell two
+
+# ---------------------------------------------------------------------------
+# THE ROLE VOCABULARY IS HTML5'S SECTIONING SET, exactly and on purpose: section, article,
+# aside, nav, header, footer, main. So every one of them is a `section` carrying its own
+# role, rather than six elements silently contributing nothing.
+#
+# They WERE transparent -- emitting no block at all -- which is worse than the
+# <section>-as-div bug fixed alongside it. A wrong-but-visible element can be corrected by
+# a consumer or caught by a lint; an element that emits nothing cannot be distinguished
+# from a document that never contained one. The information is not wrong, it is gone.
+#
+# Worth recording that the names lining up with HTML5 is evidence worth nothing on its own
+# -- it is the reason this was asked upstream rather than inferred -- and it happens to be
+# correct here only because the spec deliberately adopted that set.
+query III
+SELECT element_type, attributes['role'], content
+FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE attributes['role'] IS NOT NULL OR content IN ('art','side','navi','head','foot','mainly')
+ORDER BY element_order;
+----
+section	section	NULL
+section	article	NULL
+paragraph	NULL	art
+section	aside	NULL
+paragraph	NULL	side
+section	nav	NULL
+paragraph	NULL	navi
+section	header	NULL
+paragraph	NULL	head
+section	footer	NULL
+paragraph	NULL	foot
+section	main	NULL
+paragraph	NULL	mainly
+
+# ---------------------------------------------------------------------------
+# A NESTED LIST IS A CHILD OF ITS ITEM, sitting two levels below the outer list rather than
+# one. That off-by-one is not academic: duck_block_utils' exporter dropped every nested
+# list because its branch required list_level+1, and panduck could not have found it --
+# no fixture contained a nested list at all, so the reader never produced the shape.
+#
+#   list        3   the outer list
+#     list_item 4   has block children, so it is a container
+#       ...     5   its own bare text
+#       list    5   the nested list, a CHILD OF THE ITEM
+#         list_item 6
+#           plain   7
+#
+# The item's own text is a `paragraph` here rather than a `plain`, which is asserted as
+# CURRENT BEHAVIOUR rather than endorsed: `plain` is documented as what a bare block-level
+# text run becomes, and this run is bare. Raised upstream rather than guessed at, because
+# guessing which of two block types a construct takes is how the four-shape list_item
+# sequence happened.
+query III
+SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('outer', 'inner')
+   OR (element_type = 'list' AND level = 4)
+ORDER BY element_order;
+----
+paragraph	outer	4
+list	NULL	4
+plain	inner	6
 

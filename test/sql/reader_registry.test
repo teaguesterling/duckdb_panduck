@@ -283,3 +283,40 @@ d_epub	0	0	0
 e_epub_spine	0	0	0
 f_epub_libre	0	0	0
 
+# ---------------------------------------------------------------------------
+# EVERY HEADING CARRIES attributes['heading_level']. Under spec 3.0 a heading without it
+# has NO rank information at all, and consumers are forbidden from falling back to `level`
+# -- that fallback was a fair reading of 1.x, and under 3.0 it renders a heading sitting
+# inside two containers as an h3 whatever it actually is.
+#
+# `level` and heading_level DIFFERING IS NORMAL, not a conflict: a top-level h2 is level 1,
+# heading_level 2. They are two independent facts -- structural depth and semantic rank --
+# and the second column below exists so that is asserted rather than assumed.
+#
+# The heading COUNT is the positive companion and it is load-bearing. "No heading is
+# missing its level" is satisfied perfectly by a document with no headings, and one of
+# these fixtures (libreoffice.epub) genuinely has none -- it marks headings only in CSS.
+# Without the count this whole assertion could pass while every reader emitted nothing.
+query III
+WITH r AS (
+  SELECT 'a_docx' AS src, element_type, attributes['heading_level'] AS hl FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+  UNION ALL SELECT 'b_docx_outline', element_type, attributes['heading_level'] FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+  UNION ALL SELECT 'c_odt', element_type, attributes['heading_level'] FROM read_odt_blocks('test/fixtures/pandoc.odt')
+  UNION ALL SELECT 'd_rtf', element_type, attributes['heading_level'] FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
+  UNION ALL SELECT 'e_rtf_style', element_type, attributes['heading_level'] FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
+  UNION ALL SELECT 'f_epub', element_type, attributes['heading_level'] FROM read_epub_blocks('test/fixtures/pandoc.epub')
+  UNION ALL SELECT 'g_epub_spine', element_type, attributes['heading_level'] FROM read_epub_blocks('test/fixtures/spine_order.epub')
+)
+SELECT src,
+       count(*) FILTER (WHERE element_type = 'heading'),
+       count(*) FILTER (WHERE element_type = 'heading' AND hl IS NULL)
+FROM r GROUP BY src ORDER BY src;
+----
+a_docx	2	0
+b_docx_outline	2	0
+c_odt	2	0
+d_rtf	2	0
+e_rtf_style	2	0
+f_epub	2	0
+g_epub_spine	2	0
+

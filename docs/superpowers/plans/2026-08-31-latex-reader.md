@@ -1,5 +1,10 @@
 # read_latex_blocks Implementation Plan
 
+> **COMPLETE.** All eight tasks implemented, reviewed and merged to `main`. Every step
+> below is checked because it was done, not because the boxes were tidied — the work is
+> in the branch history. Retained as the record of HOW this was built and of which
+> instructions turned out to be wrong; several were, and each is noted where it happened.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Read `.tex` / `.latex` into duck_blocks so a LaTeX document and the same document in DOCX, ODT, EPUB or RTF yield the same table of contents and the same prose.
@@ -36,7 +41,7 @@
 - Produces: `namespace duckdb::latex`, `enum class TokenKind { TEXT, CONTROL_WORD, CONTROL_SYMBOL, BEGIN_GROUP, END_GROUP, PAR_BREAK, MATH_SHIFT, END }`, `struct Token { TokenKind kind; std::string text; bool display_math = false; }`, and `std::vector<Token> Tokenize(const std::string &src)`.
 - A debug table function `panduck_latex_tokens(VARCHAR) -> (kind VARCHAR, text VARCHAR)` so the tokenizer is testable from SQL without any duck_block machinery. This is permanent, not scaffolding: it is the only way to test the fiddly rules in isolation.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/sql/latex_tokenizer.test`:
 
@@ -60,12 +65,12 @@ end_group	}
 text	 b
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_tokenizer.test"`
 Expected: FAIL — `Catalog Error: Table Function with name panduck_latex_tokens does not exist`.
 
-- [ ] **Step 3: Write the header**
+- [x] **Step 3: Write the header**
 
 Create `src/include/latex_tokenizer.hpp`:
 
@@ -104,7 +109,7 @@ void RegisterLatexTokensFunction(ExtensionLoader &loader);
 } // namespace duckdb
 ```
 
-- [ ] **Step 4: Implement text, groups and control sequences**
+- [x] **Step 4: Implement text, groups and control sequences**
 
 Create `src/latex_tokenizer.cpp` implementing only what Step 1's test needs:
 
@@ -252,12 +257,12 @@ void RegisterLatexTokensFunction(ExtensionLoader &loader) {
 
 Register it: in `src/panduck_extension.cpp`, next to the other `Register*` calls, add `RegisterLatexTokensFunction(loader);` and include `latex_tokenizer.hpp`. Add `src/latex_tokenizer.cpp` to `EXTENSION_SOURCES` in `CMakeLists.txt`.
 
-- [ ] **Step 5: Run the test and watch it pass**
+- [x] **Step 5: Run the test and watch it pass**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_tokenizer.test"`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/include/latex_tokenizer.hpp src/latex_tokenizer.cpp src/panduck_extension.cpp CMakeLists.txt test/sql/latex_tokenizer.test
@@ -276,7 +281,7 @@ git commit -m "Add a LaTeX tokenizer with no duck_block dependency"
 - Consumes: `latex::Tokenize` from Task 1.
 - Produces: no new signatures. `Token::display_math` becomes meaningful.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/sql/latex_tokenizer.test`:
 
@@ -341,12 +346,12 @@ SELECT count(*) FROM panduck_latex_tokens('\\(a\\) and \\[b\\]') WHERE kind = 'm
 4
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_tokenizer.test"`
 Expected: FAIL — the comment test returns `text a% note\n   b` because comments are not handled yet.
 
-- [ ] **Step 3: Implement the four rules**
+- [x] **Step 3: Implement the four rules**
 
 In `Tokenize`, before the `text.push_back(c)` fallthrough, add these branches in this order:
 
@@ -419,12 +424,12 @@ In `Tokenize`, before the `text.push_back(c)` fallthrough, add these branches in
 		}
 ```
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_tokenizer.test"`
 Expected: PASS, all tokenizer assertions.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/latex_tokenizer.cpp test/sql/latex_tokenizer.test
@@ -446,7 +451,7 @@ git commit -m "Handle comments, paragraph breaks, ligatures and math shifts"
 
 **NO TABLE FUNCTION.** The design doc argued for exposing this as `panduck_latex_macros()` on auditability grounds — an allowlist nobody can enumerate being a backstop with extra steps. That argument does not survive contact: a static table in a source file IS enumerable by reading it, every entry that matters is exercised by the reader's own tests, and a public function is a permanent API commitment no consumer has asked for. `panduck_latex_tokens` earns its place for a reason that does not transfer here — comment-eats-newline and control-word whitespace cannot be observed any other way, whereas a wrong table entry shows up directly as a wrong block. Add it later if something actually wants runtime introspection; it is ~40 lines against a table that will not have moved.
 
-- [ ] **Step 1: Write the table**
+- [x] **Step 1: Write the table**
 
 Create `src/include/latex_macros.hpp` and `src/latex_macros.cpp`. The table is static data in the shape of `src/supported_extensions.cpp:34` and `src/pandoc_ast_map.cpp:18` — this codebase states its coverage as a queryable table, and this one is that for LaTeX.
 
@@ -525,12 +530,12 @@ Environments, a separate table looked up by `LookupEnvironment`:
 
 `LookupMacro` and `LookupEnvironment` are linear scans over these arrays returning `nullptr` when absent — the tables are ~60 entries and are consulted once per token, so a map buys nothing and costs a static initialiser.
 
-- [ ] **Step 2: Verify it compiles and links**
+- [x] **Step 2: Verify it compiles and links**
 
 Run: `make release`
 Expected: builds clean. There is deliberately no behavioural assertion at this task — the table is inert data until Task 4 consumes it, and an assertion here would test the compiler rather than the reader. Tasks 4-6 exercise every disposition: SEMANTIC via headings and lists, TRANSPARENT via the hypertarget case, DROPPED via maketitle and tightlist, TEXT via the em-dash and ldots.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/include/latex_macros.hpp src/latex_macros.cpp CMakeLists.txt
@@ -586,7 +591,7 @@ int HeadingLevelFor(const std::string &macro_name, const std::string &document_c
 
 - Two table functions: `read_latex_blocks(VARCHAR path)` and `read_latex_blocks_string(VARCHAR source)`. Both emit the canonical duck_block column set — `(kind, element_type, content, level, encoding, attributes, element_order)` — and share one row-emitting helper, so the only difference is where the bytes come from. The string form is not test scaffolding: asserting a two-line snippet is how the nesting rules in Task 5 stay readable, and every other panduck reader needs a fixture file for the same job.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `test/sql/latex_reader.test`:
 
@@ -649,12 +654,12 @@ WHERE content LIKE '%usepackage%' OR content LIKE '%documentclass%';
 0
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: FAIL — `read_latex_blocks does not exist`.
 
-- [ ] **Step 3: Implement the parser core**
+- [x] **Step 3: Implement the parser core**
 
 Create `src/latex_reader.cpp`. The parser holds a cursor over `std::vector<Token>` and a `depth` counter, exactly as `epub_reader.cpp`'s `WalkBlocks` does.
 
@@ -668,17 +673,17 @@ Required behaviour for this task only:
 
 Levels: top-level blocks are 1; inlines are `block_level + 1`, nesting deeper among themselves. Emit rows the way `epub_reader.cpp:636-680` does — block row then its inline children, `element_order` incrementing across both.
 
-- [ ] **Step 4: Run and watch it pass**
+- [x] **Step 4: Run and watch it pass**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: PASS.
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `build/release/test/unittest "test/sql/*"`
 Expected: PASS. `reader_registry.test` picks `.tex` up automatically — the registry is derived, so flipping `STATUS_IMPLEMENTED` is the only change dispatch needs, and `reader_registry.test:26` (which asserts `.tex` is NOT routable) must be flipped in this task.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/include/latex_reader.hpp src/latex_reader.cpp src/supported_extensions.cpp src/panduck_extension.cpp CMakeLists.txt test/sql/latex_reader.test test/sql/reader_registry.test
@@ -697,7 +702,7 @@ git commit -m "Add read_latex_blocks: headings, paragraphs, and two-writer equiv
 - Consumes: everything from Task 4.
 - Produces: no new signatures.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/sql/latex_reader.test`:
 
@@ -738,12 +743,12 @@ WHERE kind = 'inline' ORDER BY element_order;
 bold	x	2
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: FAIL — inline children are absent or flattened.
 
-- [ ] **Step 3: Implement the inline scope stack**
+- [x] **Step 3: Implement the inline scope stack**
 
 Maintain `std::vector<std::string> inline_scopes`. A `SEMANTIC` macro whose `element_type` is an inline pushes a scope, recurses into its content argument, and pops.
 
@@ -753,12 +758,12 @@ So `\textbf{x}` has one text child and emits ONE run carrying `x`. `\textbf{\emp
 
 Note this is the same rule as the block-side `plain`-versus-`paragraph` decision in Task 6, seen from the inline side — in both cases the question is what the container's only child actually is, and in both cases deciding it from anything else (depth, macro name, whether the container has children at all) collapses two distinct inputs into one output.
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/latex_reader.cpp test/sql/latex_reader.test
@@ -777,7 +782,7 @@ git commit -m "Emit LaTeX inline formatting, nested genuinely rather than flatte
 - Consumes: everything from Tasks 4 and 5.
 - Produces: no new signatures.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/sql/latex_reader.test`:
 
@@ -830,12 +835,12 @@ WHERE content LIKE '%café — em-dash%';
 1
 ```
 
-- [ ] **Step 2: Run and watch them fail**
+- [x] **Step 2: Run and watch them fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: FAIL — environments are not handled.
 
-- [ ] **Step 3: Implement environments**
+- [x] **Step 3: Implement environments**
 
 `\begin{name}` looks `name` up via `LookupEnvironment`:
 
@@ -867,17 +872,17 @@ The tight/loose distinction needs no attribute: it falls out of the content rule
 
 `verbatim`/`lstlisting` take bytes raw to the matching `\end`, with no tokenizing, and emit `code`.
 
-- [ ] **Step 4: Run and watch them pass**
+- [x] **Step 4: Run and watch them pass**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: PASS.
 
-- [ ] **Step 5: Run the whole suite and the tree invariant**
+- [x] **Step 5: Run the whole suite and the tree invariant**
 
 Run: `build/release/test/unittest "test/sql/*"`
 Expected: PASS. `reader_registry.test`'s cross-reader tree invariant now covers five readers — add `read_latex_blocks('test/fixtures/pandoc.tex')` to its UNION so LaTeX is held to the same no-NULL/no-jump rule as the rest.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/latex_reader.cpp test/sql/latex_reader.test test/sql/reader_registry.test
@@ -897,7 +902,7 @@ git commit -m "Read LaTeX environments, lists and the tight/loose item distincti
 - Consumes: everything above.
 - Produces: no new signatures.
 
-- [ ] **Step 1: Write the fixture**
+- [x] **Step 1: Write the fixture**
 
 Create `test/fixtures/edge_cases.tex`. The two existing fixtures are a MATCHED PAIR and must not be edited — the two-writer equivalence assertion is exactly their value, and adding cases to one breaks it.
 
@@ -913,7 +918,7 @@ Inline $x^2$ and display $$y = mx + b$$ here.
 \end{document}
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```
 # MATH IS OPAQUE: the TeX is kept verbatim as content and nothing is parsed. `display`
@@ -948,25 +953,25 @@ SELECT count(*) > 0 FROM read_latex_blocks('test/fixtures/edge_cases.tex');
 1
 ```
 
-- [ ] **Step 3: Run and watch them fail**
+- [x] **Step 3: Run and watch them fail**
 
 Run: `make release && build/release/test/unittest "test/sql/latex_reader.test"`
 Expected: FAIL — math is not emitted.
 
-- [ ] **Step 4: Implement math and the degradation rules**
+- [x] **Step 4: Implement math and the degradation rules**
 
 `MATH_SHIFT` opens a math span; text accumulates verbatim until the matching shift; emit `math` with `attributes['display']` = `inline` or `block`. At EOF: close every open scope and every open environment, emit what has accumulated, never throw.
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `build/release/test/unittest "test/sql/*"`
 Expected: PASS.
 
-- [ ] **Step 6: Update the reader's self-description and docs**
+- [x] **Step 6: Update the reader's self-description and docs**
 
 `src/supported_extensions.cpp`: replace the `latex` note with what is actually read — sectioning, paragraphs, lists, quotes, verbatim, inline formatting with genuine nesting, links, images, footnotes, opaque math; tables and `\newcommand` expansion not read. Add a `docs/readers.md` section matching the other four readers' entries.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add test/fixtures/edge_cases.tex src/latex_reader.cpp src/supported_extensions.cpp docs/readers.md test/sql/latex_reader.test
@@ -985,16 +990,16 @@ git commit -m "Handle math, verbatim and malformed LaTeX; document the reader"
 **Interfaces:**
 - Consumes: the finished reader.
 
-- [ ] **Step 1: Run the vocabulary check**
+- [x] **Step 1: Run the vocabulary check**
 
 Run: `make check-vocabulary`
 Expected: GAPS shrinks — the reader now branches on `math`, `note`, `cite`, `plain` and others previously listed as unhandled. Remove any entry from `INTENTIONAL_GAPS` in `scripts/check_duck_block_vocabulary.py` that LaTeX now handles, and leave a reason for every entry that remains.
 
-- [ ] **Step 2: Add LaTeX to the differential harness**
+- [x] **Step 2: Add LaTeX to the differential harness**
 
 `test/roundtrip/check_roundtrip.py` reads each fixture with panduck AND pandoc and compares at declared equivalence levels. Add `handwritten.tex` and `pandoc.tex`. Run `make test_roundtrip`; it skips cleanly when pandoc is absent.
 
-- [ ] **Step 3: Run everything**
+- [x] **Step 3: Run everything**
 
 ```bash
 make release
@@ -1006,7 +1011,7 @@ make test_pandoc_alignment
 
 Expected: all pass, `check-vocabulary` green at spec 4.0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/check_duck_block_vocabulary.py test/roundtrip/check_roundtrip.py test/sql/reader_registry.test

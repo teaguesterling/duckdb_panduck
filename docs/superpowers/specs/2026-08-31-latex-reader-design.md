@@ -1,6 +1,9 @@
 # read_latex_blocks — design
 
-**Status:** approved, not yet implemented
+**Status:** IMPLEMENTED and merged to main. Built across eight reviewed tasks; see
+`docs/superpowers/plans/2026-08-31-latex-reader.md`. Where this document and the code
+disagree, the CODE is authoritative — a whole-branch review once cited a stale line here
+as grounds against correct code.
 **Roadmap:** phase 4. `supported_extensions.cpp` already declares `latex` as
 `STATUS_PLANNED` with the note "streaming tokenizer for macros, environments, math".
 

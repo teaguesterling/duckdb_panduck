@@ -15,9 +15,9 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-**Status:** four native readers (RTF, DOCX, ODT, EPUB), full path dispatch, and a
-differential validator that checks panduck against real pandoc on every CI run. LaTeX,
-RST, Org and MediaWiki are declared but not yet implemented — and the registry knows the
+**Status:** five native readers (RTF, DOCX, ODT, EPUB, LaTeX), full path dispatch, and a
+differential validator that checks panduck against real pandoc on every CI run. RST, Org
+and MediaWiki are declared but not yet implemented — and the registry knows the
 difference, so nothing routes to a reader that doesn't exist.
 
 ## Why not just call pandoc?
@@ -76,7 +76,8 @@ panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 | `docx` | `.docx` | **implemented** — `read_docx_blocks` |
 | `odt` | `.odt` | **implemented** — `read_odt_blocks` |
 | `epub` | `.epub` | **implemented** — `read_epub_blocks` |
-| `latex` `rst` `org` `mediawiki` | | declared, not implemented |
+| `latex` | `.tex` `.latex` | **implemented** — `read_latex_blocks` |
+| `rst` `org` `mediawiki` | | declared, not implemented |
 | `markdown` `html` `pdf` | `.md` `.html` `.pdf` | routed to `duckdb_markdown`, `duckdb_webbed`, `pdf` |
 | `toml` `yaml` | `.toml` `.yaml` | read as a `metadata` block |
 | `data` | `.csv` `.parquet` `.json` `.xlsx` … | `read_panduck_table` only |
@@ -121,7 +122,7 @@ make test_roundtrip         # differential validation vs a real pandoc
 ## Documentation
 
 - [Architecture](docs/architecture.md) — the layering, and why nothing depends upward
-- [Readers](docs/readers.md) — RTF and DOCX, and what real writers actually emit
+- [Readers](docs/readers.md) — all five readers, and what real writers actually emit
 - [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration
 - [The doc_ namespace](docs/doc_namespace.md) — path-taking sugar over `db_*`
 - [Validation](docs/validation.md) — how the pandoc-compatibility claim is tested

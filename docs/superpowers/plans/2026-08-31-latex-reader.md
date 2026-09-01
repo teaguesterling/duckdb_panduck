@@ -756,7 +756,11 @@ Expected: FAIL — inline children are absent or flattened.
 
 Maintain `std::vector<std::string> inline_scopes`. A `SEMANTIC` macro whose `element_type` is an inline pushes a scope, recurses into its content argument, and pops.
 
-The flat/nested rule is duck_block's own convention, already stated in `src/include/duck_block_types.hpp`: *content is populated if and only if the container has a single text child*. So a scope containing only text emits ONE run carrying that text; a scope containing another scope emits a container with NULL content plus children at `level+1`.
+**You do not nest if and only if the only child is plain text.** That is the whole rule, and it is duck_block's own convention — `src/include/duck_block_types.hpp` states it as *content is populated if and only if the container has a single text child*.
+
+So `\textbf{x}` has one text child and emits ONE run carrying `x`. `\textbf{\emph{x}}` has a child that is not plain text, so it emits a container with NULL content and a child at `level+1`. The condition is on the CHILD, not on the depth or the macro: a scope with two text runs and no formatting is still a single run, and a scope with one formatted child still nests.
+
+Note this is the same rule as the block-side `plain`-versus-`paragraph` decision in Task 6, seen from the inline side — in both cases the question is what the container's only child actually is, and in both cases deciding it from anything else (depth, macro name, whether the container has children at all) collapses two distinct inputs into one output.
 
 - [ ] **Step 4: Run and watch them pass**
 

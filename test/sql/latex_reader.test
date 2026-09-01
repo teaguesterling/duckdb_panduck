@@ -1,0 +1,56 @@
+# name: test/sql/latex_reader.test
+# description: read_latex_blocks() over the same document written by a person and by pandoc
+# group: [sql]
+
+require panduck
+
+# THE CENTRAL ASSERTION. handwritten.tex and pandoc.tex are the SAME DOCUMENT written
+# twice. pandoc buries \section two brace-levels deep inside \hypertarget{id}{% behind a
+# comment token; a person writes \section at the top level. Both must yield the same
+# headings at the same levels, and this is what proves TRANSPARENT works without any
+# pandoc-specific rule in the reader.
+query I
+SELECT count(*) FROM (
+  (SELECT content, attributes['heading_level'] FROM read_latex_blocks('test/fixtures/handwritten.tex')
+   WHERE element_type = 'heading')
+  EXCEPT
+  (SELECT content, attributes['heading_level'] FROM read_latex_blocks('test/fixtures/pandoc.tex')
+   WHERE element_type = 'heading')
+);
+----
+0
+
+# POSITIVE COMPANION, and it is load-bearing: the EXCEPT above is satisfied by MUTUAL
+# EMPTINESS -- two readers that both return nothing agree perfectly. This is the same trap
+# reader_registry.test documents for the dispatcher identity.
+query II
+SELECT content, attributes['heading_level'] FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	1
+Heading Two	2
+
+# \maketitle MUST EMIT NOTHING. handwritten.tex has \title/\author/\maketitle and
+# pandoc.tex has none of them in its body, so the two documents are equivalent ONLY if
+# \maketitle produces no block. Consistent with every other panduck reader: none extracts
+# document metadata yet.
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE content = 'Handwritten' OR content = 'Nobody';
+----
+0
+
+# THE COMMENT MUST NOT LEAK, and the leading space it would leave is invisible on
+# inspection. handwritten.tex carries "This comment must not appear in any block."
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE content LIKE '%comment must not appear%';
+----
+0
+
+# The preamble is discarded wholesale: no \usepackage line becomes a paragraph.
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE content LIKE '%usepackage%' OR content LIKE '%documentclass%';
+----
+0

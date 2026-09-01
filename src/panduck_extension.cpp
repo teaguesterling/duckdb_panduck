@@ -4,6 +4,7 @@
 #include "duck_block_types.hpp"
 #include "docx_reader.hpp"
 #include "epub_reader.hpp"
+#include "latex_reader.hpp"
 #include "latex_tokenizer.hpp"
 #include "odt_reader.hpp"
 #include "pandoc_ast_map.hpp"
@@ -66,6 +67,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterOdtReaderFunction(loader);
 	RegisterEpubReaderFunction(loader);
 	RegisterLatexTokensFunction(loader);
+	RegisterLatexReaderFunction(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

@@ -20,13 +20,23 @@ SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ex
 .rtf	rtf	panduck	read_rtf_blocks
 
 # A planned-but-unimplemented format must NOT be routable: dispatch would name a function
-# that does not exist. .tex is the current example -- .docx was, then .odt, then .epub,
-# each of which made this assertion correctly go red and demand promotion rather than a
-# patch. The example moving down the roadmap is the ratchet working.
+# that does not exist. .rst is the current example -- .docx was, then .odt, then .epub,
+# then .tex, each of which made this assertion correctly go red and demand promotion
+# rather than a patch. The example moving down the roadmap is the ratchet working.
 query I
-SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.tex';
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.rst';
 ----
 0
+
+# ...and .tex IS routable now, through the same derivation. Both extensions the latex
+# format claims resolve to the one reader, which is what a format claiming more than one
+# suffix has to mean.
+query III
+SELECT ext, reader_ext, function FROM panduck_reader_registry()
+WHERE ext IN ('.tex', '.latex') ORDER BY ext;
+----
+.latex	panduck	read_latex_blocks
+.tex	panduck	read_latex_blocks
 
 # ...and .epub IS routable now, through the same derivation. A book is a ZIP whose spine
 # names its reading order, and none of that is visible here: the registry learned about it
@@ -267,6 +277,7 @@ WITH r AS (
   UNION ALL SELECT 'd_epub', element_order, level FROM read_epub_blocks('test/fixtures/pandoc.epub')
   UNION ALL SELECT 'e_epub_spine', element_order, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
   UNION ALL SELECT 'f_epub_libre', element_order, level FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+  UNION ALL SELECT 'g_latex', element_order, level FROM read_latex_blocks('test/fixtures/handwritten.tex')
 ), d AS (
   SELECT src, level, level - lag(level) OVER (PARTITION BY src ORDER BY element_order) AS delta FROM r
 )
@@ -282,6 +293,7 @@ c_rtf	0	0	0
 d_epub	0	0	0
 e_epub_spine	0	0	0
 f_epub_libre	0	0	0
+g_latex	0	0	0
 
 # ---------------------------------------------------------------------------
 # EVERY HEADING CARRIES attributes['heading_level']. Under spec 3.0 a heading without it
@@ -306,6 +318,8 @@ WITH r AS (
   UNION ALL SELECT 'e_rtf_style', element_type, attributes['heading_level'] FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
   UNION ALL SELECT 'f_epub', element_type, attributes['heading_level'] FROM read_epub_blocks('test/fixtures/pandoc.epub')
   UNION ALL SELECT 'g_epub_spine', element_type, attributes['heading_level'] FROM read_epub_blocks('test/fixtures/spine_order.epub')
+  UNION ALL SELECT 'h_latex', element_type, attributes['heading_level'] FROM read_latex_blocks('test/fixtures/handwritten.tex')
+  UNION ALL SELECT 'i_latex_pandoc', element_type, attributes['heading_level'] FROM read_latex_blocks('test/fixtures/pandoc.tex')
 )
 SELECT src,
        count(*) FILTER (WHERE element_type = 'heading'),
@@ -319,4 +333,6 @@ d_rtf	2	0
 e_rtf_style	2	0
 f_epub	2	0
 g_epub_spine	2	0
+h_latex	2	0
+i_latex_pandoc	2	0
 

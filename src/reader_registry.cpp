@@ -300,6 +300,46 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 // names a function, so call it" -- covers builtin flat readers and user-registered
 // readers with the same code path; only formats needing a bespoke shape are special-cased.
 
+// ------------------------------------------------------------------ doc_* namespace
+//
+// doc_* takes a PATH; db_* takes blocks you already hold. That split is why this
+// namespace belongs to panduck: taking a path is the IO engine's job, and it restores
+// doc_toc('README.md') -- an ergonomic loss duck_block_utils recorded as an accepted
+// cost when dispatch moved out.
+//
+// These load duck_block_utils on demand, exactly as reading .md loads markdown and .html
+// loads webbed. panduck's CORE never needs it: every reader, the registry and both
+// dispatchers work with duck_block_utils absent. Only this sugar depends on it, and it
+// says so by name when it is missing.
+//
+// LIMITED TO WHAT IS ACTUALLY REACHABLE. duck_block_utils exposes two shapes:
+//
+//   C++ scalars, available at LOAD    db_blocks_toc, db_blocks_to_text   -> usable here
+//   macros behind PRAGMA duck_block_* db_toc, db_section, db_ansi        -> NOT usable
+//
+// A macro created by a pragma cannot be reached from a panduck macro: it is invisible to
+// the statement that loads the extension, and panduck cannot invoke a pragma from inside
+// a macro. So doc_section and doc_sections_like are absent until duck_block_utils
+// registers db_* at LOAD (DefaultTableMacro) rather than behind its pragma -- the same
+// change panduck made for its own registry. Likewise doc_render has no 'ansi' arm yet;
+// db_ansi is a macro.
+
+const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
+                                         "doc_toc",
+                                         {"src", nullptr},
+                                         {{"format", "'auto'"}, {nullptr, nullptr}},
+                                         R"SQL(
+SELECT * FROM query(
+    CASE WHEN panduck_ensure_extension('duck_block_utils')
+    THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
+         '(t).indent AS indent, (t).element_order AS element_order ' ||
+         'FROM (SELECT unnest(db_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
+         ', format := ' || panduck_quote(format) || '))) AS t)'
+    ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
+    END
+)
+)SQL"};
+
 const DefaultMacro SCALAR_MACROS[] = {
     {DEFAULT_SCHEMA,
      "panduck_quote",
@@ -341,6 +381,30 @@ const DefaultMacro SCALAR_MACROS[] = {
      // contract says it must, and a reordering would surface as a slicing bug far from
      // its cause.
      "(SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc(src, format := format, pages := pages) b)"},
+
+    // doc_render(src, format) -- render a document to a FORMAT. duck_block_utils deleted
+    // its doc_render when it stopped depending on format extensions; panduck is the right
+    // home because rendering to md/html IS format IO. 'text' delegates to
+    // db_blocks_to_text, which is a C++ scalar and therefore reachable; 'ansi' cannot be
+    // added until db_ansi registers at LOAD instead of behind a pragma.
+    {DEFAULT_SCHEMA,
+     "doc_render",
+     {"src", "output_format", nullptr},
+     {{"format", "'auto'"}, {nullptr, nullptr}},
+     "(SELECT r FROM query("
+     "  CASE"
+     "    WHEN output_format = 'md' AND panduck_ensure_extension('markdown')"
+     "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(src) ||"
+     "           ', format := ' || panduck_quote(format) || ')) AS r'"
+     "    WHEN output_format = 'html' AND panduck_ensure_extension('webbed')"
+     "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(src) ||"
+     "           ', format := ' || panduck_quote(format) || ')) AS r'"
+     "    WHEN output_format = 'text' AND panduck_ensure_extension('duck_block_utils')"
+     "      THEN 'SELECT db_blocks_to_text(panduck_read_blocks(' || panduck_quote(src) ||"
+     "           ', format := ' || panduck_quote(format) || ')) AS r'"
+     "    ELSE error('panduck: doc_render supports md, html and text; ' || output_format ||"
+     "               ' is unsupported or its extension is not installed')"
+     "  END))"},
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
 
@@ -509,7 +573,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

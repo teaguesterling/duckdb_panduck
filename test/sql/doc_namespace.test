@@ -1,0 +1,104 @@
+# name: test/sql/doc_namespace.test
+# description: doc_* — path-taking sugar over duck_block_utils' block-taking db_*
+# group: [sql]
+
+#
+# doc_* takes a PATH; db_* takes blocks you already hold. That split is why this
+# namespace is panduck's: taking a path is the IO engine's job. It restores
+# doc_toc('README.md'), which duck_block_utils recorded as an accepted cost when
+# dispatch moved out.
+#
+# These load duck_block_utils ON DEMAND, exactly as reading .md loads markdown. panduck's
+# core needs none of it -- every reader, the registry and both dispatchers work with
+# duck_block_utils absent -- so this whole file is gated rather than the suite.
+
+require panduck
+
+# Explicit INSTALL/LOAD rather than `require duck_block_utils`: the unittest binary is
+# built with ENABLE_EXTENSION_AUTOLOADING=0, so `require` cannot load a community
+# extension and the whole file would SKIP -- coverage-shaped with no coverage, which is
+# the exact failure this suite has been hunting all day. This mirrors what
+# duck_block_utils' own doc_macros.test does for markdown.
+statement ok
+INSTALL duck_block_utils;
+
+statement ok
+LOAD duck_block_utils;
+
+# ---------------------------------------------------------------------------
+# The same document read two ways yields the same table of contents. Two formats,
+# two readers, two heading mechanisms, one vocabulary.
+# ---------------------------------------------------------------------------
+query III
+SELECT level, title, indent FROM doc_toc('test/fixtures/pandoc_pstyle.docx') ORDER BY element_order;
+----
+1	Heading One	0
+2	Heading Two	1
+
+query III
+SELECT level, title, indent FROM doc_toc('test/fixtures/pandoc_outlinelevel.rtf') ORDER BY element_order;
+----
+1	Heading One	0
+2	Heading Two	1
+
+# The DOCX and RTF fixtures agree exactly -- asserted directly rather than left to be
+# inferred from the two blocks above matching by eye.
+query I
+SELECT count(*) FROM (
+  (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
+  EXCEPT
+  (SELECT level, title FROM doc_toc('test/fixtures/pandoc_outlinelevel.rtf'))
+);
+----
+0
+
+# POSITIVE COMPANION: the EXCEPT above is satisfied by both sides being empty.
+query I
+SELECT count(*) FROM doc_toc('test/fixtures/pandoc_pstyle.docx');
+----
+2
+
+# doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
+query I
+SELECT count(*) FROM (
+  (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
+  EXCEPT
+  (SELECT (t).level, (t).title
+   FROM (SELECT unnest(db_blocks_toc(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
+);
+----
+0
+
+# ---------------------------------------------------------------------------
+# doc_render: to a FORMAT. duck_block_utils deleted its own doc_render when it stopped
+# depending on format extensions; rendering to md/html is format IO, which is panduck's.
+# ---------------------------------------------------------------------------
+query I
+SELECT starts_with(doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'md'), '# Heading One');
+----
+true
+
+query I
+SELECT contains(doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'md'), '**bold**');
+----
+true
+
+query I
+SELECT contains(doc_render('test/fixtures/pandoc_pstyle.docx', 'text'), 'Heading One');
+----
+true
+
+# An unsupported output format is named, not silently defaulted -- the failure mode that
+# let doc_search degrade md/html/blocks/pandoc to text in duck_block_utils.
+statement error
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
+----
+doc_render supports md, html and text
+
+# 'ansi' is deliberately absent, not forgotten: db_ansi is a macro behind
+# PRAGMA duck_block_render, and a macro created by a pragma cannot be reached from a
+# panduck macro. It returns the same named error until db_ansi registers at LOAD.
+statement error
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'ansi');
+----
+doc_render supports md, html and text

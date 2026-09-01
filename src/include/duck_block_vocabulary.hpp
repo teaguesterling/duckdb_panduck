@@ -204,9 +204,72 @@ struct DuckBlockVocabulary {
 	//               rendering `paragraph` now receives `plain` for a tight list item
 	//               -- so a MAJOR bump even though the vocabulary change is additive.
 	//               Also makes `list_type` canonical, `ordered` a legacy alias.
+	//   4.0 -> 5.0  `table` emits the NATIVE {headers,rows} schema, with the full
+	//               Pandoc tuple preserved in attributes['pandoc_ast'] so nothing is
+	//               lost; definition lists become `list` with list_type='definition'
+	//               rather than the opaque `deflist`. Both previously serialised
+	//               structure into a field consumers read verbatim: tables rendered
+	//               as NOTHING and deflists rendered their own AST, and both poisoned
+	//               search. Breaking -- a consumer parsing either JSON must migrate.
+	//
+	//   5.0 -> 6.0  `plain` is NARROWED to text that has nowhere else to live. A
+	//               container whose only child is a text run carries that text in its
+	//               own `content` -- v1's content rule, unchanged since v1.0 -- so
+	//               `<li>text</li>` is `list_item(content='text')`, not
+	//               `list_item > plain('text')`. 5.0 shipped the second, which meant a
+	//               container with a single text child had TWO legal shapes depending
+	//               on which producer built it, and removing that ambiguity is the
+	//               thing every version since 2.0 has been for.
+	//
+	//               `plain` still exists and is still required, in exactly two places:
+	//                 * beside block siblings -- `section > plain('Lead') + heading`,
+	//                   where the container's content cannot hold the run because the
+	//                   run is not the only child;
+	//                 * at the TOP LEVEL, where the document root has no content field.
+	//
+	//               Tight-vs-loose list items are NOT lost by this and need no
+	//               attribute: content on the item is Pandoc's `Plain` (tight), a
+	//               `paragraph` child is `Para` (loose). Measured on the exporter
+	//               before the change, not assumed.
+	//
+	//               Breaking for a consumer that walks for a `plain` child; a consumer
+	//               that already read the container's `content` -- which the rule has
+	//               required since v1 -- needs no change.
+	//
+	//   6.0 -> 6.1  ADDITIVE. `duck_blocks_normalize(blocks)` applies 6.0's content
+	//               rule to a finished block vector, so a producer can emit the naive
+	//               shape and fix it up afterwards instead of implementing the rule.
+	//
+	//               Needed because the rule is SIBLING-DEPENDENT: whether a text run
+	//               becomes its container's content or stays a `plain` depends on what
+	//               FOLLOWS it, which a streaming reader does not know when it reaches
+	//               the run. Raised by the panduck session, whose EPUB and LaTeX
+	//               readers both emit as they walk; it is true of any streaming reader
+	//               of any format, so the answer should not be four private lookaheads
+	//               that drift. Nothing is removed or renamed -- a consumer on 6.0 is
+	//               unaffected.
+	//
+	//   6.1 -> 6.2  ADDITIVE, three clarifications that were load-bearing and unstated.
+	//               `metadata` gains attributes['role'], with 'frontmatter' declared --
+	//               one type plus a role rather than minting `frontmatter` as its own
+	//               element_type, which is this vocabulary's own rule applied to a case
+	//               three producers had each guessed differently.
+	//
+	//               Value elements after the blocks is now a CONTRACT, not the
+	//               "convenience" the spec called it: two producers asked where they go,
+	//               which is a question a convenience cannot answer. With it, the rule
+	//               that a consumer must end an inline run at any NON-INLINE element --
+	//               getting that wrong made this repo's exporter emit a document whose
+	//               body had been replaced by its title.
+	//
+	//               A document with NO blocks -- a .toml file read as pure metadata --
+	//               is conformant, and stated rather than left to be inferred from
+	//               nothing objecting.
+	//
+	//               Nothing renamed, nothing removed; a consumer on 6.1 is unaffected.
 	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "4.0";
+	static constexpr const char *SPEC_VERSION = "6.2";
 
 	// ========================================================================
 	// Block type names

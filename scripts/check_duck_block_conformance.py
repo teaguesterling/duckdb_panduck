@@ -44,7 +44,7 @@ EXTENSION = os.path.join(ROOT, "build", "release", "extension", "panduck",
 # comparison (check_conformance_macro.py) against its own extension -- a copy here would
 # be a third party to a two-party agreement, checked by nobody.
 DEFAULT_UPSTREAM = os.path.join(os.path.dirname(ROOT), "duckdb_duck_block_utils")
-MACROS_RELPATH = os.path.join("conformance", "duck_block_conformance.sql")
+MACROS_RELPATH = os.path.join("vendor", "duck_block_conformance.sql")
 # .toml/.yaml are here deliberately: those two registry branches synthesise a block by
 # hand instead of passing one up from a reader, which is exactly the kind of element a
 # reader test never covers. They shipped a NULL level because of it.
@@ -158,7 +158,11 @@ def check_fixtures(macros):
                "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks('%s') AS blk;\n"
                "SELECT '%s' || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
                "coalesce(list_aggregate(duck_blocks_undeclared_types(blk), "
-               "'string_agg', ','), '') FROM fx;\n" % (rel, rel, SEP, SEP))
+               "'string_agg', ','), '') FROM fx;\n"
+               "SELECT 'ERR' || '%s' || 'order ' || e.element_order::VARCHAR || "
+               "' ' || e.field || ': ' || e.message "
+               "FROM fx, duck_blocks_errors(fx.blk) e;\n"
+               % (rel, rel, SEP, SEP, SEP))
         try:
             lines = run_sql(sql)
         except RuntimeError as exc:
@@ -168,7 +172,11 @@ def check_fixtures(macros):
             else:
                 failures.append("%s: %s" % (rel, detail.strip().splitlines()[-1]))
             continue
+        errs = [ln.split(SEP, 1)[1].strip() for ln in lines
+                if ln.startswith("ERR" + SEP)]
         for line in lines:
+            if line.startswith("ERR" + SEP):
+                continue
             parts = line.split(SEP)
             if len(parts) < 3:
                 continue
@@ -176,7 +184,8 @@ def check_fixtures(macros):
             undecl = [u for u in parts[2].strip().split(",") if u]
             results.append((rel, valid, undecl))
             if not valid:
-                failures.append("%s: duck_blocks_are_valid returned false" % rel)
+                failures.append("%s: %s" % (rel, "; ".join(errs) if errs
+                                            else "duck_blocks_are_valid returned false"))
             if undecl:
                 failures.append("%s: element types outside the vocabulary: %s"
                                 % (rel, ", ".join(undecl)))
@@ -229,6 +238,12 @@ def main():
           % (len(SELF_TESTS), len(SELF_TESTS)))
 
     results, failures, skipped = check_fixtures(macros)
+    if failures and not results:
+        print("\nFAIL: every fixture errored -- the check ran nothing:\n")
+        for f in failures:
+            print("  - %s" % f)
+        return 1
+
     if not results and not skipped:
         msg = "SKIP: no fixtures found under test/fixtures/"
         if args.strict:

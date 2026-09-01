@@ -1,3 +1,4 @@
+#include "block_json.hpp"
 #include "latex_reader.hpp"
 
 #include "duck_block_types.hpp"
@@ -162,6 +163,8 @@ private:
 	void EndEnvironment(const std::string &name);
 	void PopEnvironment();
 	void ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &name, std::string *raw);
+	//! tabular -> a spec 5.0 native table. Consumes through \end{<name>}.
+	void EmitTabular(std::vector<Token> &toks, size_t &i, const std::string &name);
 	void StartItem(std::vector<Token> &toks, size_t &i);
 	void ResolveList(EnvFrame &frame);
 	void NoteParagraphBreak();
@@ -711,6 +714,12 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		env_stack.push_back(std::move(frame));
 		return;
 	}
+	if (element_type == DuckBlockTypes::TYPE_TABLE) {
+		// A table's cells are not prose and must not go through the run machinery: `&` and
+		// `\\` are structure, and descending would emit them as sentences.
+		EmitTabular(toks, i, name);
+		return;
+	}
 	if (element_type == DuckBlockTypes::TYPE_CODE) {
 		// verbatim and lstlisting have no body to parse: the tokenizer took theirs as bytes.
 		std::string body;
@@ -848,6 +857,152 @@ void Parser::ResolveList(EnvFrame &frame) {
 		blocks[item].content = std::move(child.content);
 		blocks.erase(blocks.begin() + (long)(item + 1));
 	}
+}
+
+void Parser::EmitTabular(std::vector<Token> &toks, size_t &i, const std::string &name) {
+	FlushRun();
+	SkipOptional(toks, i); // \begin{tabular}[t]{...}: vertical positioning, presentational
+	std::vector<Token> spec;
+	// The COLUMN SPEC is read and discarded. `{|l|r|}` carries alignment and rules, and the
+	// native {headers, rows} projection has nowhere to put either -- the same loss the EPUB
+	// reader takes, and for the same reason: attributes['pandoc_ast'] is where a producer
+	// WITH a Pandoc tuple keeps them, and panduck never has one. Reading it rather than
+	// leaving it is what stops `{|l|r|}` arriving as a first table cell.
+	ReadGroup(toks, i, spec);
+
+	std::vector<std::vector<std::string>> rows;
+	std::vector<bool> ruled_after;
+	bool leading_rule = false;
+	std::vector<std::vector<Token>> row_cells;
+	std::vector<Token> cell;
+
+	auto end_cell = [&]() {
+		row_cells.push_back(std::move(cell));
+		cell.clear();
+	};
+	auto end_row = [&]() {
+		end_cell();
+		std::vector<std::string> flat;
+		bool any = false;
+		for (auto &c : row_cells) {
+			auto t = FlattenTrimmed(c);
+			if (!t.empty()) {
+				any = true;
+			}
+			flat.push_back(std::move(t));
+		}
+		row_cells.clear();
+		if (any) {
+			// A row of nothing but whitespace contributes NO row. A trailing `\\` produces
+			// one of these, and pandoc emits it as an empty row -- measured. Matching that
+			// would put a blank line in every table that ends the way LaTeX tables usually
+			// do, so this diverges deliberately and matches the EPUB reader's cell-less
+			// <tr> rule instead.
+			rows.push_back(std::move(flat));
+			ruled_after.push_back(false);
+		}
+	};
+
+	for (; i < toks.size(); i++) {
+		auto &tok = toks[i];
+		if (tok.kind == TokenKind::END) {
+			break;
+		}
+		if (tok.kind == TokenKind::CONTROL_WORD && tok.text == "end") {
+			// THE DOCUMENT ENDING STOPS THE SCAN, exactly as ScanToEnd does it. An unclosed
+			// `\begin{tabular}` otherwise runs to end of input and welds the rest of the
+			// file into a cell: `\begin{tabular}{ll}a\end{document} after this` produced a
+			// table containing "adocument after this", with the document's remaining prose
+			// swallowed into it.
+			//
+			// Same runaway shape SkipOptional documents a few hundred lines up. It
+			// reappeared because a NEW scanner needs the boundary reasoning again from
+			// scratch -- the old DROPPED path inherited it from ScanToEnd for free, so
+			// replacing that path with a hand-written walker silently gave the guarantee
+			// back. The `stopped` flag is ScanToEnd's own mechanism, reused rather than
+			// re-invented.
+			size_t j = i + 1;
+			std::vector<Token> nm;
+			ReadGroup(toks, j, nm);
+			auto env_name = FlattenTrimmed(nm);
+			if (env_name == name) {
+				i = j;
+				break;
+			}
+			if (env_name == "document") {
+				stopped = true;
+				i = j;
+				break;
+			}
+			// Some OTHER environment's \end, inside a cell. Not ours to act on: fall through
+			// and let the tokens be cell content, so a nested environment cannot truncate
+			// the table.
+		}
+		if (tok.kind == TokenKind::CONTROL_WORD &&
+		    (tok.text == "hline" || tok.text == "toprule" || tok.text == "midrule" ||
+		     tok.text == "bottomrule")) {
+			// A RULE IS THE ONLY HEADER SIGNAL LaTeX HAS. tabular has no thead: pandoc makes
+			// the first row a header exactly when the table opens with a rule AND the first
+			// row is followed by one. Measured against pandoc 3.1.3 -- without the rules it
+			// emits no header at all, so this is its convention rather than an invention.
+			// booktabs' toprule/midrule are accepted for the same reason.
+			if (rows.empty()) {
+				leading_rule = true;
+			} else {
+				ruled_after.back() = true;
+			}
+			continue;
+		}
+		if (tok.kind == TokenKind::CONTROL_SYMBOL && tok.text == "\\") {
+			end_row();
+			continue;
+		}
+		if (tok.kind == TokenKind::TEXT && tok.text.find('&') != std::string::npos) {
+			// `&` is an ordinary character to the tokenizer, so a cell boundary lives INSIDE
+			// a TEXT run and the run has to be cut. An ESCAPED `\&` never reaches here: it
+			// arrives as a CONTROL_SYMBOL, so a raw `&` in a TEXT token is always a
+			// separator and never content.
+			std::string seg;
+			for (char ch : tok.text) {
+				if (ch == '&') {
+					Token piece;
+					piece.kind = TokenKind::TEXT;
+					piece.text = seg;
+					cell.push_back(piece);
+					end_cell();
+					seg.clear();
+				} else {
+					seg.push_back(ch);
+				}
+			}
+			Token piece;
+			piece.kind = TokenKind::TEXT;
+			piece.text = seg;
+			cell.push_back(piece);
+			continue;
+		}
+		cell.push_back(tok);
+	}
+	end_row(); // a final row with no trailing `\\`
+
+	if (rows.empty()) {
+		return; // an empty tabular is scaffolding, matching the EPUB reader's empty table
+	}
+
+	std::vector<std::string> headers;
+	size_t first = 0;
+	if (leading_rule && !ruled_after.empty() && ruled_after[0] && rows.size() > 1) {
+		headers = rows[0];
+		first = 1;
+	}
+	std::vector<std::vector<std::string>> body(rows.begin() + (long)first, rows.end());
+
+	LatexBlock block;
+	block.element_type = DuckBlockTypes::TYPE_TABLE;
+	block.content = BuildTableJson(headers, body);
+	block.encoding = DuckBlockTypes::ENCODING_JSON;
+	block.level = depth;
+	blocks.push_back(std::move(block));
 }
 
 void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
@@ -1221,6 +1376,10 @@ namespace {
 
 //! One emitted row, already shaped like a duck_block.
 struct BlockRow {
+	//! Defaults to `text`; only `table` differs. Column 4 emitted a hardcoded constant
+	//! until spec 5.0 gave table a JSON content schema, so the one element_type needing a
+	//! different encoding was the one the emitter could not express.
+	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
 	std::string kind;
 	std::string element_type;
 	std::string content;
@@ -1261,6 +1420,9 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 		row.kind = DuckBlockTypes::KIND_BLOCK;
 		row.element_type = block.element_type;
 		row.content = block.content;
+		if (!block.encoding.empty()) {
+			row.encoding = block.encoding;
+		}
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			// SEMANTIC RANK, not structural depth. A top-level \subsection is level 1 and
@@ -1359,7 +1521,7 @@ void LatexReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &outp
 		// lives in structured inline children.
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value(DuckBlockTypes::ENCODING_TEXT));
+		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 

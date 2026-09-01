@@ -45,6 +45,9 @@ struct LatexBlock {
 	std::string content;      //!< empty when a container, or when inlines are populated
 	std::string list_type;    //!< list only: DuckBlockTypes::LIST_TYPE_* value
 	std::string role;         //!< duck_block role vocabulary: term / definition on an item
+	//! `table` only: 'json'. Spec 5.0 makes table the one element_type whose content is a
+	//! JSON document rather than text. Empty means the default, `text`.
+	std::string encoding;
 	std::string list_start, number_style, number_delim; //!< ordered lists, always set
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
 	int level = 1;            //!< structural depth; never 0, never NULL on emission

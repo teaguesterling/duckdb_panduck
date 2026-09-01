@@ -1,3 +1,4 @@
+#include "block_json.hpp"
 #include "epub_reader.hpp"
 
 #include "duck_block_types.hpp"
@@ -400,34 +401,6 @@ struct DocContext {
 	std::string base_dir;
 };
 
-//! Minimal JSON string escaping. `table` is the ONLY element_type whose content is JSON
-//! (spec 5.0), so this is the only place in the reader that needs it -- pulling in a JSON
-//! library for one schema of two string arrays would be a dependency per element type.
-std::string JsonEscape(const std::string &in) {
-	std::string out;
-	out.reserve(in.size() + 8);
-	for (unsigned char c : in) {
-		switch (c) {
-		case '"':  out += "\\\""; break;
-		case '\\': out += "\\\\"; break;
-		case '\n': out += "\\n"; break;
-		case '\r': out += "\\r"; break;
-		case '\t': out += "\\t"; break;
-		default:
-			if (c < 0x20) {
-				// A control character is not representable raw in JSON. \u escaping keeps
-				// the document readable rather than emitting bytes a parser rejects.
-				char buf[7];
-				snprintf(buf, sizeof(buf), "\\u%04x", c);
-				out += buf;
-			} else {
-				out += static_cast<char>(c);
-			}
-		}
-	}
-	return out;
-}
-
 //! A cell's text, through the same run collection every other block uses -- so entities,
 //! nested formatting and whitespace behave identically to a paragraph's. The native table
 //! projection is TEXT ONLY by design: it is the renderable form, and a cell's inline tree
@@ -680,30 +653,22 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				first_body = 1;
 			}
 
-			std::string json = "{\"headers\":[";
-			for (size_t h = 0; h < headers.size(); h++) {
-				json += (h ? ",\"" : "\"") + JsonEscape(headers[h]) + "\"";
-			}
-			json += "],\"rows\":[";
-			bool any_row = false;
+			std::vector<std::vector<std::string>> body;
 			for (size_t r = first_body; r < rows.size(); r++) {
-				std::string cells;
-				bool any_cell = false;
+				std::vector<std::string> cells;
 				for (auto cell : rows[r].children()) {
 					std::string ct = cell.name();
-					if (ct != "th" && ct != "td") {
-						continue;
+					if (ct == "th" || ct == "td") {
+						cells.push_back(CellText(cell, ctx));
 					}
-					cells += (any_cell ? ",\"" : "\"") + JsonEscape(CellText(cell, ctx)) + "\"";
-					any_cell = true;
 				}
-				if (!any_cell) {
+				if (cells.empty()) {
 					continue; // a <tr> with no cells contributes no row rather than an empty one
 				}
-				json += (any_row ? ",[" : "[") + cells + "]";
-				any_row = true;
+				body.push_back(std::move(cells));
 			}
-			json += "]}";
+			bool any_row = !body.empty();
+			std::string json = BuildTableJson(headers, body);
 
 			if (!headers.empty() || any_row) {
 				// An empty table emits nothing, matching the empty-div rule above: a table

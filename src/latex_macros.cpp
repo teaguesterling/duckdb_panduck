@@ -116,8 +116,14 @@ const MacroEntry ENVIRONMENTS[] = {
     // could read. Spec 5.0 settled it -- a definition list is a LIST KIND, `deflist` is
     // deprecated -- so the deferral is discharged on its own stated condition.
     {"description", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, DuckBlockTypes::LIST_TYPE_DEFINITION},
-    // Dropped whole: descending yields mangled cell and coordinate text as prose.
-    {"tabular", Disposition::DROPPED, nullptr, 0, -1, nullptr},
+    // `tabular` WAS DROPPED WHOLE -- descending yielded mangled cell text as prose, so the
+    // reader discarded the environment entirely. That lost the TEXT, not merely the shape,
+    // which by this reader's own rule is the worse of the two. It was the right trade only
+    // while duck_block had no table to map onto; spec 5.0's native {headers, rows} schema
+    // is that map, and EmitTabular walks the cells rather than descending into them.
+    {"tabular", Disposition::SEMANTIC, DuckBlockTypes::TYPE_TABLE, 0, -1, nullptr},
+    // tikzpicture stays dropped: its body is coordinates, not prose, and there is no
+    // element_type whose meaning it would carry.
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     // DISPLAY MATH ENVIRONMENTS ARE DROPPED, AND `\[..\]` IS NOT. The asymmetry is
     // intended, not pending: `\[..\]` has one formula with a body the tokenizer can cut

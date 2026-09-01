@@ -263,7 +263,9 @@ WHERE content LIKE '%tightlist%';
 # THE ASYMMETRY FOR UNKNOWN INPUT. An unknown MACRO is dropped with its arguments, because
 # most unrecognised macros are presentational and descending would flood the output. An
 # unknown ENVIRONMENT is descended into, because most still wrap prose. `tabular` is the
-# documented exception: descending yields mangled cell text as sentences.
+# documented exception: descending yields mangled cell text as sentences, so it is WALKED
+# rather than descended -- since spec 5.0 it emits a native table instead of being dropped
+# whole, which is why a `table` row appears below beside the paragraph.
 #
 # THE ASYMMETRY STOPS AT THE DESCENT. Its run is a `paragraph`, the same as a KNOWN
 # transparent environment's, because the same bytes must not read differently for being
@@ -276,6 +278,7 @@ SELECT element_type, content FROM read_latex_blocks_string(
 WHERE kind = 'block' ORDER BY element_order;
 ----
 paragraph	kept
+table	{"headers":[],"rows":[["a","b"]]}
 
 # ...and the KNOWN transparent half reads the same, which is the point.
 query II
@@ -488,9 +491,21 @@ SELECT element_type, content, level FROM read_latex_blocks_string(
 list	NULL	1
 list_item	one	2
 
-# ...and the same for a DROPPED environment, which skips to its own \end rather than
-# parsing: `\begin{tabular}` with no `\end{tabular}` must not eat the rest of the document
-# silently past the point the document ends.
+# ...and the same for `tabular`, which WALKS its cells rather than descending into them:
+# `\begin{tabular}` with no `\end{tabular}` must not eat the rest of the document silently
+# past the point the document ends.
+#
+# THIS ASSERTION CAUGHT A REAL RUNAWAY and only because the file got far enough to run it.
+# When tabular stopped being DROPPED it stopped inheriting ScanToEnd's boundary handling,
+# and the hand-written walker ran to end of input:
+#
+#     \begin{tabular}{ll}a\end{document} after this
+#       ->  {"rows":[["adocument after this"]]}     the prose swallowed into a cell
+#
+# A NEW SCANNER NEEDS THE BOUNDARY REASONING AGAIN FROM SCRATCH. The old path had the
+# guarantee for free, so replacing it silently gave the guarantee back -- and an earlier
+# failure in this same file had been masking this test, because sqllogictest stops at the
+# first failure and never reached it.
 query I
 SELECT count(*) FROM read_latex_blocks_string(
   '\begin{document}\begin{tabular}{ll}a\end{document} after this')
@@ -946,3 +961,57 @@ block	plain	NULL	NULL
 inline	text	[	NULL
 inline	bold	Other	NULL
 inline	text	] Second.	NULL
+
+
+# ---------------------------------------------------------------------------
+# TABULAR -> A SPEC 5.0 NATIVE TABLE. `tabular` was DROPPED whole, which lost the TEXT and
+# not merely the shape -- by this reader's own rule the worse of the two, and the right
+# trade only while duck_block had no table to map onto.
+#
+# THE HEADER RULE IS PANDOC'S, MEASURED not invented. LaTeX has no <thead>; pandoc 3.1.3
+# makes the first row a header exactly when the table opens with a rule AND that row is
+# followed by one. With no rules it emits no header at all, so both spellings below are
+# real cases rather than one being a degenerate form of the other.
+query I
+SELECT content FROM read_latex_blocks_string(
+  '\begin{tabular}{|l|r|}\hline H1 & H2 \\ \hline a & b \\ \hline\end{tabular}');
+----
+{"headers":["H1","H2"],"rows":[["a","b"]]}
+
+# No rules: no header. Every row is a body row.
+query I
+SELECT content FROM read_latex_blocks_string('\begin{tabular}{ll}a & b \\ c & d \\\end{tabular}');
+----
+{"headers":[],"rows":[["a","b"],["c","d"]]}
+
+# booktabs spells the same rules differently and must mean the same thing.
+query I
+SELECT content FROM read_latex_blocks_string(
+  '\begin{tabular}{ll}\toprule H1 & H2 \\ \midrule x & y \\ \bottomrule\end{tabular}');
+----
+{"headers":["H1","H2"],"rows":[["x","y"]]}
+
+# A FORMATTED CELL RESOLVES, AND AN ESCAPED AMPERSAND IS CONTENT. `&` is an ordinary
+# character to the tokenizer so a cell boundary lives INSIDE a text run, but `\&` arrives
+# as a control symbol and can never be mistaken for a separator. Both halves in one row
+# because a reader that split on the raw byte would pass the first and fail the second.
+query I
+SELECT content FROM read_latex_blocks_string('\begin{tabular}{ll}\textbf{A} & B\&C \\\end{tabular}');
+----
+{"headers":[],"rows":[["A","B&C"]]}
+
+# An empty tabular emits NOTHING, matching the EPUB reader's empty table: a row of
+# {"headers":[],"rows":[]} asserts a table was there while carrying nothing usable.
+query I
+SELECT count(*) FROM read_latex_blocks_string('\begin{tabular}{ll}\end{tabular}');
+----
+0
+
+# `table` is the one element_type whose content is JSON, so it is the one whose encoding
+# is not 'text'. Asserted as an exception rather than by relaxing the check, so a second
+# element_type acquiring a non-text encoding still fails.
+query II
+SELECT element_type, encoding FROM read_latex_blocks_string(
+  '\begin{tabular}{ll}a & b \\\end{tabular}') WHERE kind = 'block';
+----
+table	json

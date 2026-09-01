@@ -149,11 +149,40 @@ def read_upstream_git(repo, ref):
 
 
 def _get(url, timeout):
+    req = urllib.request.Request(url)
+    # CI hits the API rate limit unauthenticated; a token raises it and is the only
+    # thing standing between a shared runner and the unverified fallback path.
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and "api.github.com" in url:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError, TimeoutError):
         return None
+
+
+def verdict(breaking, added, verified):
+    """Pure decision: (exit_code, headline, detail). Separated from I/O so the
+    self-test can pin it -- notably that an UNVERIFIED read never reports OK.
+
+    "No drift seen" from a copy you could not date is not a clean bill of health.
+    Saying OK there is the same false negative the check exists to prevent, which is
+    how the stale-cache bug survived its first hour.
+    """
+    if breaking:
+        return 1, "FAILED", ("vocabulary drift is breaking. Re-sync the copy and "
+                             "update the references.")
+    if not verified:
+        return 0, "UNVERIFIED", (
+            "compared against a branch url that may be served from a stale cache.\n"
+            "         No difference was seen, but the copy was NOT dated -- this is "
+            "not a clean\n         bill of health. Re-run with the API reachable, or "
+            "--upstream <clone>.")
+    if added:
+        return 0, "OK with news", ("upstream added vocabulary. Re-sync and review "
+                                   "whether panduck should handle it.")
+    return 0, "OK", ""
 
 
 def resolve_main_sha(timeout):
@@ -177,12 +206,14 @@ def read_upstream_https(timeout):
     if sha:
         text = _get(UPSTREAM_RAW.format(ref=sha), timeout)
         if text:
-            return text, f"main @ {sha[:7]}"
-        return None, "resolved main but could not fetch the header at that sha"
+            return text, f"main @ {sha[:7]}", True
+        return None, "resolved main but could not fetch the header at that sha", False
     text = _get(UPSTREAM_RAW.format(ref="main"), timeout)
     if text:
-        return text, "main (BRANCH URL -- may be cached/stale, sha unresolved)"
-    return None, "upstream unreachable"
+        # Reachable but UNDATED. Deliberately flagged unverified: this path once
+        # returned a header two spec versions behind while reporting no drift.
+        return text, "main (BRANCH URL -- may be cached/stale, sha unresolved)", False
+    return None, "upstream unreachable", False
 
 
 def branched_on(root):
@@ -204,8 +235,8 @@ def branched_on(root):
     return named, literal
 
 
-def report(local, upstream, root, show_gaps=True):
-    """Compare two constant maps. Returns (exit_code, had_news)."""
+def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
+    """Compare two constant maps. Returns (exit_code, headline)."""
     removed = sorted(set(local) - set(upstream))
     added = sorted(set(upstream) - set(local))
     changed = sorted(k for k in set(local) & set(upstream) if local[k] != upstream[k])
@@ -269,16 +300,12 @@ def report(local, upstream, root, show_gaps=True):
             print("       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason.")
 
     print()
-    if breaking:
-        print("FAILED: vocabulary drift is breaking. Re-sync the copy and update "
-              "the references.")
-        return 1, False
-    if added:
-        print("OK with news: upstream added vocabulary. Re-sync and review whether "
-              "panduck should handle it.")
-        return 0, True
-    print("OK")
-    return 0, False
+    code, headline, detail = verdict(breaking, bool(added), verified)
+    print(f"{headline}: {detail}" if detail else headline)
+    if not verified and strict:
+        print("       --strict: refusing to pass on an undated comparison.")
+        code = 1
+    return code, headline
 
 
 def test_count_blindness():
@@ -313,12 +340,33 @@ def test_count_blindness():
     if parse_constants(cosmetic) != a:
         failures.append("cosmetic churn changed the parsed vocabulary")
 
+    # Field offsets are not vocabulary. KIND_IDX is a struct index, and reporting it
+    # as an unhandled type is the false positive that trains people to ignore GAPS.
+    offsets = parse_constants('static constexpr uint64_t KIND_IDX = 0;\n')
+    if not all(v.isdigit() for v in offsets.values()):
+        failures.append("numeric field offsets are not distinguishable from vocabulary")
+
+    # WHAT THE CHECK READS, not how it classifies. Both false negatives found in this
+    # checker's first day were about its input -- a stale cached header, and a gap
+    # masked by an incidental reference -- and neither would have been caught by the
+    # classification tests above. An undated read must never report OK: "no drift
+    # seen" from a copy you could not date is not a clean bill of health.
+    if verdict(False, False, verified=False)[1] == "OK":
+        failures.append("an UNVERIFIED read reported OK")
+    if verdict(False, True, verified=False)[1] != "UNVERIFIED":
+        failures.append("an UNVERIFIED read with additions did not report UNVERIFIED")
+    if verdict(True, False, verified=False)[0] != 1:
+        failures.append("real drift stopped failing when the read was unverified")
+    if verdict(False, False, verified=True)[1] != "OK":
+        failures.append("a verified clean read did not report OK")
+
     for f in failures:
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
-    print("self-test OK: rename, value change and cosmetic churn all classified "
-          "correctly with the count held constant")
+    print("self-test OK: rename, value change and cosmetic churn classified correctly "
+          "with the count held constant;")
+    print("              field offsets excluded; an undated read never reports OK")
     return 0
 
 
@@ -357,8 +405,9 @@ def main():
                            check=False)
         text = read_upstream_git(args.upstream, args.ref)
         source = f"{args.upstream}@{args.ref}"
+        verified = True
     else:
-        text, ref_label = read_upstream_https(args.timeout)
+        text, ref_label, verified = read_upstream_https(args.timeout)
         source = f"{UPSTREAM_REPO} {ref_label}"
         if text is None:
             # Skipping loudly beats failing a build over a flaky network, but
@@ -384,7 +433,7 @@ def main():
     print("         (counts are context, not the assertion -- a rename leaves them equal)")
     print()
 
-    code, _ = report(local, upstream, root)
+    code, _ = report(local, upstream, root, verified=verified, strict=args.strict)
     return code
 
 

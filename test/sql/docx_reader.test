@@ -129,3 +129,22 @@ statement error
 SELECT * FROM read_docx_blocks('test/fixtures/does_not_exist.docx');
 ----
 not a readable ZIP archive
+
+# ---------------------------------------------------------------------------
+# EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1, children are parent+1, and an
+# INLINE IS A CHILD OF ITS BLOCK rather than a separate scale -- so a run inside a
+# top-level paragraph is 2, not 1.
+#
+# One rule, no per-type exceptions, and no NULL. The two-scale reading it replaces is what
+# let a container and its own child land at the same effective depth, because a NULL block
+# and a level-1 inline both resolved to 1; that collision is structurally impossible when
+# there is no NULL to resolve. `level` is structural nesting depth and has nothing to do
+# with a heading's semantic level, which lives in attributes['heading_level'].
+query III
+SELECT element_type, content, level FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+WHERE element_order < 4 ORDER BY element_order;
+----
+heading	Heading One	1
+paragraph	NULL	1
+text	A paragraph with 	2
+bold	bold	2

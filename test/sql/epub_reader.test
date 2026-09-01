@@ -29,15 +29,66 @@ Heading Two	2
 
 # EPUB is the first format panduck models structurally: XHTML says <ul><li> and
 # <blockquote> outright, where RTF, DOCX and ODT only had paragraphs wearing hats.
+#
+# NOT ONE OF THESE CONTAINERS CARRIES CONTENT. Under duck_block spec 2.0 a container owns
+# its text through a child rather than holding it, so every row here is NULL by rule and
+# the levels below are what say how they nest.
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/pandoc.epub')
-WHERE element_type IN ('list_item', 'blockquote', 'div') ORDER BY element_order;
+WHERE element_type IN ('list', 'list_item', 'blockquote', 'div') ORDER BY element_order;
 ----
 div	NULL
 div	NULL
-list_item	bullet one
-list_item	bullet two
+list	NULL
+list_item	NULL
+list_item	NULL
 blockquote	NULL
+
+# ---------------------------------------------------------------------------
+# THE DEPTHS ARE THE DOCUMENT'S OWN, not a flattening. pandoc nests its sections to mirror
+# the heading hierarchy -- <section class="level1"> wrapping <section class="level2"> --
+# so the list and the quote genuinely sit three deep, and reading the file confirms it
+# rather than the reader inventing it:
+#
+#   section level1   -> div        1
+#     h1             -> heading    2
+#     p              -> paragraph  2
+#     section level2 -> div        2
+#       h2           -> heading    3
+#       ul           -> list       3
+#       blockquote   -> blockquote 3
+#
+# Asserting absolute depths rather than "one deeper than its parent" is deliberate: a
+# relative check passes just as happily when EVERY level is wrong by the same amount.
+query III
+SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE kind = 'block' AND element_order <= 2 ORDER BY element_order;
+----
+div	NULL	1
+heading	Heading One	2
+paragraph	NULL	2
+
+# ---------------------------------------------------------------------------
+# CONTAINERS OWN THEIR CHILDREN BY LEVEL -- duck_block spec 2.0. A blockquote carries no
+# content of its own; its text lives in a paragraph one level deeper, and the container
+# ends at the first element back at its own level.
+#
+# Emitting both at NULL is not a cosmetic difference. `level` IS the containment
+# mechanism, so a consumer has nothing else to read: duckdb_webbed's writer resolves a
+# NULL level to depth 1, which puts the blockquote and its paragraph at the SAME depth,
+# and its close-first rule then pops the quote before the paragraph renders. The quoted
+# text lands OUTSIDE the blockquote as a sibling.
+#
+# That failure is invisible to inspection, which is why it survived: on a rendered page
+# the quoted text still sits in the right place and reads correctly. Only the structure
+# is wrong. Asserting the levels here is the only thing that catches it.
+query III
+SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type = 'blockquote' OR content = 'A block quote.'
+ORDER BY element_order;
+----
+blockquote	NULL	3
+paragraph	A block quote.	4
 
 # ---------------------------------------------------------------------------
 # LIBREOFFICE'S EPUB EXPORT EMITS NO SEMANTIC MARKUP AT ALL. Not one <h1>, <ul> or
@@ -169,6 +220,13 @@ paragraph	Chapter one cannot reach me.
 # ---------------------------------------------------------------------------
 # <li>text</li> and <li><p>text</p></li> mean the same thing and are both legal, so the
 # item's text is read wherever the writer put it.
+#
+# Under spec 2.0 they now produce BYTE-IDENTICAL output, which is a stronger statement of
+# that than the reader could make before. The item is a container either way, so the tight
+# spelling grows the paragraph the loose one wrote explicitly, and the two forms stop
+# being distinguishable downstream. Previously the tight form carried its text on the
+# list_item and the loose form did not, so "mean the same thing" was true of the document
+# and false of the blocks.
 # ---------------------------------------------------------------------------
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
@@ -177,7 +235,8 @@ WHERE element_order BETWEEN
   AND (SELECT max(element_order) FROM read_epub_blocks('test/fixtures/spine_order.epub') WHERE element_type = 'blockquote')
 ORDER BY element_order;
 ----
-list_item	tight item
+list_item	NULL
+paragraph	tight item
 list_item	NULL
 paragraph	loose item
 blockquote	NULL
@@ -263,3 +322,26 @@ statement error
 SELECT * FROM read_epub_blocks('test/fixtures/pandoc_pstyle.docx');
 ----
 has no META-INF/container.xml
+
+# ---------------------------------------------------------------------------
+# A LIST IS A CONTAINER AND SO IS EACH ITEM -- duck_block spec 2.0. <ul> becomes a `list`
+# carrying attributes['list_type'], each <li> is a `list_item` that owns no content, and
+# the item's words live in a `paragraph` one level deeper again.
+#
+# Before this, panduck emitted bare list_items carrying their text with NO list container
+# at all: <ul> fell through the walker's unknown-element branch and simply recursed, so
+# the grouping was lost and nothing recorded whether the list was bulleted or ordered. A
+# consumer could not tell two adjacent lists from one, and duckdb_webbed's writer -- which
+# renders containment from `level` -- had nothing to build a <ul> out of.
+query IIII
+SELECT element_type, content, level, attributes['list_type']
+FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type IN ('list', 'list_item') OR content LIKE 'bullet%'
+ORDER BY element_order;
+----
+list	NULL	3	bullet
+list_item	NULL	4	NULL
+paragraph	bullet one	5	NULL
+list_item	NULL	4	NULL
+paragraph	bullet two	5	NULL
+

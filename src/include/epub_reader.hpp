@@ -47,6 +47,17 @@ struct EpubBlock {
 	std::string content;      //!< flattened text; empty when inlines are populated
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
 	bool container = false;   //!< true for blocks whose text lives in the blocks that follow
+	//! Structural nesting depth, NOT the heading level. 0 means NULL -- a block at the
+	//! top of the document, owned by no container. `level` IS duck_block's containment
+	//! mechanism: a container's children follow it at level+1 and the container ends at
+	//! the first element back at its own level, so a consumer has nothing else to read.
+	int level = 0;
+	//! 'bullet' or 'ordered' for a `list`, empty otherwise. Ordered lists additionally
+	//! carry start/number_style/number_delim -- emitted always, even at their defaults,
+	//! because that is what duck_block_utils' Pandoc reader does and matching the
+	//! stricter producer keeps one shape rather than two.
+	std::string list_type;
+	std::string list_start, number_style, number_delim;
 	std::vector<EpubInline> inlines;
 };
 

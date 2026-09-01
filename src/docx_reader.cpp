@@ -275,6 +275,12 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 		if (block.heading_level > 0) {
 			row.attributes["heading_level"] = std::to_string(block.heading_level);
 		}
+		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
+		// of its block, so it is one deeper. This reader emits no containers, so every
+		// block sits at 1 and every inline at 2.
+		const int32_t block_level = 1;
+		row.has_level = true;
+		row.level = block_level;
 		result->rows.push_back(std::move(row));
 
 		for (auto &inl : block.inlines) {
@@ -283,7 +289,7 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 			child.element_type = inl.element_type;
 			child.content = inl.content;
 			child.has_level = true;
-			child.level = 1;
+			child.level = block_level + 1;
 			child.element_order = order++;
 			result->rows.push_back(std::move(child));
 		}

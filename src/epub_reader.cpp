@@ -379,7 +379,7 @@ struct DocContext {
 };
 
 void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int heading_level, const DocContext &ctx,
-               std::vector<EpubBlock> &out) {
+               std::vector<EpubBlock> &out, int depth) {
 	std::vector<Run> runs;
 	CollectRuns(node, RunFormat(), std::string(), ctx.rules, ctx.base_dir, runs);
 
@@ -398,6 +398,7 @@ void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int 
 	EpubBlock block;
 	block.element_type = element_type;
 	block.heading_level = heading_level;
+	block.level = depth;
 	// Headings always flatten -- see the RTF, DOCX and ODT readers for why.
 	if (!any_format || heading_level > 0) {
 		block.content = Trim(all);
@@ -416,7 +417,7 @@ void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int 
 	out.push_back(std::move(block));
 }
 
-void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<EpubBlock> &out) {
+void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<EpubBlock> &out, int depth) {
 	for (auto child : node.children()) {
 		if (child.type() == pugi::node_pcdata || child.type() == pugi::node_cdata) {
 			// Bare text directly inside a container is rare but legal, and dropping it
@@ -426,6 +427,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			if (!text.empty()) {
 				EpubBlock block;
 				block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+				block.level = depth;
 				block.content = text;
 				out.push_back(std::move(block));
 			}
@@ -440,15 +442,17 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 		}
 
 		if (tag.size() == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6') {
-			EmitBlock(child, DuckBlockTypes::TYPE_HEADING, tag[1] - '0', ctx, out);
+			EmitBlock(child, DuckBlockTypes::TYPE_HEADING, tag[1] - '0', ctx, out, depth);
 		} else if (tag == "hr") {
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_HR;
+				block.level = depth;
 			block.container = true;
 			out.push_back(std::move(block));
 		} else if (tag == "pre") {
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_CODE;
+				block.level = depth;
 			// A <pre> means its whitespace is the content, so it is taken raw rather than
 			// through the run collector, which folds runs of spaces.
 			std::string text = child.text().get();
@@ -457,14 +461,33 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			}
 			block.content = text;
 			out.push_back(std::move(block));
+		} else if (tag == "ul" || tag == "ol" || tag == "dl") {
+			// A LIST IS A CONTAINER. Previously these fell through to the
+			// unknown-element branch, which recursed and dropped the grouping: the
+			// <li>s came out as bare list_items with nothing saying they belonged
+			// together, or whether they were bulleted or numbered.
+			EpubBlock block;
+			block.element_type = DuckBlockTypes::TYPE_LIST;
+			block.container = true;
+			block.level = depth;
+			block.list_type = (tag == "ol") ? "ordered" : "bullet";
+			if (tag == "ol") {
+				std::string start = child.attribute("start").value();
+				block.list_start = start.empty() ? "1" : start;
+				block.number_style = "Decimal";
+				block.number_delim = "Period";
+			}
+			out.push_back(std::move(block));
+			WalkBlocks(child, ctx, out, depth + 1);
 		} else if (tag == "blockquote" || tag == "div" || tag == "section") {
 			bool structural = tag != "blockquote";
 			EpubBlock block;
 			block.element_type = tag == "blockquote" ? DuckBlockTypes::TYPE_BLOCKQUOTE : DuckBlockTypes::TYPE_DIV;
 			block.container = true;
+			block.level = depth;
 			auto before = out.size();
 			out.push_back(std::move(block));
-			WalkBlocks(child, ctx, out);
+			WalkBlocks(child, ctx, out, depth + 1);
 			if (structural && out.size() == before + 1) {
 				// A div or section that turned out to contain nothing is layout
 				// scaffolding, not structure -- pandoc's own EPUB writer emits an empty
@@ -482,15 +505,25 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				EpubBlock block;
 				block.element_type = type;
 				block.container = true;
+				block.level = depth;
 				out.push_back(std::move(block));
-				WalkBlocks(child, ctx, out);
+				WalkBlocks(child, ctx, out, depth + 1);
+			} else if (type == DuckBlockTypes::TYPE_LIST_ITEM) {
+				// <li>text</li>: the item owns no content of its own under spec 2.0, so
+				// its words become a paragraph child rather than sitting on the item.
+				EpubBlock item;
+				item.element_type = type;
+				item.container = true;
+				item.level = depth;
+				out.push_back(std::move(item));
+				EmitBlock(child, DuckBlockTypes::TYPE_PARAGRAPH, 0, ctx, out, depth + 1);
 			} else {
-				EmitBlock(child, type, 0, ctx, out);
+				EmitBlock(child, type, 0, ctx, out, depth);
 			}
 		} else {
 			// Unknown or transparent element: recurse. Never drop, for the same reason as
 			// the bare-text case above.
-			WalkBlocks(child, ctx, out);
+			WalkBlocks(child, ctx, out, depth);
 		}
 	}
 }
@@ -594,7 +627,7 @@ std::vector<EpubBlock> ParseEpubFile(const std::string &path) {
 			ParseCss(style.child_value(), ctx.rules);
 		}
 
-		WalkBlocks(html.child("body"), ctx, blocks);
+		WalkBlocks(html.child("body"), ctx, blocks, 1);
 	}
 	return blocks;
 }
@@ -641,6 +674,18 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.list_type.empty()) {
+			row.attributes["list_type"] = block.list_type;
+			if (!block.list_start.empty()) {
+				row.attributes["start"] = block.list_start;
+				row.attributes["number_style"] = block.number_style;
+				row.attributes["number_delim"] = block.number_delim;
+			}
+		}
+		// Every element carries a structural level; an inline is a CHILD of its block.
+		const int32_t block_level = block.level > 0 ? block.level : 1;
+		row.has_level = true;
+		row.level = block_level;
 		result->rows.push_back(std::move(row));
 
 		for (auto &inl : block.inlines) {
@@ -649,7 +694,7 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			child.element_type = inl.element_type;
 			child.content = inl.content;
 			child.has_level = true;
-			child.level = 1;
+			child.level = block_level + 1;
 			child.element_order = order++;
 			if (!inl.href.empty()) {
 				child.attributes["href"] = inl.href;

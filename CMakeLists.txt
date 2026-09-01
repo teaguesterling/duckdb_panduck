@@ -33,6 +33,7 @@ set(EXTENSION_SOURCES
     src/docx_reader.cpp
     src/panduck_extension.cpp
     src/epub_reader.cpp
+    src/latex_macros.cpp
     src/latex_tokenizer.cpp
     src/odt_reader.cpp
     src/pandoc_ast_map.cpp

@@ -59,6 +59,10 @@ struct EpubBlock {
 	//! For a `section`: which kind of sectioning container the source marked, per the
 	//! duck_block role vocabulary. Empty for anything else.
 	std::string role;
+	//! `table` only: 'json', because spec 5.0 makes table the one element_type whose
+	//! content is a JSON document rather than text. Empty elsewhere, and an empty
+	//! encoding is emitted as NULL rather than as the string.
+	std::string encoding;
 	std::string list_type;
 	std::string list_start, number_style, number_delim;
 	std::vector<EpubInline> inlines;

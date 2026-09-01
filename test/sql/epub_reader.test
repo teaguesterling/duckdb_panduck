@@ -278,10 +278,18 @@ true	true
 
 # ---------------------------------------------------------------------------
 # Canonical duck_block shape, so read_panduck_doc's flat branch passes it straight through.
+#
+# `encoding` is 'text' for EVERYTHING EXCEPT `table`, which spec 5.0 makes the one
+# element_type whose content is a JSON document. The exception is spelled out rather than
+# the check being relaxed to "any declared encoding": a second element_type quietly
+# acquiring a non-text encoding is exactly what this assertion should catch, and a
+# permissive version would catch nothing.
 # ---------------------------------------------------------------------------
 query I
 SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
-WHERE kind NOT IN ('block', 'inline', 'value') OR encoding <> 'text';
+WHERE kind NOT IN ('block', 'inline', 'value')
+   OR (element_type = 'table' AND encoding <> 'json')
+   OR (element_type <> 'table' AND encoding <> 'text');
 ----
 0
 
@@ -449,20 +457,39 @@ section	section	2
 # lines up: losing structure is a gap, losing text is a bug. It was shipping the bug in
 # order to avoid a gap it had anyway.
 #
-# The cells come through as `plain` runs -- honestly wrong about shape, honestly right
-# about content. When a structural table lands upstream this becomes a real mapping; until
-# then the words are in the document rather than gone from it.
+# It was then fixed halfway: cells came through as bare `plain` runs -- honestly wrong
+# about shape, honestly right about content -- with the deferral stated as "when a
+# structural table lands upstream this becomes a real mapping". Spec 5.0 landed it, and
+# this is that mapping. Third deferral in this codebase discharged on its own written
+# condition; nothing re-reads a held decision, so all three were found by working nearby.
 #
-# Worth noting they arrive as `plain` WITHOUT a table-specific rule. A cell's text is a
-# bare block-level run, so the general rule produces it, and duck_block_utils independently
-# specified `<td>cell</td> -> plain` before this reader could emit one. A rule that lands
-# on a case nobody wrote it for is doing more work than a special case would.
-query II
-SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
-WHERE content IN ('cell one', 'cell two') ORDER BY element_order;
+#     table  content = {"headers": [...], "rows": [[...]]}  encoding = 'json'
+#
+# `table` is the ONLY element_type whose content is JSON. The cells are no longer separate
+# rows, so the `plain` runs this used to assert are gone -- asserted below, because a
+# mapping that emitted BOTH would double every cell's text into search results.
+query IIII
+SELECT element_type, level, encoding, content
+FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'table' ORDER BY element_order;
 ----
-plain	cell one
-plain	cell two
+table	2	json	{"headers":["Head A","Head B"],"rows":[["cell one","cell two"],["r2c1","r2c2"]]}
+table	2	json	{"headers":[],"rows":[["bare one","bare two"]]}
+
+# THE HEADERLESS TABLE IS THE SECOND ROW ABOVE, and it is a distinct case rather than a
+# duplicate: `headers` is an empty array, not absent and not a first data row promoted to a
+# header. A reader keyed on <thead> alone and one keyed on a leading all-<th> row behave
+# identically on the headed table and differently here.
+
+# CELL TEXT APPEARS EXACTLY ONCE. Before 5.0 these were `plain` rows; they are inside the
+# table's JSON now. Emitting both shapes would put every cell's words in the document twice
+# -- which is the defect the pre-5.0 raw Pandoc tuple caused in reverse, where cell text was
+# unsearchable while AlignDefault matched everything.
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('cell one', 'cell two', 'r2c1', 'r2c2', 'bare one', 'bare two');
+----
+0
 
 # ---------------------------------------------------------------------------
 # THE ROLE VOCABULARY IS HTML5'S SECTIONING SET, exactly and on purpose: section, article,

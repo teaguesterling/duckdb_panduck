@@ -131,7 +131,8 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <ul><li>outer<ul><li>inner</li></ul></li></ul>
 <ul><li><p>louter</p><ul><li>linner</li></ul></li></ul>
 <dl><dt>term</dt><dd>definition</dd></dl>
-<table><tr><td>cell one</td><td>cell two</td></tr></table>
+<table><thead><tr><th>Head A</th><th>Head B</th></tr></thead><tbody><tr><td>cell one</td><td>cell two</td></tr><tr><td>r2c1</td><td>r2c2</td></tr></tbody></table>
+<table><tr><td>bare one</td><td>bare two</td></tr></table>
 <article><p>art</p></article>
 <aside><p>side</p></aside>
 <nav><p>navi</p></nav>

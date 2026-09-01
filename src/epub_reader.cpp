@@ -395,6 +395,84 @@ struct DocContext {
 	std::string base_dir;
 };
 
+//! Minimal JSON string escaping. `table` is the ONLY element_type whose content is JSON
+//! (spec 5.0), so this is the only place in the reader that needs it -- pulling in a JSON
+//! library for one schema of two string arrays would be a dependency per element type.
+std::string JsonEscape(const std::string &in) {
+	std::string out;
+	out.reserve(in.size() + 8);
+	for (unsigned char c : in) {
+		switch (c) {
+		case '"':  out += "\\\""; break;
+		case '\\': out += "\\\\"; break;
+		case '\n': out += "\\n"; break;
+		case '\r': out += "\\r"; break;
+		case '\t': out += "\\t"; break;
+		default:
+			if (c < 0x20) {
+				// A control character is not representable raw in JSON. \u escaping keeps
+				// the document readable rather than emitting bytes a parser rejects.
+				char buf[7];
+				snprintf(buf, sizeof(buf), "\\u%04x", c);
+				out += buf;
+			} else {
+				out += static_cast<char>(c);
+			}
+		}
+	}
+	return out;
+}
+
+//! A cell's text, through the same run collection every other block uses -- so entities,
+//! nested formatting and whitespace behave identically to a paragraph's. The native table
+//! projection is TEXT ONLY by design: it is the renderable form, and a cell's inline tree
+//! has nowhere to live in `{"headers": [...], "rows": [[...]]}`.
+std::string CellText(const pugi::xml_node &cell, const DocContext &ctx) {
+	std::vector<Run> runs;
+	CollectRuns(cell, RunFormat(), std::string(), ctx.rules, ctx.base_dir, runs);
+	std::string all;
+	for (auto &r : runs) {
+		all += r.text;
+	}
+	return Trim(all);
+}
+
+//! True when every cell in the row is a <th>. Used only when the table has no <thead>:
+//! a leading all-<th> row is the header row, and a row with a mix is not.
+bool IsHeaderRow(const pugi::xml_node &row) {
+	bool any = false;
+	for (auto cell : row.children()) {
+		if (cell.type() != pugi::node_element) {
+			continue;
+		}
+		std::string tag = cell.name();
+		if (tag != "th" && tag != "td") {
+			continue;
+		}
+		any = true;
+		if (tag != "th") {
+			return false;
+		}
+	}
+	return any;
+}
+
+//! Collect every <tr> under a table, at any depth -- thead/tbody/tfoot are optional in
+//! HTML and real EPUBs use all the spellings.
+void CollectRows(const pugi::xml_node &node, std::vector<pugi::xml_node> &rows) {
+	for (auto child : node.children()) {
+		if (child.type() != pugi::node_element) {
+			continue;
+		}
+		std::string tag = child.name();
+		if (tag == "tr") {
+			rows.push_back(child);
+		} else if (tag == "thead" || tag == "tbody" || tag == "tfoot") {
+			CollectRows(child, rows);
+		}
+	}
+}
+
 void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int heading_level, const DocContext &ctx,
                std::vector<EpubBlock> &out, int depth, const std::string &role = std::string()) {
 	std::vector<Run> runs;
@@ -545,6 +623,98 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				// <section class="titlepage"> in every book. An empty blockquote is
 				// kept, because writing one is an authorial act rather than a wrapper.
 				out.pop_back();
+			}
+		} else if (tag == "table") {
+			// SPEC 5.0: `table` carries the NATIVE schema {"headers": [...], "rows": [[...]]}
+			// in `content`, encoding='json'. It is the only element_type whose content is
+			// JSON.
+			//
+			// This too was a HELD deferral, and its comment stated the condition: the cells
+			// came through as bare `plain` runs -- "honestly wrong about shape, honestly
+			// right about content" -- with "when a structural table lands upstream this
+			// becomes a real mapping". It landed. Before that it was worse still: <table>
+			// sat in the SKIPPED set beside <script>, discarding every cell's text, which
+			// contradicted this reader's own rule that losing structure is a gap and losing
+			// text is a bug.
+			//
+			// THE PROJECTION IS LOSSY AND panduck HAS NOWHERE TO PUT WHAT IT DROPS. colspan,
+			// rowspan, alignment and multiple bodies are flattened away. duck_block's answer
+			// is attributes['pandoc_ast'], which preserves the verbatim Pandoc tuple -- but
+			// panduck never HAS a tuple. It reads XHTML, not Pandoc JSON, so there is
+			// nothing authentic to preserve and synthesising one would put a fabricated
+			// artifact in the slot reserved for the faithful one. So the attribute is
+			// omitted and the loss is real. Documented rather than hidden.
+			std::vector<pugi::xml_node> rows;
+			CollectRows(child, rows);
+
+			std::vector<std::string> headers;
+			size_t first_body = 0;
+			auto thead = child.child("thead");
+			if (thead) {
+				std::vector<pugi::xml_node> head_rows;
+				CollectRows(thead, head_rows);
+				if (!head_rows.empty()) {
+					for (auto cell : head_rows[0].children()) {
+						std::string ct = cell.name();
+						if (ct == "th" || ct == "td") {
+							headers.push_back(CellText(cell, ctx));
+						}
+					}
+					first_body = head_rows.size();
+				}
+			} else if (!rows.empty() && IsHeaderRow(rows[0])) {
+				// No <thead>, but a leading all-<th> row means the same thing.
+				for (auto cell : rows[0].children()) {
+					std::string ct = cell.name();
+					if (ct == "th" || ct == "td") {
+						headers.push_back(CellText(cell, ctx));
+					}
+				}
+				first_body = 1;
+			}
+
+			std::string json = "{\"headers\":[";
+			for (size_t h = 0; h < headers.size(); h++) {
+				json += (h ? ",\"" : "\"") + JsonEscape(headers[h]) + "\"";
+			}
+			json += "],\"rows\":[";
+			bool any_row = false;
+			for (size_t r = first_body; r < rows.size(); r++) {
+				std::string cells;
+				bool any_cell = false;
+				for (auto cell : rows[r].children()) {
+					std::string ct = cell.name();
+					if (ct != "th" && ct != "td") {
+						continue;
+					}
+					cells += (any_cell ? ",\"" : "\"") + JsonEscape(CellText(cell, ctx)) + "\"";
+					any_cell = true;
+				}
+				if (!any_cell) {
+					continue; // a <tr> with no cells contributes no row rather than an empty one
+				}
+				json += (any_row ? ",[" : "[") + cells + "]";
+				any_row = true;
+			}
+			json += "]}";
+
+			if (!headers.empty() || any_row) {
+				// An empty table emits nothing, matching the empty-div rule above: a table
+				// with no cells is scaffolding, and a row of `{"headers":[],"rows":[]}` says
+				// a table was there while carrying nothing a consumer can use.
+				EpubBlock block;
+				block.element_type = DuckBlockTypes::TYPE_TABLE;
+				block.content = std::move(json);
+				block.encoding = DuckBlockTypes::ENCODING_JSON;
+				block.level = depth;
+				out.push_back(std::move(block));
+
+				// <caption> is a real block and has no home in the projection, so it stays a
+				// child of the table rather than being swallowed with the cells.
+				auto caption = child.child("caption");
+				if (caption) {
+					EmitBlock(caption, DuckBlockTypes::TYPE_CAPTION, 0, ctx, out, depth + 1);
+				}
 			}
 		} else if (BLOCK_LEAF.count(tag)) {
 			auto type = (tag == "li" || tag == "dt" || tag == "dd") ? DuckBlockTypes::TYPE_LIST_ITEM
@@ -701,6 +871,11 @@ namespace {
 
 struct EpubRow {
 	std::string kind, element_type, content;
+	//! Defaults to `text`, which every element except `table` uses. Column 4 emitted this
+	//! as a hardcoded constant until spec 5.0 gave `table` a JSON content schema -- so the
+	//! one element_type that needs a different encoding was the one the emitter could not
+	//! express.
+	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
 	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
@@ -733,6 +908,9 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		row.kind = DuckBlockTypes::KIND_BLOCK;
 		row.element_type = block.element_type;
 		row.content = block.content;
+		if (!block.encoding.empty()) {
+			row.encoding = block.encoding;
+		}
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
@@ -792,7 +970,7 @@ void EpubScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value(DuckBlockTypes::ENCODING_TEXT));
+		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 		state.offset++;

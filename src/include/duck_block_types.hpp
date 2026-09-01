@@ -114,18 +114,28 @@ public:
 
 	// Inline element type names
 
-	// Valid encoding values
-	static constexpr const char *ENCODING_TEXT = "text";
-	static constexpr const char *ENCODING_JSON = "json";
-	static constexpr const char *ENCODING_YAML = "yaml";
-	static constexpr const char *ENCODING_HTML = "html";
-	static constexpr const char *ENCODING_XML = "xml";
+	// ENCODING_* AND ATTR_HEADING_LEVEL ARE INHERITED, not redeclared here.
+	//
+	// They WERE declared locally, shadowing DuckBlockVocabulary's. That built clean --
+	// C++ name hiding is legal, not an error -- so every `DuckBlockTypes::ENCODING_JSON`
+	// in this repo silently resolved to the local copy while appearing to use the
+	// vendored vocabulary. All six values were byte-identical, so nothing behaved
+	// differently; the hazard was that upstream could change one and this copy would
+	// keep the old value, compile, and pass every check.
+	//
+	// It is invisible to duck_block_utils' consumer-alignment check BY CONSTRUCTION:
+	// that compares the VENDORED header against canonical, and the vendored header was
+	// always correct. The divergence would have lived in the subclass that hides it.
+	// Raised by duck_block_utils after duckdb_webbed hit the same shape.
+	//
+	// Verified byte-identical BEFORE removing rather than after -- deleting first and
+	// checking later is how a real value difference becomes an unexplained behaviour
+	// change three commits downstream.
 
 	// MIME type for frontmatter in HTML (RFC 9512 compliant)
 	static constexpr const char *FRONTMATTER_MIME_TYPE = "application/vnd.frontmatter+yaml";
 
-	// Attribute keys
-	static constexpr const char *ATTR_HEADING_LEVEL = "heading_level";
+	// Attribute keys: see the note above -- ATTR_HEADING_LEVEL is inherited.
 
 	// Helper to create an attributes MAP from a std::map
 	static Value CreateAttributesMap(const std::map<std::string, std::string> &attrs) {

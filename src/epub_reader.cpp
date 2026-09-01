@@ -552,7 +552,9 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			                                                        : DuckBlockTypes::TYPE_PARAGRAPH;
 			// spec 5.0: role distinguishes the two halves of a definition list, the same
 			// discriminator `section` uses for its seven sectioning kinds.
-			std::string item_role = (tag == "dt") ? "term" : (tag == "dd") ? "definition" : std::string();
+			std::string item_role = (tag == "dt")   ? DuckBlockTypes::ROLE_TERM
+			                        : (tag == "dd") ? DuckBlockTypes::ROLE_DEFINITION
+			                                        : std::string();
 			if (HasBlockChildren(child)) {
 				// <li><p>..</p></li>: the LOOSE form. The item is a container and its text
 				// is read by the blocks inside it -- a real `paragraph`, because the source
@@ -736,7 +738,7 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
 		if (!block.role.empty()) {
-			row.attributes["role"] = block.role;
+			row.attributes[DuckBlockTypes::ATTR_ROLE] = block.role;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, deliberately. attributes['ordered'] is the CANONICAL name --
@@ -747,7 +749,7 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			// upstream producers now do; prefer `ordered` when writing new code against
 			// this output, tolerate either when reading it.
 			row.attributes["ordered"] = block.list_type == "ordered" ? "true" : "false";
-			row.attributes["list_type"] = block.list_type;
+			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {
 				row.attributes["start"] = block.list_start;
 				row.attributes["number_style"] = block.number_style;

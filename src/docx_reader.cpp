@@ -273,7 +273,7 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 		row.content = block.content;
 		row.element_order = order++;
 		if (block.heading_level > 0) {
-			row.attributes["heading_level"] = std::to_string(block.heading_level);
+			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
 		// of its block, so it is one deeper. This reader emits no containers, so every

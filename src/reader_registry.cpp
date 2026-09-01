@@ -459,21 +459,46 @@ SELECT * FROM query(
         -- against duckdb_webbed, whose metadata blocks carried a NULL level for three major
         -- spec versions -- and for the same reason: the element a producer synthesises
         -- itself is the one no reader test covers.
+        --
+        -- THE BLOB IS KEPT VERBATIM. These parsed the file -- parse_toml(), yaml_to_json()
+        -- -- and emitted the result as JSON. Teague's ruling, now spec 6.2: a `metadata`
+        -- blob is "a verbatim blob you must not reinterpret", and parsing full YAML or
+        -- TOML in this extension violates panduck's isolation.
+        --
+        -- The dependency is the concrete cost, and it was severe: each branch called
+        -- panduck_ensure_extension() and ERRORED without it, so panduck could not read a
+        -- .toml file AT ALL unless a third-party extension was installed -- a hard
+        -- dependency acquired purely to do work the vocabulary does not want done. Now it
+        -- is read_text and nothing else.
+        --
+        -- role='document' rather than 'frontmatter': the distinction is STRUCTURAL, not
+        -- about file extension. Frontmatter PRECEDES a body; here the blob IS the whole
+        -- document and there is no body. A .yaml file read whole is `document` even though
+        -- a frontmatter block is also YAML.
+        --
+        -- encoding carries the syntax, and source_type is deliberately GONE. It was
+        -- recording 'toml', which `encoding` now says properly -- ENCODING_TOML was
+        -- declared for this case. source_type stays for what encoding cannot express, such
+        -- as `generic`'s original type name. Two fields saying one thing is how they drift
+        -- apart.
+        --
+        -- These values are string literals because this is a raw SQL macro body and the
+        -- vocabulary's C++ constants cannot be interpolated into it -- so the drift check,
+        -- which works by finding constant USAGE, is blind to them. That is the same hole
+        -- duck_block_utils just closed on its own `role` literals. The guard here is
+        -- test/sql/reader_registry.test, which asserts these against
+        -- duck_block_encoding_names() and the declared role, not against a copy.
         WHEN panduck_resolved_format(src, format) = 'toml'
-            THEN CASE WHEN panduck_ensure_extension('toml')
-                 THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
-                      'parse_toml(content)::VARCHAR AS content, 1 AS level, ' ||
-                      '''json'' AS encoding, MAP {''source_type'': ''toml''} AS attributes, ' ||
-                      '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
-                 ELSE error('panduck: toml needs the toml extension') END
+            THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
+                 'content AS content, 1 AS level, ' ||
+                 '''toml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
+                 '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
 
         WHEN panduck_resolved_format(src, format) = 'yaml'
-            THEN CASE WHEN panduck_ensure_extension('yaml')
-                 THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
-                      'yaml_to_json(content::yaml)::VARCHAR AS content, 1 AS level, ' ||
-                      '''json'' AS encoding, MAP {''source_type'': ''yaml''} AS attributes, ' ||
-                      '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
-                 ELSE error('panduck: yaml needs the yaml extension') END
+            THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
+                 'content AS content, 1 AS level, ' ||
+                 '''yaml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
+                 '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
 
         -- Anything unclaimed falls through to source code. The exclusion rule is BY
         -- CONSTRUCTION: .md is in the registry, so it can never arrive here.

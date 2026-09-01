@@ -1235,7 +1235,7 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			// under spec 4.0 and `ordered` is the legacy alias consumers written against v1
 			// still read.
 			row.attributes["ordered"] = block.list_type == "ordered" ? "true" : "false";
-			row.attributes["list_type"] = block.list_type;
+			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {
 				row.attributes["start"] = block.list_start;
 				row.attributes["number_style"] = block.number_style;

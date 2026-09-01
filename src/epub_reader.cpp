@@ -898,7 +898,7 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			// read nothing at all from a Pandoc-produced list. Emitting both is what both
 			// upstream producers now do; prefer `ordered` when writing new code against
 			// this output, tolerate either when reading it.
-			row.attributes["ordered"] =
+			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {

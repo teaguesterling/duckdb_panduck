@@ -1437,7 +1437,7 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			// BOTH SPELLINGS, matching every other panduck reader: `list_type` is canonical
 			// under spec 4.0 and `ordered` is the legacy alias consumers written against v1
 			// still read.
-			row.attributes["ordered"] =
+			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {

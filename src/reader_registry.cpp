@@ -34,6 +34,17 @@ std::string NormalizeExt(const std::string &raw) {
 //! The extension of a path, normalized. Pure string work -- no I/O, so panduck_can_read()
 //! answers for a file that does not exist.
 std::string ExtOfPath(const std::string &path) {
+	// A URL SCHEME IS AN EXTENSION FOR REGISTRY PURPOSES. `zim://wiki.zim/A/Article` names
+	// ONE ARTICLE inside an archive, and its trailing segment usually has no dot at all --
+	// so extension lookup answers NULL and the source falls through to `code`. Keying on
+	// the scheme makes the registry answer honestly for a shape that is a document.
+	//
+	// It is a DIFFERENT format from `.zim`: the archive is a corpus with no single-document
+	// reading and is refused, while an article is HTML and reads like any other. One suffix
+	// and one scheme, two answers, which is why this cannot be a single row.
+	if (path.rfind("zim://", 0) == 0) {
+		return "zim://";
+	}
 	auto slash = path.find_last_of("/\\");
 	auto base = slash == std::string::npos ? path : path.substr(slash + 1);
 	auto dot = base.find_last_of('.');
@@ -68,6 +79,8 @@ ReaderRegistry::ReaderRegistry() {
 	    // refusal. Raised by duckeye, who routes .zim to duckdb_zim directly and needs
 	    // panduck to answer honestly rather than plausibly.
 	    {".zim", "zim", "zim", "", KIND_DOC},
+	    // The SCHEME, not a suffix: one article, which is a document.
+	    {"zim://", "zim_article", "zim", "", KIND_DOC},
 	    {".json", "data", "json", "", KIND_TABLE},
 	    // Config trees: a nested key-value document. Not prose, but not rows either.
 	    {".toml", "toml", "toml", "", KIND_DOC},
@@ -518,6 +531,22 @@ SELECT * FROM query(
                  'content AS content, 1 AS level, ' ||
                  '''yaml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
                  '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
+
+        -- ONE ZIM ARTICLE IS A DOCUMENT. zim://<archive>.zim/<path> resolves through the
+        -- zim extension to the article's HTML, which then reads exactly like any other
+        -- HTML -- so this branch composes the two extensions rather than adding a reader.
+        --
+        -- The archive ends at `.zim`, which is what separates it from the article path: an
+        -- archive may itself live under directories, so splitting on the first slash would
+        -- take `wiki.zim` out of `zim://books/wiki.zim/A/Page` and leave `books`.
+        WHEN panduck_resolved_format(src, format) = 'zim_article'
+            THEN CASE WHEN panduck_ensure_extension('zim') AND panduck_ensure_extension('webbed')
+                 THEN 'SELECT ' || panduck_block_cols() ||
+                      ' FROM (SELECT unnest(html_to_duck_blocks(zim_get_content(' ||
+                      panduck_quote(substr(src, 7, position('.zim' IN src) - 3)) || ', ' ||
+                      panduck_quote(substr(src, position('.zim' IN src) + 5)) ||
+                      ')::VARCHAR)) AS b)'
+                 ELSE error('panduck: zim:// needs the zim and webbed extensions') END
 
         -- A ZIM ARCHIVE IS NOT A DOCUMENT, and this refuses it with the reason.
         --

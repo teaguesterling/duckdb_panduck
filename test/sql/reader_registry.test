@@ -75,11 +75,23 @@ WHERE reader_ext IS NULL OR reader_ext = '' OR kind NOT IN ('doc', 'table');
 ----
 0
 
-# Extensions are lowercase and dot-prefixed, matching sitting_duck's convention so the
-# two registries union without per-registry normalisation.
+# Registry keys are lowercase, and a SUFFIX is dot-prefixed -- matching sitting_duck's
+# convention so the two registries union without per-registry normalisation.
+#
+# THE KEY SPACE NOW HOLDS TWO SHAPES, which this assertion caught when the second arrived:
+# a suffix like `.epub`, and a URL SCHEME like `zim://`. A scheme is here because an
+# article path's last segment usually has no dot at all, so suffix lookup answers NULL and
+# the source falls through to `code` -- a binary archive parsed as source. Keying on the
+# scheme is what makes the registry answer honestly for a shape that IS a document.
+#
+# Both forms are still constrained, rather than the check being relaxed to "any string":
+# a key is a dot-suffix or a scheme ending in `://`, and nothing else. A registry key that
+# is neither remains a defect.
 query I
 SELECT count(*) FROM panduck_reader_registry()
-WHERE ext <> lower(ext) OR NOT starts_with(ext, '.') OR length(ext) < 2;
+WHERE ext <> lower(ext)
+   OR NOT (starts_with(ext, '.') OR ends_with(ext, '://'))
+   OR length(ext) < 2;
 ----
 0
 
@@ -219,7 +231,7 @@ has no branch for it
 query I
 SELECT count(*) FROM panduck_reader_registry()
 WHERE kind = 'doc'
-  AND format NOT IN ('markdown', 'html', 'pdf', 'pandoc_ast', 'toml', 'yaml', 'code', 'zim')
+  AND format NOT IN ('markdown', 'html', 'pdf', 'pandoc_ast', 'toml', 'yaml', 'code', 'zim', 'zim_article')
   AND function IS NULL;
 ----
 0
@@ -397,3 +409,42 @@ query I
 SELECT panduck_resolved_format('wiki.zim', 'auto');
 ----
 zim
+
+# ---------------------------------------------------------------------------
+# ONE ZIM ARTICLE IS A DOCUMENT; THE ARCHIVE IS NOT. Same technology, two answers, which
+# is why they cannot be one registry row.
+#
+# `zim://<archive>.zim/<path>` names a single article, which resolves through the zim
+# extension to HTML and then reads like any other HTML -- so the branch composes two
+# existing extensions rather than adding a reader. The bare `.zim` file is a corpus of
+# thousands of articles and is refused with the alternative named.
+#
+# A URL SCHEME IS AN EXTENSION for registry purposes: an article path's last segment
+# usually has no dot at all, so suffix lookup answers NULL and the source would fall
+# through to `code` -- a binary archive parsed as source, which is the silently wrong
+# answer this pair exists to prevent.
+query II
+SELECT ext, format FROM panduck_reader_registry() WHERE ext LIKE '%zim%' ORDER BY ext;
+----
+.zim	zim
+zim://	zim_article
+
+query II
+SELECT panduck_format_for('zim://books/wiki.zim/A/Page') AS article,
+       panduck_format_for('wiki.zim') AS archive;
+----
+zim_article	zim
+
+# THE ARCHIVE ENDS AT `.zim`, WHICH IS WHAT SPLITS THE TWO HALVES. Splitting on the first
+# slash would take `wiki.zim` out of `zim://books/wiki.zim/A/Page` and leave `books` --
+# so the nested case is the one that discriminates, and a flat archive path alone would
+# pass for the wrong implementation.
+query III
+SELECT src,
+       substr(src, 7, position('.zim' IN src) - 3) AS archive,
+       substr(src, position('.zim' IN src) + 5)    AS article
+FROM (VALUES ('zim://wiki.zim/A/Page'),
+             ('zim://books/wiki.zim/A/Nested/Page')) t(src);
+----
+zim://wiki.zim/A/Page	wiki.zim	A/Page
+zim://books/wiki.zim/A/Nested/Page	books/wiki.zim	A/Nested/Page

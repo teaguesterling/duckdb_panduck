@@ -424,6 +424,30 @@ static void ProcessPandocBlockVal(yyjson_val *block_val, int32_t &order, vector<
 
 			if (code_val && yyjson_is_str(code_val)) {
 				content = string(yyjson_get_str(code_val), yyjson_get_len(code_val));
+				// TRAILING NEWLINES ARE TRIMMED, matching every panduck native reader.
+				//
+				// Pandoc keeps them: its own Org reader gives `print("hi")\n`, 12 bytes for
+				// an 11-byte line. panduck's org, latex, rst, ipynb and epub readers all
+				// trim -- five independently written readers reaching the same conclusion,
+				// which makes it a convention rather than an accident: a source line's
+				// TERMINATOR is not its content.
+				//
+				// Left alone, panduck answered the same question two ways depending on which
+				// path a user took -- read handwritten.org natively and get 11 bytes, read
+				// `pandoc -f org -t json` of it through here and get 12. That is the
+				// disagreement two implementations of one rule cannot detect about
+				// themselves, and it was invisible until both lived in one repo:
+				// round-trip stability cannot see it, because a consistently different
+				// answer round-trips perfectly.
+				//
+				// So this diverges from the AST it was handed, deliberately, and it is the
+				// one place the converter does. A user's answer must not depend on the route
+				// they took to it. The pandoc-faithful behaviour is a `pandoc_compat`
+				// candidate -- that is where "match the reference exactly" belongs, rather
+				// than in a silent per-path difference.
+				while (!content.empty() && (content.back() == '\n' || content.back() == '\r')) {
+					content.pop_back();
+				}
 			}
 		}
 	} else if (strcmp(pandoc_type, "BlockQuote") == 0) {

@@ -47,44 +47,57 @@ WHERE function_name IN ('pandoc_ast_to_blocks', 'read_pandoc_ast', 'duck_blocks_
 # stability cannot, because a stable wrong answer round-trips perfectly.
 #
 # handwritten.org and handwritten.org.pandoc.json are THE SAME DOCUMENT: the second is
-# `pandoc -f org -t json` of the first. Every block's text must match.
+# `pandoc -f org -t json` of the first. EVERY block's text must match, `code` included.
 query I
 SELECT count(*) FROM (
   (SELECT content FROM read_org_blocks('test/fixtures/handwritten.org')
-   WHERE kind = 'block' AND coalesce(content, '') <> '' AND element_type <> 'code')
+   WHERE kind = 'block' AND coalesce(content, '') <> '')
   EXCEPT
   (SELECT content FROM read_pandoc_blocks('test/fixtures/handwritten.org.pandoc.json')
-   WHERE kind = 'block' AND coalesce(content, '') <> '' AND element_type <> 'code')
+   WHERE kind = 'block' AND coalesce(content, '') <> '')
 );
 ----
 0
 
-# ...AND `code` IS EXCLUDED ABOVE BECAUSE THE TWO PATHS GENUINELY DISAGREE, which this
-# pins rather than hides. panduck's native readers TRIM a code block's trailing newline --
-# a source line's terminator is not its content, and every native reader does it. The
-# converter preserves pandoc's, which keeps it.
+# ...AND THE REVERSE, because EXCEPT in one direction is satisfied by the converter simply
+# producing MORE. Both directions is what makes this an equality rather than a containment.
+query I
+SELECT count(*) FROM (
+  (SELECT content FROM read_pandoc_blocks('test/fixtures/handwritten.org.pandoc.json')
+   WHERE kind = 'block' AND coalesce(content, '') <> '')
+  EXCEPT
+  (SELECT content FROM read_org_blocks('test/fixtures/handwritten.org')
+   WHERE kind = 'block' AND coalesce(content, '') <> '')
+);
+----
+0
+
+# ---------------------------------------------------------------------------
+# THE TRAILING NEWLINE, which is the disagreement this cross-check found on its first run
+# and which is now RESOLVED rather than pinned.
 #
-#     native Org reader   11 bytes   print("hi")
-#     converter path      12 bytes   print("hi")\n
+# Pandoc keeps a code block's trailing newline -- its own Org reader gives 12 bytes for an
+# 11-byte line. panduck's org, latex, rst, ipynb and epub readers ALL trim it: five
+# independently written readers reaching the same conclusion, which makes it a convention
+# rather than an accident. A source line's TERMINATOR is not its content.
 #
-# Neither is obviously wrong and they must not both be right: a user reading one document
-# two ways gets two answers. This is exactly the disagreement two implementations of one
-# rule cannot detect about themselves, and it became visible the moment both lived in one
-# repo. Raised upstream rather than settled unilaterally, since the converter is their
-# code and the trimming is panduck's convention.
-# Asserted by LENGTH and a rendered newline: the trailing byte is the whole subject here,
-# and sqllogictest cannot hold a real newline inside a value -- so a naive comparison shows
-# two identical-looking strings and fails for reasons nobody can see in the diff.
-query III
-SELECT 'converter' AS path, length(content), replace(content, chr(10), '<NL>')
+# So the converter trims too, and that is the one place it deliberately diverges from the
+# AST it was handed. Left alone, panduck answered one question two ways depending on which
+# route a user took -- and a route-dependent answer is worse than a documented divergence
+# from the reference. The pandoc-faithful behaviour is a `pandoc_compat` candidate.
+#
+# Asserted as LENGTHS: the byte that matters cannot be written inside a tab-delimited
+# value, so a naive comparison shows two identical-looking strings and fails invisibly.
+query II
+SELECT 'converter' AS path, length(content)
 FROM read_pandoc_blocks('test/fixtures/handwritten.org.pandoc.json') WHERE element_type = 'code'
 UNION ALL
-SELECT 'native org', length(content), replace(content, chr(10), '<NL>')
+SELECT 'native org', length(content)
 FROM read_org_blocks('test/fixtures/handwritten.org') WHERE element_type = 'code'
 ORDER BY 1;
 ----
-converter	12	print("hi")<NL>
-native org	11	print("hi")
+converter	11
+native org	11
 
 # ---------------------------------------------------------------------------
 # DISPATCH: reachable by format := 'pandoc', and NEVER by extension.

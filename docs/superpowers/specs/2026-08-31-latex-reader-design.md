@@ -146,29 +146,43 @@ duck_block spec regardless.
 |---|---|
 | `itemize` | `list`, `list_type=bullet` |
 | `enumerate` | `list`, `list_type=ordered` (plus `start`, `number_style`, `number_delim`) |
-| `description` | `list`, `list_type=description` |
+| `description` | **held** — see below |
 | `\item` | `list_item` |
 | `quote`, `quotation` | `blockquote` |
 | `verbatim`, `lstlisting` | `code` (raw content) |
 
-**These are containers under spec 2.0 and carry no content of their own.** As of
-`duck_block_utils` 2.0 ("one shape per element_type"), `blockquote`, `list` and
-`list_item` joined `div`/`section`/`figure`/`caption` as containers: their text lives in
-a `paragraph` child at `level + 1`, and the container ends at the first element back at
-its own level.
+**These are containers and carry no content of their own** (duck_block 4.0). Their text
+lives in a child at `level + 1`, and the container ends at the first element back at its
+own level. WHICH child depends on how the source wrote it:
 
 ```
-list          attrs list_type=bullet
+list          attrs list_type='bullet', ordered='false'
   list_item                              <- level+1, NO content
-    paragraph  "bullet one"              <- level+2, carries the words
+    plain      "bullet one"              <- level+2, a BARE run: \item text
+  list_item
+    paragraph  "para item"               <- level+2, the item held a real paragraph
 blockquote
   paragraph    "A block quote."          <- level+1
 ```
 
-Writing `list_item` with its text in `content` is the pre-2.0 shape and must not be
-emitted. This rule is scoped to **block** element_types; inline wrappers are a known and
-documented gap upstream (`duck_block_bold('y')` carries content while the Pandoc reader
-emits an empty `bold` with a `text` child), so the inline rules below are unaffected.
+`plain` is a block-level text run with **no paragraph semantics** — Pandoc's `Plain`
+constructor. A bare `\item text` is exactly that, so it yields `plain`; an item whose
+body is a genuine paragraph yields `paragraph`. The distinction is tight-versus-loose and
+it is a property of the RUN, not of whether the item has block children: an item can hold
+a nested list and still be tight. Collapsing the two loses information the source carried,
+and panduck's EPUB reader learned this the expensive way.
+
+Writing `list_item` with its text in `content` is a pre-4.0 shape and must not be emitted.
+
+**`description` is HELD.** duck_block's `list_type` values are `bullet` and `ordered`; the
+set is open and definition lists are wanted but unspecified, and `deflist` still carries an
+opaque JSON tuple. Emitting `list_type='description'` would invent a value no consumer can
+read — the same defect as panduck briefly emitting `<dl>` as a bullet list. Route it to
+`duck_block_utils` when the reader reaches it; until then a `description` environment is
+TRANSPARENT, so its text survives as blocks rather than being dropped or mislabelled.
+
+These rules are scoped to **block** element_types; inline wrappers remain a documented gap
+upstream, so the inline rules below are unaffected.
 
 **SEMANTIC — inline**
 
@@ -309,7 +323,9 @@ Targeted tests for the things that fail silently:
 | unknown macro dropped, unknown environment descended | the asymmetry inverting |
 | `tabular` dropped whole | mangled cell text as prose |
 | unbalanced braces | a throw on real-world input |
-| `list_item` has NULL content and a `paragraph` child at `level+2` | emitting the pre-2.0 shape |
+| `\item text` yields `list_item` + `plain` at `level+2`, NOT `paragraph` | collapsing tight and loose |
+| an item holding a real paragraph yields `paragraph`, and the two DIFFER | a rule keyed on "has block children", which makes them identical |
+| `description` emits no `list_type` | inventing an unspecified attribute value |
 | `blockquote` owns its `paragraph` at `level+1` | the container rule silently not applied |
 
 A third fixture is needed for math, verbatim and malformed input: the existing two are a

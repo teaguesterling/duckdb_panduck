@@ -19,7 +19,7 @@ SELECT level, title FROM doc_toc('report.docx');  -- table of contents, by path
 | | |
 |---|---|
 | [Architecture](architecture.md) | The layering, and why nothing depends upward |
-| [Readers](readers.md) | RTF, DOCX, ODT, EPUB and LaTeX, and what real writers actually emit |
+| [Readers](readers.md) | All eight formats, the Pandoc AST reader, and what real writers actually emit |
 | [Dispatch](dispatch.md) | The derived registry and runtime reader registration |
 | [The doc_ namespace](doc_namespace.md) | Path-taking sugar over `db_*` |
 | [Validation](validation.md) | How the pandoc-compatibility claim is tested |
@@ -45,7 +45,8 @@ moved down the roadmap six times as each format was promoted.
 | `read_panduck_doc(src, format := 'auto', pages := '')` | table of `duck_block` rows |
 | `read_panduck_table(src)` | table of rows and columns |
 | `panduck_read_blocks(src, …)` | `LIST(duck_block)` |
-| `read_rtf_blocks(path)`, `read_docx_blocks(path)` | one format, directly |
+| `read_rtf_blocks(path)` … `read_pandoc_blocks(path)` | one format, directly |
+| `read_latex_blocks_string(src)` and the org, rst, ipynb, pandoc forms | the same reader over a string rather than a path |
 
 **Documents by path**
 

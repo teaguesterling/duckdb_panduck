@@ -90,9 +90,18 @@ is the derived dispatch table. Adding a reader means flipping one row from `plan
 
 Dependencies come from vcpkg (`pugixml` for XML, `miniz` for ZIP containers). The
 `duck_block` vocabulary is a vendored copy of `duck_block_utils`' published header at
-`src/include/duck_block_vocabulary.hpp` — byte-for-byte, so drift against upstream is a
-one-line diff. The re-sync command is in `src/include/duck_block_types.hpp`. The
-submodules below are DuckDB itself and the build tooling; the vocabulary is not one.
+`src/include/duck_block_vocabulary.hpp`. The submodules below are DuckDB itself and the
+build tooling; the vocabulary is not one.
+
+Because the C++ constants catch a renamed type but *not* a changed value — which compiles
+clean and silently stops matching — the copy comes with a check:
+
+```sh
+make check-vocabulary   # compares against upstream by name and value
+```
+
+It skips cleanly when upstream is unreachable (`--strict` makes that a failure). See
+[Architecture](docs/architecture.md) for why the vocabulary is copied rather than pinned.
 
 ```sh
 git clone --recurse-submodules https://github.com/teaguesterling/duckdb_panduck.git

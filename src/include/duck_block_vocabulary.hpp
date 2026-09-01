@@ -4,9 +4,9 @@
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
 // Header-only and link-free ON PURPOSE. Sibling extensions (panduck, webbed,
-// duckdb_markdown, sitting_duck) are expected to consume this via a submodule
-// rather than copying it; copies drift silently, which is exactly the defect
-// this file exists to prevent.
+// duckdb_markdown, sitting_duck) consume this by VENDORING a copy -- see
+// "VENDORING THIS FILE" below for why a copy beats a submodule here, and for
+// the drift check that has to come with it.
 //
 // Nothing here has a definition in a .cpp, so including it costs no linking.
 // The type constructors and Register() live in block_types.hpp, which needs
@@ -15,32 +15,106 @@
 //
 // Changes to these names are BREAKING for every consumer. Bump SPEC_VERSION
 // and say so. Consumers should assert agreement at test time rather than
-// trusting a synced submodule:
+// trusting that their copy is current:
 //
 //     SELECT duck_block_kind_names();        -- ['block', 'inline', 'value']
 //     SELECT duck_block_type_names();        -- every element_type name
 //     SELECT duck_block_spec_version();
 //
 // See docs/duck_blocks_spec.md for what each name means.
+//
+// ---------------------------------------------------------------------------
+// VENDORING THIS FILE
+//
+// Copy it. Do NOT add duck_block_utils as a submodule: the DuckDB extension CI
+// templates check out with submodules: 'recursive' and this repo carries its
+// own duckdb submodule, so a pin drags a ~290 MB nested DuckDB clone into your
+// CI to deliver 12 KB. This file needs none of it -- <cstdint> only.
+//
+// A submodule pin is ALSO a copy. It sits at whatever sha you checked out and
+// never tracks main, so it goes stale exactly as a vendored file does -- and it
+// never complains, whereas a check does. It is additionally bounded by the
+// upstream PUSH cadence, not the commit cadence: an unpushed commit cannot be
+// pinned at all.
+//
+// So vendor, and add a drift check that actually runs. Note first WHY a check
+// is not optional: these constants protect against a RENAME, not against a
+// changed VALUE.
+//
+//     TYPE_PAGE = "page_break"   ->   TYPE_PAGE = "pagebreak"
+//
+// A rename is a compile error at every use site. That value change compiles
+// clean everywhere, and a consumer's writer silently stops matching the type.
+// Nothing in C++ catches it -- not a vendored copy, not a submodule pin. Only
+// a check does. (Found by the duckdb_markdown session, 2026-08-31.)
+//
+//   1. Record the provenance where a reader will find it -- in your copy's
+//      header comment, note the upstream sha and the SPEC_VERSION below.
+//
+//   2. Fail your build when a constant is renamed, removed, or CHANGES VALUE.
+//      Fetch upstream and compare BY NAME AND VALUE -- parse both sides, do
+//      not diff the text:
+//
+//        https://raw.githubusercontent.com/teaguesterling/
+//          duckdb_duck_block_utils/main/src/include/duck_block_vocabulary.hpp
+//
+//      A plain `diff` over this file fires on comment edits and cosmetic churn
+//      -- commit 3957f36 rewrote every idx_t to uint64_t and changed no name
+//      and no value. A check that cries wolf gets muted, and a muted check
+//      catches nothing. Silence on cosmetic change is what keeps it credible.
+//
+//      Worth reporting separately rather than as one pass/fail: DRIFT (renamed,
+//      removed, or value changed) should fail; NEW (published here, absent from
+//      your copy) and GAPS (published, but nothing in your code branches on it)
+//      should report without failing. GAPS is the arm that earns its keep -- it
+//      is what surfaced inline `generic` losing source_type in two extensions
+//      in the same week. Carry an explicit allowlist of intentional gaps, or an
+//      unexplained one and a deliberate one look identical.
+//
+//      duckdb_markdown has a working implementation of exactly this, which
+//      looks in both a vendored and a submodule location:
+//      scripts/check_duck_block_vocabulary.py (`make check-vocabulary`).
+//
+//   3. Assert the RUNTIME vocabulary too, which no file comparison can see --
+//      the installed extension may be older than any header:
+//
+//        SELECT duck_block_type_names();   -- every element_type
+//        SELECT duck_block_kind_names();   -- ['block','inline','value']
+//        SELECT duck_block_spec_version(); -- compare against SPEC_VERSION here
+//
+// (2) catches a stale copy; (3) catches a stale INSTALL. They fail differently
+// and neither subsumes the other.
+// ---------------------------------------------------------------------------
 // ============================================================================
 
-#include "duckdb/common/types.hpp"
+// <cstdint> ONLY. This header deliberately pulls in nothing from DuckDB.
+//
+// It used to include duckdb/common/types.hpp for idx_t, which is `typedef
+// uint64_t idx_t` -- so the include bought nothing but a dependency. And it was
+// an expensive one: it made this file unusable as a standalone copy, forcing
+// consumers toward a submodule -- and the DuckDB extension CI templates check
+// out with submodules: 'recursive' while this repo carries its own duckdb
+// submodule. That meant a 290 MB nested DuckDB clone in every consumer's CI to
+// deliver a 12 KB header.
+//
+// Field indices are uint64_t, which is type-identical to idx_t.
+#include <cstdint>
 
 namespace duckdb {
 
 struct DuckBlockVocabulary {
 	// Field indices for duck_block struct
-	static constexpr idx_t KIND_IDX = 0;
-	static constexpr idx_t ELEMENT_TYPE_IDX = 1;
-	static constexpr idx_t CONTENT_IDX = 2;
-	static constexpr idx_t LEVEL_IDX = 3;
-	static constexpr idx_t ENCODING_IDX = 4;
-	static constexpr idx_t ATTRIBUTES_IDX = 5;
-	static constexpr idx_t ELEMENT_ORDER_IDX = 6;
+	static constexpr uint64_t KIND_IDX = 0;
+	static constexpr uint64_t ELEMENT_TYPE_IDX = 1;
+	static constexpr uint64_t CONTENT_IDX = 2;
+	static constexpr uint64_t LEVEL_IDX = 3;
+	static constexpr uint64_t ENCODING_IDX = 4;
+	static constexpr uint64_t ATTRIBUTES_IDX = 5;
+	static constexpr uint64_t ELEMENT_ORDER_IDX = 6;
 
 	// Additional field indices for duck_block_ext
-	static constexpr idx_t SOURCE_FORMAT_IDX = 7;
-	static constexpr idx_t FILE_PATH_IDX = 8;
+	static constexpr uint64_t SOURCE_FORMAT_IDX = 7;
+	static constexpr uint64_t FILE_PATH_IDX = 8;
 
 	// Kind values
 	static constexpr const char *KIND_BLOCK = "block";

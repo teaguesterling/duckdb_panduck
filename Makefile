@@ -6,6 +6,15 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
+# Check the vendored duck_block vocabulary against upstream, by NAME AND VALUE. A
+# vendored copy and a submodule pin are both copies, and neither notices when upstream
+# moves; more importantly, the C++ constants catch a rename but NOT a changed value,
+# which compiles clean and silently stops matching. Skips cleanly (exit 0) when upstream
+# is unreachable; pass --strict to make that a failure instead.
+.PHONY: check-vocabulary
+check-vocabulary:
+	python3 scripts/check_duck_block_vocabulary.py
+
 # Verify panduck's Pandoc AST mapping against a real pandoc binary. Skips cleanly (exit
 # 0) when pandoc is not installed, so it is safe to chain onto other targets.
 .PHONY: test_pandoc_alignment

@@ -13,15 +13,27 @@
 // a submodule -- avoiding a divergent fork of real logic -- does not apply.
 //
 // VENDORED IS NOT A LICENCE TO EDIT. src/include/duck_block_vocabulary.hpp is a
-// byte-for-byte copy, kept that way SPECIFICALLY so drift is a one-line diff. Editing it
-// locally is the failure mode this arrangement is most exposed to -- the copy stops being
-// a copy and nothing says so. To re-sync, replace it wholesale and read the diff:
+// byte-for-byte copy. Editing it locally is one failure mode; upstream moving without us
+// is the other, and NEITHER is caught by the compiler in the way you would hope:
 //
-//     curl -sL https://raw.githubusercontent.com/teaguesterling/duckdb_duck_block_utils/main/src/include/duck_block_vocabulary.hpp \
-//       | diff -u src/include/duck_block_vocabulary.hpp -
+//     TYPE_HEADING -> TYPE_HEAD               a RENAME: compile error at every use site
+//     TYPE_PAGE = "page_break" -> "pagebreak" a VALUE change: compiles CLEAN
 //
-// Copied from duck_block_utils main @ 5f993e9 (header last touched by 2b60fcb,
-// "rename db_* to duck_block_* / duck_blocks_*; page -> page_break").
+// The constants protect against a rename and nothing else. A changed value compiles,
+// every test written against its own literals keeps passing, and the readers silently
+// stop emitting a type consumers recognise. So the copy comes with a check:
+//
+//     make check-vocabulary        # scripts/check_duck_block_vocabulary.py
+//
+// It compares BY NAME AND VALUE rather than diffing text, which is what lets it stay
+// silent about churn that changes nothing: upstream rewrote every idx_t to uint64_t and
+// later added ~88 lines of guidance without moving one name or value. A text diff screams
+// at that, gets muted, and then catches nothing on the day it matters.
+//
+// Copied from duck_block_utils main @ dd0781c; the header itself was last touched by
+// 4b98612 ("VENDORING THIS FILE" guidance). Being behind by commits is not the same as
+// being wrong -- what makes the copy correct is that check-vocabulary reports it in sync,
+// not that the sha is the newest.
 //
 // WHAT THIS COPY DOES NOT COVER. It is a COMPILE-TIME dependency on constant names, and
 // nothing more. The functions panduck calls at runtime -- db_blocks_toc and friends, used

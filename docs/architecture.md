@@ -74,22 +74,58 @@ This was a submodule until `duck_block_utils` decided the other way: a whole sub
 checkout to place one 167-line constants header on the include path is a large mechanism
 for a small dependency.
 
+A submodule pin is also just a copy with a SHA attached — it sits at whatever you checked
+out and never tracks `main` — so the choice was never "copy versus not a copy". It was
+which kind of copy, and the submodule form additionally drags a ~290 MB nested DuckDB
+clone through the extension CI templates' `submodules: 'recursive'` checkout to deliver
+12 KB.
+
 **The obvious objection, answered honestly.** The portfolio has already watched copies
 diverge — three separate implementations of the same Pandoc inline walker drifted into
 three different bug sets. That is a real scar and it is the reason this section exists.
-The distinction is that those were copies of *logic*, which diverge by being edited on
-purpose: each fork grew fixes the others never got, and no diff could tell you which of
-the three was right. This is a copy of *constants*, kept byte-identical on purpose, where
-any divergence at all is a defect and `diff` names it in one line.
+Those were copies of *logic*, which diverge by being edited on purpose: each fork grew
+fixes the others never got, and no diff could tell you which of the three was right. A
+copy of *constants* has no such freedom.
 
-So the risk does not vanish, it changes shape: it is no longer "three implementations
-disagree" but "someone edits the local copy and nothing says so." That is the failure mode
-to watch, which is why the file is marked do-not-edit at its point of use and the re-sync
-command lives in `duck_block_types.hpp` next to the upstream SHA it was taken from.
+**But "any divergence is a defect" is true of the values, not of the bytes**, and the
+difference is the whole design of the check. A vendored copy can sit several commits
+behind upstream and still be exactly correct: upstream rewrote every `idx_t` to `uint64_t`
+and later added ~88 lines of vendoring guidance without moving a single constant name or
+value. Hundreds of changed bytes, zero changed vocabulary. Reach for a byte comparison and
+it fires on all of that, gets muted within a week, and catches nothing on the day a value
+actually moves.
 
-A submodule would not have removed this risk either — it only moves it from "edited
-without saying so" to "never synced", which is why `duck_block_utils` recommends asserting
-agreement at *test* time regardless of how the header arrives.
+## What the compiler does not catch
+
+The constants protect against a **rename**, and only a rename:
+
+| Change | Compiler | Effect |
+|---|---|---|
+| `TYPE_HEADING` → `TYPE_HEAD` | error at every use site | caught immediately |
+| `TYPE_PAGE = "page_break"` → `"pagebreak"` | **compiles clean** | readers silently emit a type no consumer matches |
+
+A value change survives the build, survives every test written against its own string
+literals, and shows up as documents that quietly stop rendering correctly. This is a
+property of constants, not of how the header arrives — vendoring and submoduling are
+equally blind to it.
+
+So the copy comes with `make check-vocabulary`
+(`scripts/check_duck_block_vocabulary.py`), which fetches the published header and
+compares **by name and value**. It reports three things separately, because they call for
+different responses: `DRIFT` (renamed, removed, or value changed) fails the check; `NEW`
+(published upstream, missing here) means re-sync; `GAPS` (published, but nothing in
+panduck branches on it) means a type can only reach a fallthrough.
+
+`GAPS` is the arm that earns its keep — the equivalent check found inline `generic`
+silently dropping `source_type` in `duckdb_markdown` and in `duck_block_utils`
+independently in the same week. Intentional gaps are allowlisted **with reasons**, because
+an unexplained gap and a deliberate one otherwise look identical.
+
+The printed counts are context, not the assertion. A pure rename leaves the count
+unchanged while breaking every consumer; `duck_block_utils` had a check that printed
+"42 vs 42" one line above a genuine failure. `--self-test` verifies this checker
+classifies a rename, a value change and cosmetic churn correctly with the count held
+constant.
 
 ## Derived, not maintained
 

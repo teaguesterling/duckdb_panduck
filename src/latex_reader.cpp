@@ -109,6 +109,9 @@ private:
 		int saved_depth = 1; //!< depth to restore when this environment closes
 		int list_depth = 1;  //!< lists only: the depth the `list` block itself sits at
 		bool is_list = false;
+		//! lists only: a `description`, whose \item[label] is a TERM rather than a custom
+		//! bullet, and whose every \item therefore emits TWO list_items.
+		bool is_definition = false;
 		bool item_open = false; //!< lists only: an \item is accumulating
 		//! TIGHTNESS IS A PROPERTY OF THE LIST, NOT OF THE ITEM. A paragraph break anywhere
 		//! after the first \item loosens EVERY item, because that is what the spacing it
@@ -741,6 +744,10 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 			block.number_delim = "Period";
 		}
 		frame.is_list = true;
+		// A literal, because duck_block declares ATTR_LIST_TYPE but none of its VALUES --
+		// the same hole duck_block_utils just closed for `role`. A misspelled "definiton"
+		// here would be valid, conformant and lint-clean. Raised upstream.
+		frame.is_definition = block.list_type == "definition";
 		frame.list_depth = depth;
 	}
 	blocks.push_back(std::move(block));
@@ -853,11 +860,39 @@ void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
 		return;
 	}
 	auto &frame = env_stack.back();
-	// \item[label] is a CUSTOM BULLET: presentational, and duck_block has no field for it.
-	// Dropped INSIDE a list, kept as text outside one, where it is the only text there is.
-	SkipOptional(toks, i);
+	// \item[label] IS TWO DIFFERENT THINGS depending on the environment it is in. In
+	// itemize/enumerate it is a CUSTOM BULLET: presentational, with no duck_block field to
+	// hold it, so it is dropped inside a list and kept as text outside one where it is the
+	// only text there is. In a `description` it is the TERM -- the half of the pair that
+	// carries the meaning -- and dropping it would discard the document's content.
+	std::string label;
+	SkipOptional(toks, i, &label);
+	if (frame.is_definition) {
+		// Tokenized and flattened rather than taken as the raw substring: SkipOptional cuts
+		// the label out of a TEXT run as source text, so \item[\textbf{T}] would otherwise
+		// reach `content` as literal TeX. Emitting markup as text is the same defect as the
+		// `~` that once arrived in a URL as a non-breaking space.
+		auto label_toks = Tokenize(label);
+		auto term_text = FlattenTrimmed(label_toks);
+		if (!term_text.empty()) {
+			LatexBlock term;
+			term.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			term.role = DuckBlockTypes::ROLE_TERM;
+			term.content = std::move(term_text);
+			term.level = frame.list_depth + 1;
+			blocks.push_back(std::move(term));
+			// Recorded as an item even though it is already complete. ResolveList derives
+			// each item's child range from the NEXT entry in this vector; leaving the term
+			// out would make the following pair's term read as the previous definition's
+			// child, and the content rule would then decline to fire on every tight item.
+			frame.item_indices.push_back(blocks.size() - 1);
+		}
+	}
 	LatexBlock item;
 	item.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+	if (frame.is_definition) {
+		item.role = DuckBlockTypes::ROLE_DEFINITION;
+	}
 	item.level = frame.list_depth + 1;
 	blocks.push_back(std::move(item));
 	frame.item_indices.push_back(blocks.size() - 1);
@@ -1229,6 +1264,9 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			// heading_level 2; the two are different facts and conflating them renders a
 			// heading by where it sits rather than what it is.
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+		}
+		if (!block.role.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_ROLE] = block.role;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, matching every other panduck reader: `list_type` is canonical

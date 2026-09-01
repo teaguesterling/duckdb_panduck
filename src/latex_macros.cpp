@@ -111,9 +111,11 @@ const MacroEntry ENVIRONMENTS[] = {
     {"center", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"abstract", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"document", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
-    // `description` is HELD: duck_block has no settled list_type for a definition list and
-    // emitting one would invent a value no consumer can read. TRANSPARENT keeps its text.
-    {"description", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
+    // `description` WAS HELD on the transparent path: duck_block had no settled list_type
+    // for a definition list, and inventing one would have produced a value no consumer
+    // could read. Spec 5.0 settled it -- a definition list is a LIST KIND, `deflist` is
+    // deprecated -- so the deferral is discharged on its own stated condition.
+    {"description", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "definition"},
     // Dropped whole: descending yields mangled cell and coordinate text as prose.
     {"tabular", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},

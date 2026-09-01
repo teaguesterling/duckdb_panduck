@@ -529,18 +529,29 @@ FROM read_latex_blocks_string(E'\\begin{lstlisting}[language=C]\nint x;\n\\end{l
 code	int x;
 
 # ---------------------------------------------------------------------------
-# \item OUTSIDE A LIST. \begin{description} is TRANSPARENT -- duck_block has no settled
-# shape for a definition list, so inventing list_type='bullet' for one would be a
-# falsehood about the document -- which leaves its \item with no container to belong to.
-# The run is ended and the label stays as text, because deleting text on a guess is the
-# one outcome worse than losing the structure.
+# \item OUTSIDE A LIST. This used to be spelled with \begin{description}, which was
+# TRANSPARENT and so left its \item with no container to belong to. Since spec 5.0 a
+# description IS a list, so that spelling no longer reaches this branch -- and the branch
+# is still live, because \item can appear with no environment at all or inside a genuinely
+# transparent one. Re-spelled rather than deleted: losing the fixture that exercises a path
+# is how the path stops being tested without anyone deciding it should be.
+#
+# The run is ended and the label stays as text, because deleting text on a guess is the one
+# outcome worse than losing the structure.
 # ---------------------------------------------------------------------------
 query II
-SELECT element_type, content FROM read_latex_blocks_string(
-  '\begin{description}\item[Term] the definition\end{description}')
+SELECT element_type, content FROM read_latex_blocks_string('\item[Term] the definition')
 WHERE kind = 'block' ORDER BY element_order;
 ----
 paragraph	[Term] the definition
+
+# ...and the same inside a transparent environment, which is the other way to reach it.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  '\begin{center}\item[T] x\end{center}')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	[T] x
 
 # ---------------------------------------------------------------------------
 # A STARRED ENVIRONMENT IS THE UNNUMBERED VARIANT OF THE SAME CONSTRUCT, never a different
@@ -874,3 +885,64 @@ ORDER BY element_order;
 ----
 blockquote	NULL	1
 paragraph	hi	2
+
+# ---------------------------------------------------------------------------
+# DEFINITION LISTS. \begin{description} was HELD on the transparent path, deliberately:
+# duck_block had no settled list_type for a definition list, and emitting list_type='bullet'
+# for one would have been a falsehood about the document. Its \items fell through
+# StartItem's "no list to belong to" branch, which ends the run and keeps the label as
+# text -- structure lost, prose kept.
+#
+# Spec 5.0 settled it and 6.2 declared the role constants, so the deferral is discharged:
+#
+#     \begin{description}   ->  list       list_type='definition'
+#     \item[Term]           ->  list_item  role='term',       content = the label
+#     ...text after it      ->  list_item  role='definition', content = the text
+#
+# ONE \item PRODUCES TWO ROWS, which is what makes this different from every other list
+# here. The optional argument is not a custom bullet to be discarded -- in a description
+# environment it is the TERM, and it is the half of the pair that carries the meaning.
+#
+# The label is tokenized and flattened rather than taken as raw source, so a term that
+# resolves to text yields that text and never the source spelling. Emitting the raw
+# substring would leak TeX markup into content, the same defect as the `~` that once
+# reached a URL as a non-breaking space.
+query IIIII
+SELECT element_type, content, level, attributes['list_type'], attributes['role']
+FROM read_latex_blocks_string('\begin{description}\item[Term] A definition.\item[Other] Second.\end{description}')
+ORDER BY element_order;
+----
+list	NULL	1	definition	NULL
+list_item	Term	2	NULL	term
+list_item	A definition.	2	NULL	definition
+list_item	Other	2	NULL	term
+list_item	Second.	2	NULL	definition
+
+# ---------------------------------------------------------------------------
+# A FORMATTED TERM IS NOT EXTRACTED, and this pins that rather than hiding it.
+# \item[\textbf{Other}] produces a `definition` item whose brackets survive as inline text
+# and NO `term` row at all.
+#
+# The cause is in SkipOptional and predates definition lists -- it affects every optional
+# argument, in every list. Two separate limits: the cross-token branch never populates
+# `captured`, so a multi-token label is skipped without being returned; and BEGIN_GROUP is
+# a hard boundary for the scan, so `[\textbf{..}]` is not even recognised as an optional
+# argument. That boundary is load-bearing -- it is what stops an unclosed `[` scanning to
+# the next `]` anywhere in the document, which once consumed \begin{document} and made the
+# reader return nothing for a document it could mostly have read.
+#
+# So the fix is to let the scan cross BALANCED groups while still breaking on an unbalanced
+# one, which is a real change to a function with a runaway history and does not belong
+# bundled into this one. Asserted here so it is a known limitation with a failing-when-fixed
+# test, not an undiscovered wrong answer.
+query IIII
+SELECT kind, element_type, content, attributes['role']
+FROM read_latex_blocks_string('\begin{description}\item[\textbf{Other}] Second.\end{description}')
+ORDER BY element_order;
+----
+block	list	NULL	NULL
+block	list_item	NULL	definition
+block	plain	NULL	NULL
+inline	text	[	NULL
+inline	bold	Other	NULL
+inline	text	] Second.	NULL

@@ -145,11 +145,30 @@ duck_block spec regardless.
 | LaTeX | duck_block |
 |---|---|
 | `itemize` | `list`, `list_type=bullet` |
-| `enumerate` | `list`, `list_type=ordered` |
+| `enumerate` | `list`, `list_type=ordered` (plus `start`, `number_style`, `number_delim`) |
 | `description` | `list`, `list_type=description` |
 | `\item` | `list_item` |
 | `quote`, `quotation` | `blockquote` |
 | `verbatim`, `lstlisting` | `code` (raw content) |
+
+**These are containers under spec 2.0 and carry no content of their own.** As of
+`duck_block_utils` 2.0 ("one shape per element_type"), `blockquote`, `list` and
+`list_item` joined `div`/`section`/`figure`/`caption` as containers: their text lives in
+a `paragraph` child at `level + 1`, and the container ends at the first element back at
+its own level.
+
+```
+list          attrs list_type=bullet
+  list_item                              <- level+1, NO content
+    paragraph  "bullet one"              <- level+2, carries the words
+blockquote
+  paragraph    "A block quote."          <- level+1
+```
+
+Writing `list_item` with its text in `content` is the pre-2.0 shape and must not be
+emitted. This rule is scoped to **block** element_types; inline wrappers are a known and
+documented gap upstream (`duck_block_bold('y')` carries content while the Pandoc reader
+emits an empty `bold` with a `text` child), so the inline rules below are unaffected.
 
 **SEMANTIC — inline**
 
@@ -206,11 +225,19 @@ backstop with extra steps.
 Inlines start at `level = 1` and increment with each open formatting scope, matching
 `epub_reader.cpp:651`.
 
-Blocks at the top level carry **no** `level` (NULL), as every existing reader emits them.
-Blocks that genuinely nest — a `list` inside a `list_item`, a `quote` inside a `quote` —
-carry their depth in `level`, which is both the duck_block container convention and what
-`pandoc_ast_map.cpp:22` already records for `BlockQuote` ("nested blocks flattened, depth
-carried in level"). So a flat document is indistinguishable from what the other readers
+Blocks and inlines are **separate scales**, and this is the trap worth stating outright: a
+block's NULL `level` is not a depth that inlines count from. An inline at `level = 1` is a
+top-level inline *inside* the block it follows, not a sibling of it. A consumer that
+absorbs children by "level greater than mine" reads the two scales as one, and the symptom
+is a spurious blank paragraph plus the inline run rendering as its own block —
+`duckdb_markdown` hit exactly this and fixed it by having a block take the contiguous
+inline run that follows it, using level only *among* inlines where it genuinely is the
+nesting.
+
+Top-level blocks carry **no** `level` (NULL), as every existing reader emits them.
+Container blocks — `list`, `list_item`, `blockquote` as of spec 2.0, plus
+`div`/`section`/`figure`/`caption` — own their children at `level + 1`, and the container
+ends at the first element back at its own level. So a flat document is indistinguishable from what the other readers
 produce, and depth appears only when the source actually has it — the same rule as for
 inlines.
 
@@ -282,6 +309,8 @@ Targeted tests for the things that fail silently:
 | unknown macro dropped, unknown environment descended | the asymmetry inverting |
 | `tabular` dropped whole | mangled cell text as prose |
 | unbalanced braces | a throw on real-world input |
+| `list_item` has NULL content and a `paragraph` child at `level+2` | emitting the pre-2.0 shape |
+| `blockquote` owns its `paragraph` at `level+1` | the container rule silently not applied |
 
 A third fixture is needed for math, verbatim and malformed input: the existing two are a
 *matched pair* and must not be edited, or the equivalence test stops meaning anything.

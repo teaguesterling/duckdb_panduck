@@ -162,6 +162,37 @@ def _get(url, timeout):
         return None
 
 
+def spec_compatible(local_v, upstream_v):
+    """Is upstream's SPEC_VERSION compatible with ours, per duck_block_utils' contract?
+
+    The contract (defined upstream at b40bcab): MAJOR for a breaking shape or
+    vocabulary change, MINOR for an additive one. The assertion to write is therefore
+    MAJOR EQUALITY PLUS A MINOR FLOOR -- not equality on the string. Equality would go
+    red on releases that cannot affect us, and a check that cries wolf gets muted,
+    which is the failure this whole script exists to avoid.
+
+    HISTORICAL HAZARD, recorded because it makes this function look wrong when it is
+    not: the 1.1 -> 1.2 bump was MIS-NUMBERED. list and blockquote became structural,
+    which broke duckdb_markdown's writer in three places, and it shipped as a minor.
+    So a consumer applying this rule across that specific bump gets a pass where it
+    should have failed. The contract is only sound going forward; 1.x history is not.
+    Upstream records the mis-numbering rather than quietly renumbering, which is the
+    only reason this is knowable at all.
+    """
+    def parse(v):
+        try:
+            major, _, minor = str(v).partition(".")
+            return int(major), int(minor or 0)
+        except (TypeError, ValueError):
+            return None
+    lo, up = parse(local_v), parse(upstream_v)
+    if lo is None or up is None:
+        return False  # unparseable: refuse to call it compatible
+    if lo[0] != up[0]:
+        return False  # major differs -- breaking by the contract
+    return up[1] >= lo[1]  # minor floor; upstream ahead on minor is additive
+
+
 def verdict(breaking, added, verified):
     """Pure decision: (exit_code, headline, detail). Separated from I/O so the
     self-test can pin it -- notably that an UNVERIFIED read never reports OK.
@@ -255,18 +286,26 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
     # which are fine; the thing to go read is the spec.
     spec_moved = "SPEC_VERSION" in changed
     changed = [k for k in changed if k != "SPEC_VERSION"]
+    spec_breaking = spec_moved and not spec_compatible(local.get("SPEC_VERSION"),
+                                                       upstream.get("SPEC_VERSION"))
     if changed:
         breaking = True
         print("DRIFT  value changed upstream (our output silently stops matching):")
         for k in changed:
             print(f"         {k}: {local[k]!r} -> {upstream[k]!r}")
     if spec_moved:
-        breaking = True
-        print(f"SPEC   version moved: {local['SPEC_VERSION']!r} -> "
-              f"{upstream['SPEC_VERSION']!r}")
-        print("       Names and values may be untouched while the SHAPE rules changed.")
-        print("       Read docs/duck_blocks_spec.md upstream before re-syncing; this is")
-        print("       the only signal a structural change gives you.")
+        arrow = f"{local['SPEC_VERSION']!r} -> {upstream['SPEC_VERSION']!r}"
+        if spec_breaking:
+            breaking = True
+            print(f"SPEC   MAJOR version moved: {arrow}")
+            print("       A breaking shape or vocabulary change. Names and values may be")
+            print("       untouched while the SHAPE rules changed -- read")
+            print("       docs/duck_blocks_spec.md upstream before re-syncing; a version")
+            print("       bump is the only signal a structural change gives you.")
+        else:
+            print(f"SPEC   minor version moved: {arrow}")
+            print("       Additive by the stated contract, so this does not fail. Re-sync")
+            print("       when convenient and check whether the addition needs handling.")
     if added:
         print("NEW    published upstream, not in our copy:")
         for k in added:
@@ -359,6 +398,17 @@ def test_count_blindness():
         failures.append("real drift stopped failing when the read was unverified")
     if verdict(False, False, verified=True)[1] != "OK":
         failures.append("a verified clean read did not report OK")
+
+    # The version contract: MAJOR equality plus a MINOR floor, not string equality.
+    for lo, up, want, why in [
+        ("1.1", "2.0", False, "a major bump must be breaking"),
+        ("1.1", "1.2", True, "a minor bump must not fail"),
+        ("2.0", "2.0", True, "equal versions are compatible"),
+        ("2.1", "2.0", False, "upstream behind on minor is not a floor match"),
+        ("1.1", "nonsense", False, "an unparseable version must not read as compatible"),
+    ]:
+        if spec_compatible(lo, up) != want:
+            failures.append(f"spec_compatible({lo!r}, {up!r}) -- {why}")
 
     for f in failures:
         print(f"SELF-TEST FAILED: {f}")

@@ -106,17 +106,24 @@ private:
 	//! Structural depth of the block currently being built. Containers (Task 6) push this;
 	//! for now every block is top-level and every inline is one deeper.
 	int depth = 1;
+	//! How many INLINE scopes are open around the run being accumulated. Zero while reading
+	//! a block's own text; one inside \textbf{...}; two inside the \emph within it.
+	int inline_depth = 0;
 	bool stopped = false;
 
 	// The run being accumulated. `pending` is loose text; `pending_inlines` is non-empty
 	// once any formatted run has appeared, at which point the block emits children instead
-	// of a flat content string.
+	// of a flat content string. Both are SWAPPED OUT for the duration of an inline scope,
+	// so a nested scope accumulates its own children without seeing its parent's.
 	std::string pending;
 	std::vector<LatexInline> pending_inlines;
-	//! Returned for an argument a macro declared but the source did not supply. Held on the
-	//! parser rather than as a function-local static so an absent argument is empty per
-	//! parse rather than shared between them.
-	std::vector<Token> no_arg;
+
+	//! Absolute level for a run pushed into the scope currently open. A block sits at
+	//! `depth`, a run directly inside it one deeper, and a run inside another run deeper
+	//! again -- which is the only reason nesting is expressible in a flat row stream.
+	int InlineLevel() const {
+		return depth + 1 + inline_depth;
+	}
 
 	void Run(std::vector<Token> &toks);
 	void ControlWord(std::vector<Token> &toks, size_t &i, const std::string &name);
@@ -124,7 +131,8 @@ private:
 	void SkipOptional(std::vector<Token> &toks, size_t &i);
 	void SkipEnvironment(std::vector<Token> &toks, size_t &i);
 	void AppendText(const std::string &text);
-	void PushInline(LatexInline inl);
+	void PushInline(LatexInline inl, std::vector<LatexInline> children);
+	void ParseInlineScope(std::vector<Token> &content, std::string &text, std::vector<LatexInline> &children);
 	void FlushRun();
 	void EmitHeading(const std::string &name, std::vector<Token> &arg);
 };
@@ -246,20 +254,71 @@ void Parser::AppendText(const std::string &text) {
 	}
 }
 
-void Parser::PushInline(LatexInline inl) {
+void Parser::PushInline(LatexInline inl, std::vector<LatexInline> children) {
 	if (!pending.empty()) {
 		LatexInline text;
 		text.element_type = DuckBlockTypes::INLINE_TEXT;
 		text.content = pending;
-		text.level = depth + 1;
+		text.level = InlineLevel();
 		pending.clear();
 		pending_inlines.push_back(std::move(text));
 	}
-	inl.level = depth + 1;
+	inl.level = InlineLevel();
 	pending_inlines.push_back(std::move(inl));
+	// The children were levelled by the scope that produced them, one deeper than `inl`,
+	// and they follow it in document order. A flat, ordered, level-carrying stream is how
+	// duck_block spells a tree; there is no separate child list to fill in.
+	for (auto &child : children) {
+		pending_inlines.push_back(std::move(child));
+	}
+}
+
+//! Read a macro's content argument AS INLINE CONTENT rather than flattening it to text.
+//! Returns the scope's loose text in `text` and its structured runs in `children`, and
+//! exactly one of the two is populated when the scope has a single child.
+//!
+//! THE CALLER'S RULE, which this function deliberately does not decide: content is carried
+//! iff the only child is plain text. So `children` empty means the caller carries `text`;
+//! `children` non-empty means the caller nests and carries nothing.
+void Parser::ParseInlineScope(std::vector<Token> &content, std::string &text, std::vector<LatexInline> &children) {
+	// The enclosing run is set aside rather than shared: a nested scope must not see its
+	// parent's half-built text as its own leading content, and must not flush it either.
+	std::string outer_pending;
+	std::vector<LatexInline> outer_inlines;
+	outer_pending.swap(pending);
+	outer_inlines.swap(pending_inlines);
+
+	inline_depth++;
+	Run(content);
+	RightTrim(pending);
+	if (!pending_inlines.empty() && !pending.empty()) {
+		// Trailing text alongside formatted siblings is a child in its own right -- the
+		// scope has more than one child, so it nests and every one of them must be a row.
+		LatexInline tail;
+		tail.element_type = DuckBlockTypes::INLINE_TEXT;
+		tail.content = pending;
+		tail.level = InlineLevel();
+		pending_inlines.push_back(std::move(tail));
+		pending.clear();
+	}
+	inline_depth--;
+
+	text = std::move(pending);
+	children = std::move(pending_inlines);
+	pending = std::move(outer_pending);
+	pending_inlines = std::move(outer_inlines);
 }
 
 void Parser::FlushRun() {
+	if (inline_depth > 0) {
+		// AN INLINE SCOPE HAS NO BLOCK BOUNDARY INSIDE IT. Emitting a block from here would
+		// publish one whose inline children sit at an inline depth the block never had,
+		// which breaks the invariant that a child is exactly one level below its parent.
+		// The callers that can reach this -- \begin, \end and a sectioning macro inside
+		// \textbf{...} -- are malformed LaTeX; keeping the run intact degrades better than
+		// splitting it.
+		return;
+	}
 	if (pending_inlines.empty()) {
 		RightTrim(pending);
 		if (pending.empty()) {
@@ -485,10 +544,15 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 		}
 		args.push_back(std::move(group));
 	}
+	// Stands in for an argument the macro declared but the source did not supply. It is a
+	// LOCAL, one per invocation, because ControlWord is now re-entrant through inline
+	// scopes as well as TRANSPARENT descent: a parser-wide buffer handed to a nested Run()
+	// would be the same object an outer frame still holds a reference to.
+	std::vector<Token> absent_arg;
 	auto arg_at = [&](int index) -> std::vector<Token> & {
 		if (index < 0 || index >= (int)args.size()) {
-			no_arg.clear();
-			return no_arg;
+			absent_arg.clear();
+			return absent_arg;
 		}
 		return args[index];
 	};
@@ -527,20 +591,33 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 
 	LatexInline inl;
 	inl.element_type = element_type;
+	std::vector<LatexInline> children;
 	if (element_type == DuckBlockTypes::INLINE_IMAGE) {
+		// An image's argument is a FILENAME, not content: there is no child to nest.
 		inl.src = FlattenTrimmed(arg_at(0));
-	} else if (element_type == DuckBlockTypes::INLINE_LINK) {
-		// \href{url}{text} and \url{url} differ only in whether the target is also the
-		// label, which content_arg already encodes: argument 0 is the target either way.
-		inl.href = FlattenTrimmed(arg_at(0));
-		inl.content = FlattenTrimmed(arg_at(entry->content_arg));
 	} else {
-		inl.content = FlattenTrimmed(arg_at(entry->content_arg >= 0 ? entry->content_arg : 0));
+		if (element_type == DuckBlockTypes::INLINE_LINK) {
+			// \href{url}{text} and \url{url} differ only in whether the target is also the
+			// label, which content_arg already encodes: argument 0 is the target either way.
+			// Read BEFORE descending, because descending mutates the token group it reads.
+			inl.href = FlattenTrimmed(arg_at(0));
+		}
+		// NESTING, AND THE RULE THAT DECIDES IT. \textbf{\emph{x}} is a tree in the source;
+		// flattening the argument to text dropped the inner \emph without trace. So the
+		// argument is PARSED, and then: content is carried iff the only child is plain text.
+		// The condition is on what the child IS -- not on the depth, not on the macro, and
+		// not on whether there are children at all -- because deciding it any other way
+		// collapses \textbf{x} and \textbf{\emph{x}} onto the same shape.
+		std::string text;
+		ParseInlineScope(arg_at(entry->content_arg >= 0 ? entry->content_arg : 0), text, children);
+		if (children.empty()) {
+			inl.content = std::move(text);
+		}
 	}
-	if (inl.content.empty() && inl.src.empty() && inl.href.empty()) {
+	if (inl.content.empty() && children.empty() && inl.src.empty() && inl.href.empty()) {
 		return; // an empty formatted run is not an element, it is punctuation
 	}
-	PushInline(std::move(inl));
+	PushInline(std::move(inl), std::move(children));
 }
 
 void Parser::Run(std::vector<Token> &toks) {
@@ -556,7 +633,13 @@ void Parser::Run(std::vector<Token> &toks) {
 			i++;
 			break;
 		case TokenKind::PAR_BREAK:
-			FlushRun();
+			if (inline_depth > 0) {
+				// A blank line inside \textbf{...} cannot start a paragraph -- the run would
+				// have to end mid-argument -- so it is the word boundary it looks like.
+				AppendText(" ");
+			} else {
+				FlushRun();
+			}
 			i++;
 			break;
 		case TokenKind::BEGIN_GROUP:

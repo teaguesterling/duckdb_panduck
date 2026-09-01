@@ -158,3 +158,42 @@ WHERE element_type = 'heading' OR content = 'body' ORDER BY element_order;
 ----
 heading	X
 paragraph	body
+
+# ---------------------------------------------------------------------------
+# INLINE FORMATTING, AND IT NESTS.
+# ---------------------------------------------------------------------------
+
+# Inline formatting, both fixtures, including the two spellings of strike -- \sout in the
+# handwritten file and \st in pandoc's output.
+query II
+SELECT element_type, content FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+bold	bold
+italic	italic
+strikethrough	strike
+
+# NESTING IS EMITTED GENUINELY. \textbf{\emph{x}} is a tree in the source and stays one.
+# Flattening to "strongest format wins" -- which every other panduck reader still does, and
+# rtf_reader.cpp:77 documents as a limitation -- discards the one thing LaTeX states
+# unambiguously. Before this task the inner \emph was dropped outright, yielding `bold x`.
+#
+# TWO ROWS, NOT THREE. bold's only child is an ITALIC, not a text run, so bold nests and
+# carries no content. italic's only child IS a text run, so italic CARRIES it rather than
+# growing a `text` child. That is duck_block's content rule -- populated iff the only child
+# is plain text -- applied at each level independently.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{\emph{x}}')
+WHERE kind = 'inline' ORDER BY element_order;
+----
+bold	NULL	2
+italic	x	3
+
+# ...AND THE SIMPLE CASE STAYS FLAT. \textbf{x} is ONE run, byte-identical to what the
+# other four readers emit. Asserting only the nested case would pass against a reader that
+# over-nested everything; the two together are what discriminate.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{x}')
+WHERE kind = 'inline' ORDER BY element_order;
+----
+bold	x	2

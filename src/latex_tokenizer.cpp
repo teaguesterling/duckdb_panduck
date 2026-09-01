@@ -60,6 +60,19 @@ std::vector<Token> Tokenize(const std::string &src) {
 			out.push_back(Token {TokenKind::CONTROL_WORD, name, false});
 			continue;
 		}
+		// \( \) \[ \] are the OTHER spelling of math, and pandoc prefers them. They
+		// lex as control symbols, so without this branch -- placed BEFORE the generic
+		// control-symbol case below -- display math is silently dropped -- the macro table
+		// never sees math at all, because math is a tokenizer construct rather than a
+		// macro.
+		if (c == '\\' && i + 1 < src.size() && (src[i + 1] == '(' || src[i + 1] == ')' ||
+		                                        src[i + 1] == '[' || src[i + 1] == ']')) {
+			flush();
+			bool display = src[i + 1] == '[' || src[i + 1] == ']';
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			i += 2;
+			continue;
+		}
 		if (c == '\\' && i + 1 < src.size()) {
 			flush();
 			out.push_back(Token {TokenKind::CONTROL_SYMBOL, std::string(1, src[i + 1]), false});
@@ -70,6 +83,59 @@ std::vector<Token> Tokenize(const std::string &src) {
 			flush();
 			out.push_back(Token {c == '{' ? TokenKind::BEGIN_GROUP : TokenKind::END_GROUP, std::string(1, c), false});
 			i++;
+			continue;
+		}
+		if (c == '%') {
+			// TeX's comment rule in full: to end of line, THEN the newline, THEN the next
+			// line's leading whitespace. pandoc's trailing `%` in \hypertarget{id}{% is
+			// there precisely to suppress the space the break would produce, so a reader
+			// that keeps the newline puts a leading space in every heading it writes.
+			while (i < src.size() && src[i] != '\n') {
+				i++;
+			}
+			if (i < src.size()) {
+				i++; // the newline itself
+			}
+			while (i < src.size() && (src[i] == ' ' || src[i] == '\t')) {
+				i++;
+			}
+			continue;
+		}
+		if (c == '\n') {
+			// A blank line -- two newlines separated only by whitespace -- is a paragraph
+			// break. A single newline is just a space; it is LaTeX's only paragraph signal.
+			size_t j = i + 1;
+			while (j < src.size() && (src[j] == ' ' || src[j] == '\t' || src[j] == '\r')) {
+				j++;
+			}
+			if (j < src.size() && src[j] == '\n') {
+				flush();
+				while (j < src.size() && isspace((unsigned char)src[j])) {
+					j++;
+				}
+				out.push_back(Token {TokenKind::PAR_BREAK, std::string(), false});
+				i = j;
+				continue;
+			}
+			text.push_back('\n');
+			i++;
+			continue;
+		}
+		if (c == '$') {
+			flush();
+			bool display = i + 1 < src.size() && src[i + 1] == '$';
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			i += display ? 2 : 1;
+			continue;
+		}
+		if (c == '-' && src.compare(i, 3, "---") == 0) {
+			text += "—"; // em dash
+			i += 3;
+			continue;
+		}
+		if (c == '-' && src.compare(i, 2, "--") == 0) {
+			text += "–"; // en dash
+			i += 2;
 			continue;
 		}
 		text.push_back(c);

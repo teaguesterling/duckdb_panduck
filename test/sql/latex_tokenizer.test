@@ -15,3 +15,63 @@ begin_group	{
 text	a
 end_group	}
 text	 b
+
+# `%` DISCARDS TO END OF LINE, THEN THE NEWLINE, THEN THE NEXT LINE'S LEADING WHITESPACE.
+# That is TeX's actual rule and the reason pandoc writes a trailing `%` -- it exists to
+# suppress the space the line break would otherwise produce. A tokenizer that strips the
+# comment but keeps the newline injects a leading space into every pandoc heading.
+query II
+SELECT kind, text FROM panduck_latex_tokens(e'a% note\n   b');
+----
+text	ab
+
+# \% is a literal percent, not a comment.
+query II
+SELECT kind, text FROM panduck_latex_tokens('100\% sure');
+----
+text	100
+control_symbol	%
+text	 sure
+
+# A BLANK LINE IS A PARAGRAPH BREAK; A SINGLE NEWLINE IS JUST A SPACE. That is LaTeX's
+# only paragraph signal. Asserted as kinds and counts rather than as token values: a text
+# run spanning a single newline CONTAINS one, and sqllogictest uses newlines as row
+# boundaries, so asserting the value would be testing the harness's escaping rather than
+# the tokenizer.
+query II
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo\n\nthree')
+GROUP BY kind ORDER BY kind;
+----
+par_break	1
+text	2
+
+# ...and the discriminating half: NO blank line means NO break, so the whole thing is one
+# text run. A tokenizer that split on every newline would pass the assertion above and
+# fail this one.
+query II
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo')
+GROUP BY kind ORDER BY kind;
+----
+text	1
+
+# Ligatures are resolved in the text scanner, where the source spells them.
+query II
+SELECT kind, text FROM panduck_latex_tokens('a --- b -- c');
+----
+text	a — b – c
+
+# Math is opaque: the shift is a token, the content is text, nothing is parsed.
+query I
+SELECT count(*) FROM panduck_latex_tokens('$x^2$') WHERE kind = 'math_shift';
+----
+2
+
+# BOTH SPELLINGS OF MATH. \( \) and \[ \] lex as control symbols, so without an explicit
+# branch they fall through to the generic control-symbol case and the math vanishes.
+# pandoc PREFERS these forms, so a reader that handles only $ loses math on exactly the
+# documents most likely to contain it. Math is a tokenizer construct, not a macro -- the
+# disposition table never sees it.
+query I
+SELECT count(*) FROM panduck_latex_tokens('\(a\) and \[b\]') WHERE kind = 'math_shift';
+----
+4

@@ -1,273 +1,121 @@
 # panduck
 
-Native, in-process document conversion and AST extraction for DuckDB.
+Native, in-process document IO for DuckDB.
 
-`panduck` reads rich document formats — DOCX, EPUB, ODT, LaTeX, reStructuredText — directly
-into the unified [`duck_block`](https://github.com/teaguesterling/duckdb_duck_block_utils)
-document AST, with no external binary on `$PATH` and no subprocess per file.
-
-> **Status: Phase 1 (scaffolding).** The build, the dependency chain, and the Pandoc AST
-> contract are in place and tested. **No format readers are implemented yet** — see
-> [Roadmap](#roadmap).
-
-## Why not just call pandoc?
-
-Because pandoc is a Haskell program, and there is no practical way to call it in-process:
-
-- **[ShabbyX/libpandoc](https://github.com/ShabbyX/libpandoc)**, the only real C bindings,
-  has been unmaintained since **2017** and targets pandoc 1.x. Pandoc is now 3.x.
-- **Upstream has not shipped a C shared library.** [jgm/pandoc#6611](https://github.com/jgm/pandoc/issues/6611)
-  has been open since 2020; as of the most recent comment, nothing has changed.
-- Even if one existed, linking the **GHC runtime** — its own GC, signal handlers, and
-  `hs_init`/`hs_exit` lifecycle — into a `dlopen`'d extension inside DuckDB's already
-  multithreaded process would be a bad neighbour. And the ~200 MB doesn't disappear; it
-  moves from `$PATH` into the extension binary, which then can't ship as a community
-  extension.
-
-That leaves the CLI subprocess (~50–200 ms of fork/exec per file, plus temp-file I/O, with
-no vectorization or pushdown) or an HTTP server. Panduck does neither.
-
-**Panduck is compatible with pandoc's data model, not its ABI.** Its readers emit
-`duck_block` elements, and `duck_block_utils` already round-trips those to and from Pandoc
-JSON — so anything that speaks Pandoc JSON still interoperates, with no Haskell anywhere.
-
-That claim is *tested*, not asserted: see [Pandoc AST alignment](#pandoc-ast-alignment).
-
-## Current SQL surface
+`panduck` reads rich document formats directly into the unified
+[`duck_block`](https://github.com/teaguesterling/duckdb_duck_block_utils) AST — no external
+binary on `$PATH`, no subprocess per file — and dispatches any path to the right reader
+from a registry that derives itself rather than being maintained by hand.
 
 ```sql
 LOAD panduck;
 
-SELECT panduck_version();              -- extension version
-SELECT panduck_pandoc_api_version();   -- pandoc-types AST version targeted: 1.23
-
--- The full pandoc-types 1.23 vocabulary and its duck_block correspondence
-SELECT * FROM panduck_pandoc_ast_map();
-
--- Which document formats panduck reads, for a dispatcher to route on
-SELECT * FROM panduck_supported_extensions();
+SELECT * FROM read_panduck_doc('report.docx');   -- any document -> duck_blocks
+SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
+SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-```
-┌────────────────┬─────────┬──────────────┬─────────┬─────────────────────────────────┐
-│  pandoc_type   │  kind   │ element_type │ status  │              notes              │
-├────────────────┼─────────┼──────────────┼─────────┼─────────────────────────────────┤
-│ Header         │ block   │ heading      │ mapped  │ heading_level 1-6 in attributes │
-│ CodeBlock      │ block   │ code         │ mapped  │ language from first Attr class  │
-│ Underline      │ inline  │ underline    │ planned │ never matched in convert; …     │
-│ Null           │ block   │ NULL         │ dropped │ intentionally yields no element │
-└────────────────┴─────────┴──────────────┴─────────┴─────────────────────────────────┘
-```
+**Status:** two native readers (RTF, DOCX), full path dispatch, and a differential
+validator that checks panduck against real pandoc on every CI run. EPUB, ODT, LaTeX, RST,
+Org and MediaWiki are declared but not yet implemented — and the registry knows the
+difference, so nothing routes to a reader that doesn't exist.
 
-`status` is one of:
+## Why not just call pandoc?
 
-| status | meaning |
-|---|---|
-| `mapped` | round-trip implemented in `duck_block_utils` today |
-| `planned` | named in the spec, not implemented on either side yet |
-| `dropped` | intentionally yields no element (`Null` only) |
+Because pandoc is a Haskell program and there is no practical way to call it in-process:
 
-## Reader dispatch
+- **[ShabbyX/libpandoc](https://github.com/ShabbyX/libpandoc)**, the only real C bindings,
+  has been unmaintained since **2017** and targets pandoc 1.x. Pandoc is now 3.x.
+- **Upstream has never shipped a C shared library.**
+  [jgm/pandoc#6611](https://github.com/jgm/pandoc/issues/6611) has been open since 2020.
+- Even if one existed, linking the **GHC runtime** into a `dlopen`'d extension inside
+  DuckDB's already-multithreaded process would be a bad neighbour — and the ~200 MB moves
+  from `$PATH` into the extension binary, which then can't ship as a community extension.
 
-`panduck_supported_extensions()` is panduck's self-description as a reader — the same
-shape `sitting_duck` already exposes as `ast_supported_languages()`, so a dispatcher can
-`UNION` them and *derive* which extension reads which file rather than maintaining a
-central table that drifts:
+That leaves a CLI subprocess (~50–200 ms of fork/exec per file, no vectorization, no
+pushdown) or an HTTP server. panduck does neither.
 
-```
-┌───────────┬─────────────────┬────────┬─────────┬──────────────────────────────────┐
-│  format   │   extensions    │ reader │ status  │              notes               │
-├───────────┼─────────────────┼────────┼─────────┼──────────────────────────────────┤
-│ docx      │ [docx]          │ NULL   │ planned │ roadmap phase 2: ZIP + word/…    │
-│ epub      │ [epub]          │ NULL   │ planned │ roadmap phase 3: container.xml…  │
-│ latex     │ [tex, latex]    │ NULL   │ planned │ roadmap phase 4: streaming tok…  │
-└───────────┴─────────────────┴────────┴─────────┴──────────────────────────────────┘
-```
+**panduck is compatible with pandoc's data model, not its ABI** — and that claim is
+[tested, not asserted](docs/validation.md).
 
-`extensions` are lowercase with **no leading dot**, matching `ast_supported_languages()`
-exactly — a consumer that normalises one registry differently from another has
-reintroduced the per-reader knowledge the table exists to remove.
+## Reading documents
 
-`status` is `implemented` (panduck reads this today; route here) or `planned` (panduck
-intends to; **do not** route here). Panduck ships no readers yet, so every row is
-`planned` and `reader` is `NULL` — a dispatcher gets nothing routable, which is the
-honest answer.
-
-### What panduck does *not* claim
-
-Pandoc reads markdown and HTML, and panduck could. It does not list them, because this
-table is a *self-description*, not a routing table: a row here is panduck asserting "I
-read this", which a dispatcher is entitled to act on. `duckdb_markdown` and
-`duckdb_webbed` already read those formats into `duck_block`, and two registries claiming
-`.md` is exactly the ambiguity derived dispatch is supposed to eliminate.
-
-The alternative — a `delegated_to = 'markdown'` row — would be panduck holding
-second-hand knowledge about another extension's formats, with no test here that could
-catch it going stale. That is the failure mode being fixed, not a fix for it. Absence is
-unambiguous: `planned` means "not yet, but mine", and no row at all means "not mine".
-
-Delegation is a *dispatcher* concern, not a registry one. When panduck takes over
-path → blocks routing (see Phase 6), `panduck_read('x.md')` will hand off to
-`duckdb_markdown` by reading that extension's own self-description — not by hardcoding a
-claim about it here.
-
-## Pandoc AST alignment
-
-Panduck doesn't link pandoc, so nothing in the build would notice if pandoc changed its AST
-underneath us. `test/pandoc/check_pandoc_alignment.py` closes that gap:
-
-```sh
-make test_pandoc_alignment
-```
-
-```
-Checking panduck's AST mapping against pandoc 3.1.3
-  api-version 1.23 matches target
-  all 34 emitted constructors are present in the mapping
-  4 known gap(s) unchanged: DefinitionList, Figure, LineBlock, Underline
-  fixture exercises 34/35 mapped constructors
-OK: panduck's Pandoc AST mapping is aligned with the installed pandoc.
-```
-
-It runs a real pandoc over `test/pandoc/fixtures/kitchen_sink.md` — which exercises 34 of
-the 35 Block/Inline constructors in pandoc-types 1.23 — and fails on three kinds of drift:
-
-1. pandoc emits a Block/Inline constructor absent from `src/pandoc_ast_map.cpp`
-2. the `pandoc-api-version` no longer matches what the mapping targets
-3. the set of unimplemented constructors changed without `KNOWN_GAPS` being updated
-
-It **skips cleanly** (exit 0) when pandoc isn't installed, so it never blocks a build. CI
-installs pandoc explicitly so the check actually runs there.
-
-The complementary SQL test (`test/sql/pandoc_ast_map.test`) asserts the *built extension*
-agrees with that same table. Together: real pandoc → C++ table → loaded extension.
-
-## Differential validation
-
-`make test_roundtrip` reads every fixture **twice** — once with panduck, once with
-pandoc — and compares the results:
-
-```
-  pandoc_outlinelevel.rtf [rtf]
-    text      diverges as declared [reference-wrong] -- pandoc's RTF reader drops the
-              space after \u8212 ...
-    skeleton  agree
-    marked    diverges as declared [reference-wrong] -- ...
-```
-
-The obvious test would be `X == panduck_read(panduck_write(X))`. That needs a writer
-panduck doesn't have, and it's the weaker test anyway: a reader and writer sharing one
-misunderstanding round-trip perfectly while both being wrong. Two *independent* readers
-of the same bytes catch misreads no self-round-trip can.
-
-### What counts as identity
-
-Two readers never agree byte-for-byte, and mostly shouldn't have to. `canonical.py`
-normalizes away three differences that carry no information — pandoc emits explicit
-`Space` inlines where panduck folds spaces into runs; pandoc splits text per word;
-pandoc nests `Strong [Str "bold"]` where panduck puts content on the `bold` inline.
-Each case then declares how far up the ladder agreement is required:
-
-| Level | Compares | Catches |
+| Function | Shape | Returns |
 |---|---|---|
-| `text` | all visible text, markers stripped | data loss |
-| `skeleton` | block types + heading levels | structural loss, misclassification |
-| `marked` | skeleton + canonical inline markup | everything above plus formatting |
+| `read_panduck_doc(src, format := 'auto', pages := '')` | table | `duck_block` rows |
+| `panduck_read_blocks(src, …)` | scalar | `LIST(duck_block)` |
+| `read_panduck_table(src)` | table | rows and columns |
+| `read_rtf_blocks(path)` / `read_docx_blocks(path)` | table | one format, directly |
 
-### The reference is not ground truth
+Two surfaces, mirroring [duckeye](https://github.com/teaguesterling/duckeye)'s own split:
+a document is prose and becomes blocks; `--raw` is *"read FILE as data, not prose"* and
+becomes a table. A `.csv` has no document structure and a `.docx` has no rows — one
+function doing both would have to lie about one of them.
 
-pandoc is the reference, but it is not always right. On `pandoc_outlinelevel.rtf` its own
-RTF reader yields `café —em-dash` where the source document reads `café — em-dash`;
-panduck matches the source. On `libreoffice_stylesheet.rtf` panduck resolves
-`{\stylesheet}` `\sN` and reports `Heading One` as a heading, while pandoc reads it as
-`Para[Strong[Span]]` and detects no heading at all.
+`read_panduck_doc` is a **table function**, so a filter pushes down to the reader. The
+scalar `LIST` form plants a blocking aggregate that no predicate can pass, which is fine
+for a README and not for a 400-page EPUB. See [Dispatch](docs/dispatch.md).
 
-So divergences are **triaged**, not assumed to be panduck's fault:
+## The doc_* namespace
 
-| Verdict | Effect |
-|---|---|
-| `panduck-wrong` | **fails** |
-| `reference-wrong` | recorded; pandoc is wrong |
-| `not-implemented` | recorded; panduck doesn't read this construct yet |
-| `ambiguous` | recorded with reasoning |
+`doc_*` takes a **path**; `db_*` (in `duck_block_utils`) takes blocks you already hold.
 
-The ledger ratchets **both** ways: an undeclared divergence fails, and so does a declared
-divergence that has silently started agreeing — that one should be promoted rather than
-left rotting. Both directions are negative-tested.
+```sql
+SELECT level, title FROM doc_toc('report.docx');
+SELECT doc_render('report.docx', 'md');
+```
 
-Requires pandoc *and* a built extension. Locally it skips cleanly without either;
-`--report` shows raw divergences without asserting, which is how the ledger entries were
-derived.
+These load `duck_block_utils` on demand, exactly as reading `.md` loads `duckdb_markdown`.
+panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 
-In CI it runs against the extension the build matrix already produced — the
-`linux_amd64` artifact is downloaded and `LOAD`ed into a stock DuckDB CLI of the same
-version, so validation costs ~2 minutes rather than the ~40 a rebuild would. The job
-passes `--require`, which turns a missing prerequisite into a failure: a job that
-silently skips reports coverage it is not providing.
+## Formats
 
-### Known gaps
+| Format | Extensions | Status |
+|---|---|---|
+| `rtf` | `.rtf` | **implemented** — `read_rtf_blocks` |
+| `docx` | `.docx` | **implemented** — `read_docx_blocks` |
+| `odt` `epub` `latex` `rst` `org` `mediawiki` | | declared, not implemented |
+| `markdown` `html` `pdf` | `.md` `.html` `.pdf` | routed to `duckdb_markdown`, `duckdb_webbed`, `pdf` |
+| `toml` `yaml` | `.toml` `.yaml` | read as a `metadata` block |
+| `data` | `.csv` `.parquet` `.json` `.xlsx` … | `read_panduck_table` only |
+| `code` | anything unclaimed | falls through to `sitting_duck` |
 
-These are constructors real pandoc emits that the `duck_block` round-trip does not handle.
-All four are recorded as `status='planned'` and tracked by the harness:
-
-| Constructor | Issue |
-|---|---|
-| `LineBlock`, `DefinitionList`, `Figure` | `duck_block_utils` `docs/pandoc_ast_spec.md` maps these to `pandoc:lineblock` / `pandoc:deflist` / `pandoc:figure`, but no code path handles them — `pandoc_block_convert.cpp` ends its chain with a bare `else { return; }`, so they are **silently dropped**. |
-| `Underline` | `block_types.hpp` defines `INLINE_UNDERLINE = "underline"`, but `pandoc_inline_convert.cpp` never matches it, so it falls through to `text` with the literal content `"[Underline]"`. |
+`panduck_supported_extensions()` is panduck's self-description; `panduck_reader_registry()`
+is the derived dispatch table. Adding a reader means flipping one row from `planned` to
+`implemented` — dispatch picks it up with no code change. See [Dispatch](docs/dispatch.md).
 
 ## Building
 
-Dependencies come from vcpkg (`pugixml` for XML, `miniz` for ZIP containers):
+Dependencies come from vcpkg (`pugixml` for XML, `miniz` for ZIP containers). The
+`duck_block` vocabulary comes from `duck_block_utils` as a submodule, consumed rather than
+copied.
 
 ```sh
-git clone https://github.com/Microsoft/vcpkg.git
-./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
-
 git clone --recurse-submodules https://github.com/teaguesterling/duckdb_panduck.git
 cd duckdb_panduck
+export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 make release
 ```
 
-Targets DuckDB **v1.5.5**. Produces:
+Targets DuckDB **v1.5.5**.
 
+```sh
+make test                   # sqllogictests
+make test_pandoc_alignment  # AST vocabulary vs a real pandoc
+make test_roundtrip         # differential validation vs a real pandoc
 ```
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/panduck/panduck.duckdb_extension
-```
 
-Run the tests with `make test`, and the pandoc conformance check with
-`make test_pandoc_alignment`.
+## Documentation
 
-## Roadmap
-
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Scaffolding, vcpkg dependency chain, `duck_block` contract, Pandoc AST alignment harness, `panduck_supported_extensions()` | **done** |
-| 2 | `read_docx_blocks()`, `read_odt_blocks()` — ZIP + `word/document.xml` via miniz + pugixml | not started |
-| 3 | `read_epub_blocks()` — `container.xml` → `.opf` spine, `toc.ncx` / `nav.xhtml` | not started |
-| 4 | `read_latex_blocks()` — streaming tokenizer for macros, environments, math | not started |
-| 5 | `read_rst_blocks()`, `read_org_blocks()`, `read_mediawiki_blocks()` | not started |
-| 6 | `panduck_read(path)` — panduck takes ownership of path → blocks dispatch | not started |
-
-> **Phase 5/6 changed direction (2026-08-31).** Phase 5 previously read "`read_rst_blocks()`,
-> and the `doc_to_blocks()` hook in `duck_block_utils`" — panduck plugging into a registry
-> owned by `duck_block_utils`. That is reversed. A library defining a vocabulary should be
-> a leaf dependency, not something that knows about every reader extension that exists;
-> path → blocks routing is pandoc's identity, so **panduck owns it**, as `panduck_read(path)`
-> in Phase 6. `duck_block_utils` keeps `doc_to_blocks` meanwhile as an explicitly temporary
-> seam — moving it today would mean `LOAD panduck` to read a `.md` file — but rebuilds it to
-> *derive* its mapping from self-describing readers, which is what
-> `panduck_supported_extensions()` above is for. Once dispatch is derived, relocating it is
-> near-free. See `duck_block_utils`
-> `docs/superpowers/specs/2026-08-31-pandoc-gaps-and-reader-dispatch-design.md`.
+- [Architecture](docs/architecture.md) — the layering, and why nothing depends upward
+- [Readers](docs/readers.md) — RTF and DOCX, and what real writers actually emit
+- [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration
+- [The doc_ namespace](docs/doc_namespace.md) — path-taking sugar over `db_*`
+- [Validation](docs/validation.md) — how the pandoc-compatibility claim is tested
 
 ## Related
 
-Part of a family of DuckDB document extensions that all emit `duck_block`:
-
-- [`duckdb_duck_block_utils`](https://github.com/teaguesterling/duckdb_duck_block_utils) — the unified AST and its Pandoc JSON bridge
+- [`duckdb_duck_block_utils`](https://github.com/teaguesterling/duckdb_duck_block_utils) — the vocabulary and helpers over it
 - [`duckdb_markdown`](https://github.com/teaguesterling/duckdb_markdown) — CommonMark + GFM
 - [`duckdb_webbed`](https://github.com/teaguesterling/duckdb_webbed) — XML and HTML
 - [`sitting_duck`](https://github.com/teaguesterling/sitting_duck) — source code ASTs via tree-sitter

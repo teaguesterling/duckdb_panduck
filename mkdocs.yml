@@ -1,0 +1,20 @@
+site_name: panduck
+site_description: Native, in-process document IO for DuckDB
+repo_url: https://github.com/teaguesterling/duckdb_panduck
+
+theme:
+  name: readthedocs
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Readers: readers.md
+  - Dispatch: dispatch.md
+  - The doc_ namespace: doc_namespace.md
+  - Validation: validation.md
+  - Updating: UPDATING.md
+
+markdown_extensions:
+  - admonition
+  - tables
+  - fenced_code

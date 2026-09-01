@@ -227,12 +227,21 @@ exactly one family: descending into `tabular` or `tikzpicture` emits mangled cel
 coordinate text as prose. Tables are unread by every panduck reader today, so declining to
 read them here is consistent rather than a new gap.
 
-### Introspection
+### Introspection — not exposed
 
-The table is exposed as `panduck_latex_macros()`, mirroring `panduck_pandoc_ast_map()`.
-An allowlist's advantage over a backstop is that it can be audited; this codebase already
-makes its coverage introspectable, and an allowlist nobody can enumerate is just a
+An earlier draft exposed the table as `panduck_latex_macros()`, mirroring
+`panduck_pandoc_ast_map()`, on the grounds that an allowlist nobody can enumerate is a
 backstop with extra steps.
+
+That argument does not survive scrutiny. A static table in a source file IS enumerable by
+reading it; every entry that matters is exercised by the reader's own tests; and a table
+function is a permanent public commitment no consumer has asked for. The comparison to
+`panduck_pandoc_ast_map()` is also weaker than it looks — that table describes what
+panduck maps for *other extensions* to consume, while this one is internal to one reader.
+
+`panduck_latex_tokens()` IS exposed, for a reason that does not transfer: comment-eats-
+newline, control-word whitespace and verbatim cannot be observed any other way, whereas a
+wrong disposition shows up directly as a wrong block.
 
 ## Emission and nesting
 
@@ -283,6 +292,12 @@ and already known; never emitting the shape leaves it latent rather than absent.
 
 **Math** is opaque: `$…$` and `\(…\)` → `math` with `mode=inline`; `$$…$$` and `\[…\]` →
 `math` with `mode=display`. Content is the verbatim TeX. No math parsing.
+
+**Math is a TOKENIZER construct, not a macro** — it never reaches the disposition table.
+That matters for `\(`, `\)`, `\[` and `\]`, which lex as control symbols: without an
+explicit branch they fall through to the generic control-symbol case and the math
+silently vanishes. pandoc PREFERS those spellings over `$`, so a reader handling only `$`
+loses math on exactly the documents most likely to contain it.
 
 **Preamble** is discarded up to `\begin{document}`, except `\documentclass`. With no
 `\begin{document}`, the whole file is treated as body — handwritten fragments are common

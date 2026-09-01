@@ -318,6 +318,16 @@ query I
 SELECT count(*) FROM panduck_latex_tokens('$x^2$') WHERE kind = 'math_shift';
 ----
 2
+
+# BOTH SPELLINGS OF MATH. \( \) and \[ \] lex as control symbols, so without an explicit
+# branch they fall through to the generic control-symbol case and the math vanishes.
+# pandoc PREFERS these forms, so a reader that handles only $ loses math on exactly the
+# documents most likely to contain it. Math is a tokenizer construct, not a macro -- the
+# disposition table never sees it.
+query I
+SELECT count(*) FROM panduck_latex_tokens('\\(a\\) and \\[b\\]') WHERE kind = 'math_shift';
+----
+4
 ```
 
 - [ ] **Step 2: Run and watch them fail**
@@ -373,6 +383,19 @@ In `Tokenize`, before the `text.push_back(c)` fallthrough, add these branches in
 			i += display ? 2 : 1;
 			continue;
 		}
+		// \( \) \[ \] are the OTHER spelling of math, and pandoc prefers them. They
+		// lex as control symbols, so without this branch they fall through to the generic
+		// control-symbol case and display math is silently dropped -- the macro table
+		// never sees math at all, because math is a tokenizer construct rather than a
+		// macro.
+		if (c == '\\' && i + 1 < src.size() && (src[i + 1] == '(' || src[i + 1] == ')' ||
+		                                        src[i + 1] == '[' || src[i + 1] == ']')) {
+			flush();
+			bool display = src[i + 1] == '[' || src[i + 1] == ']';
+			out.push_back(Token {TokenKind::MATH_SHIFT, std::string(), display});
+			i += 2;
+			continue;
+		}
 		if (c == '-' && src.compare(i, 3, "---") == 0) {
 			text += "—"; // em dash
 			i += 3;
@@ -405,59 +428,14 @@ git commit -m "Handle comments, paragraph breaks, ligatures and math shifts"
 - Create: `src/include/latex_macros.hpp`
 - Create: `src/latex_macros.cpp`
 - Modify: `CMakeLists.txt` (add `src/latex_macros.cpp`)
-- Modify: `src/panduck_extension.cpp` (register `panduck_latex_macros`)
-- Test: `test/sql/latex_macros.test`
+- Test: exercised through `test/sql/latex_reader.test` (Tasks 4-6) — see below
 
 **Interfaces:**
-- Produces: `namespace duckdb::latex`, `enum class Disposition { SEMANTIC, TRANSPARENT, DROPPED, TEXT }`, `struct MacroEntry { const char *name; Disposition disposition; const char *element_type; int args; int content_arg; const char *expansion; }`, `const MacroEntry *LookupMacro(const std::string &name)`, `const MacroEntry *LookupEnvironment(const std::string &name)`, and `panduck_latex_macros()` as a table function.
+- Produces: `namespace duckdb::latex`, `enum class Disposition { SEMANTIC, TRANSPARENT, DROPPED, TEXT }`, `struct MacroEntry { const char *name; Disposition disposition; const char *element_type; int args; int content_arg; const char *expansion; }`, `const MacroEntry *LookupMacro(const std::string &name)`, `const MacroEntry *LookupEnvironment(const std::string &name)`.
 
-- [ ] **Step 1: Write the failing test**
+**NO TABLE FUNCTION.** The design doc argued for exposing this as `panduck_latex_macros()` on auditability grounds — an allowlist nobody can enumerate being a backstop with extra steps. That argument does not survive contact: a static table in a source file IS enumerable by reading it, every entry that matters is exercised by the reader's own tests, and a public function is a permanent API commitment no consumer has asked for. `panduck_latex_tokens` earns its place for a reason that does not transfer here — comment-eats-newline and control-word whitespace cannot be observed any other way, whereas a wrong table entry shows up directly as a wrong block. Add it later if something actually wants runtime introspection; it is ~40 lines against a table that will not have moved.
 
-Create `test/sql/latex_macros.test`:
-
-```
-# name: test/sql/latex_macros.test
-# description: the LaTeX macro disposition table, which is the reader's whole scope boundary
-# group: [sql]
-
-require panduck
-
-# FOUR DISPOSITIONS, and TRANSPARENT is the one that earns its place. \hypertarget is not
-# a document construct, but pandoc buries \section inside it two brace-levels deep behind a
-# comment token. Descending into its content argument finds the heading at whatever depth
-# it sits, so both fixtures agree with NO pandoc-specific rule anywhere in the reader.
-query III
-SELECT name, disposition, element_type FROM panduck_latex_macros()
-WHERE name IN ('section', 'hypertarget', 'label', 'ldots') ORDER BY name;
-----
-hypertarget	transparent	NULL
-label	dropped	NULL
-ldots	text	NULL
-section	semantic	heading
-
-# The table is introspectable ON PURPOSE. An allowlist's advantage over a blanket
-# backstop is that it can be audited, and an allowlist nobody can enumerate is just a
-# backstop with extra steps.
-query I
-SELECT count(*) > 30 FROM panduck_latex_macros();
-----
-true
-
-# Both spellings of strike, because the two fixtures use different ones: \sout is ulem
-# (handwritten) and \st is what pandoc emits.
-query I
-SELECT count(DISTINCT element_type) FROM panduck_latex_macros()
-WHERE name IN ('sout', 'st');
-----
-1
-```
-
-- [ ] **Step 2: Run and watch it fail**
-
-Run: `make release && build/release/test/unittest "test/sql/latex_macros.test"`
-Expected: FAIL — `panduck_latex_macros does not exist`.
-
-- [ ] **Step 3: Write the table**
+- [ ] **Step 1: Write the table**
 
 Create `src/include/latex_macros.hpp` and `src/latex_macros.cpp`. The table is static data in the shape of `src/supported_extensions.cpp:34` and `src/pandoc_ast_map.cpp:18` — this codebase states its coverage as a queryable table, and this one is that for LaTeX.
 
@@ -536,18 +514,16 @@ Environments, a separate table looked up by `LookupEnvironment`:
 
 `LookupMacro` and `LookupEnvironment` are linear scans over these arrays returning `nullptr` when absent — the tables are ~60 entries and are consulted once per token, so a map buys nothing and costs a static initialiser.
 
-Register `panduck_latex_macros()` returning `(name, kind, disposition, element_type, args, notes)` following the same table-function shape as Task 1.
+- [ ] **Step 2: Verify it compiles and links**
 
-- [ ] **Step 4: Run and watch it pass**
+Run: `make release`
+Expected: builds clean. There is deliberately no behavioural assertion at this task — the table is inert data until Task 4 consumes it, and an assertion here would test the compiler rather than the reader. Tasks 4-6 exercise every disposition: SEMANTIC via headings and lists, TRANSPARENT via the hypertarget case, DROPPED via maketitle and tightlist, TEXT via the em-dash and ldots.
 
-Run: `make release && build/release/test/unittest "test/sql/latex_macros.test"`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add src/include/latex_macros.hpp src/latex_macros.cpp src/panduck_extension.cpp CMakeLists.txt test/sql/latex_macros.test
-git commit -m "Add the LaTeX macro disposition table, introspectable as a table function"
+git add src/include/latex_macros.hpp src/latex_macros.cpp CMakeLists.txt
+git commit -m "Add the LaTeX macro disposition table"
 ```
 
 ---

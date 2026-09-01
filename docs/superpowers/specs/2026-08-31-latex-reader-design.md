@@ -146,7 +146,7 @@ duck_block spec regardless.
 |---|---|
 | `itemize` | `list`, `list_type=bullet` |
 | `enumerate` | `list`, `list_type=ordered` (plus `start`, `number_style`, `number_delim`) |
-| `description` | **held** — see below |
+| `description` | **deferred** — see below |
 | `\item` | `list_item` |
 | `quote`, `quotation` | `blockquote` |
 | `verbatim`, `lstlisting` | `code` (raw content) |
@@ -174,12 +174,22 @@ and panduck's EPUB reader learned this the expensive way.
 
 Writing `list_item` with its text in `content` is a pre-4.0 shape and must not be emitted.
 
-**`description` is HELD.** duck_block's `list_type` values are `bullet` and `ordered`; the
-set is open and definition lists are wanted but unspecified, and `deflist` still carries an
-opaque JSON tuple. Emitting `list_type='description'` would invent a value no consumer can
-read — the same defect as panduck briefly emitting `<dl>` as a bullet list. Route it to
-`duck_block_utils` when the reader reaches it; until then a `description` environment is
-TRANSPARENT, so its text survives as blocks rather than being dropped or mislabelled.
+**`description` is DEFERRED, no longer held.** When this was written duck_block had no shape
+for a definition list, so emitting `list_type='description'` would have invented a value no
+consumer could read. That question is now SETTLED upstream:
+
+```
+list         list_type='definition'
+  list_item  role='term'          > plain "term"
+  list_item  role='definition'    > plain "the definition"
+```
+
+Zero new types — the extensibility argument for making `list_type` canonical over a boolean
+`ordered`, made before anything needed it, and `dl` arrived the same day. So the shape exists
+and this reader simply has not implemented it: `description` stays TRANSPARENT, its text
+survives, and the work is scheduled rather than blocked. **Deferred and held are different
+states and this document said the wrong one** — a reader would have concluded the question
+was open.
 
 These rules are scoped to **block** element_types; inline wrappers remain a documented gap
 upstream, so the inline rules below are unaffected.
@@ -258,9 +268,10 @@ inline run that follows it, using level only *among* inlines where it genuinely 
 nesting.
 
 Top-level blocks carry **no** `level` (NULL), as every existing reader emits them.
-Container blocks — `list`, `list_item`, `blockquote` as of spec 2.0, plus
-`div`/`section`/`figure`/`caption` — own their children at `level + 1`, and the container
-ends at the first element back at its own level. So a flat document is indistinguishable from what the other readers
+Container blocks — `list`, `list_item`, `blockquote`, `div`, `section`, `figure`,
+`caption` — own their children at `level + 1`, and the container ends at the first element
+back at its own level. A container carries `content` only when its single child is a plain
+text run; `list` never can, because its children are always `list_item`s. So a flat document is indistinguishable from what the other readers
 produce, and depth appears only when the source actually has it — the same rule as for
 inlines.
 
@@ -290,8 +301,14 @@ inlines at depth > 1. That is the shape which rendered as `****Doc` in `duckdb_m
 writer — a wrapper with empty content followed by its child, walked flat. That bug is real
 and already known; never emitting the shape leaves it latent rather than absent.
 
-**Math** is opaque: `$…$` and `\(…\)` → `math` with `mode=inline`; `$$…$$` and `\[…\]` →
-`math` with `mode=display`. Content is the verbatim TeX. No math parsing.
+**Math** is opaque: `$…$` and `\(…\)` → `math` with `attributes['display'] = 'inline'`;
+`$$…$$` and `\[…\]` → `display = 'block'`. Content is the verbatim TeX. No math parsing.
+
+This line previously said `mode=inline` / `mode=display`, which duck_block does not define —
+its own spec gives `math` the attribute `display`, valued `inline` or `block`. A whole-branch
+review flagged the shipped code as inventing an attribute, citing THIS document; the code was
+right and this document was the stale one. Recorded because a spec that outlives its subject
+is read as authority.
 
 **Math is a TOKENIZER construct, not a macro** — it never reaches the disposition table.
 That matters for `\(`, `\)`, `\[` and `\]`, which lex as control symbols: without an

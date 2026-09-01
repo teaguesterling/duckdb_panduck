@@ -297,15 +297,26 @@ SELECT kind, text FROM panduck_latex_tokens('100\% sure');
 control_symbol	%
 text	 sure
 
-# A blank line is a paragraph break. A single newline is just a space -- LaTeX's only
-# paragraph signal is the blank line.
+# A BLANK LINE IS A PARAGRAPH BREAK; A SINGLE NEWLINE IS JUST A SPACE. That is LaTeX's
+# only paragraph signal. Asserted as kinds and counts rather than as token values: a text
+# run spanning a single newline CONTAINS one, and sqllogictest uses newlines as row
+# boundaries, so asserting the value would be testing the harness's escaping rather than
+# the tokenizer.
 query II
-SELECT kind, text FROM panduck_latex_tokens(e'one\ntwo\n\nthree');
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo\n\nthree')
+GROUP BY kind ORDER BY kind;
 ----
-text	one
-two
-par_break	
-text	three
+par_break	1
+text	2
+
+# ...and the discriminating half: NO blank line means NO break, so the whole thing is one
+# text run. A tokenizer that split on every newline would pass the assertion above and
+# fail this one.
+query II
+SELECT kind, count(*) FROM panduck_latex_tokens(e'one\ntwo')
+GROUP BY kind ORDER BY kind;
+----
+text	1
 
 # Ligatures are resolved in the text scanner, where the source spells them.
 query II
@@ -706,7 +717,7 @@ strikethrough	strike
 # other panduck reader still does, and rtf_reader.cpp:77 documents as a limitation --
 # would discard the one thing LaTeX states unambiguously.
 query III
-SELECT element_type, content, level FROM read_latex_blocks('\textbf{\emph{x}}')
+SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{\emph{x}}')
 WHERE kind = 'inline' ORDER BY element_order;
 ----
 bold	NULL	2
@@ -717,7 +728,7 @@ text	x	4
 # other four readers emit. Asserting only the nested case would pass against a reader that
 # over-nested everything; the two together are what discriminate.
 query III
-SELECT element_type, content, level FROM read_latex_blocks('\textbf{x}')
+SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{x}')
 WHERE kind = 'inline' ORDER BY element_order;
 ----
 bold	x	2
@@ -949,7 +960,7 @@ git commit -m "Handle math, verbatim and malformed LaTeX; document the reader"
 **Files:**
 - Modify: `scripts/check_duck_block_vocabulary.py` (`SCAN_GLOBS` already covers `src/*.cpp`; verify GAPS)
 - Modify: `test/roundtrip/check_roundtrip.py`
-- Test: `test/sql/reader_registry.test`
+- Test: `test/sql/reader_registry.test` — RE-RUN ONLY. Task 6 already added LaTeX to the cross-reader tree invariant; do not add a second UNION arm.
 
 **Interfaces:**
 - Consumes: the finished reader.

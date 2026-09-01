@@ -375,3 +375,28 @@ WHERE element_type = 'list' ORDER BY element_order;
 list	2	false	bullet	NULL	NULL
 list	2	true	ordered	3	Decimal
 
+# ---------------------------------------------------------------------------
+# A DEFINITION LIST IS NOT A BULLET LIST, and the reader must not claim it is. <dl> briefly
+# shared the <ul>/<ol> branch here, which emitted it as a `list` carrying
+# list_type='bullet' -- a straight falsehood about the document, and invisible because no
+# fixture contained a <dl> at all.
+#
+# duck_block has no settled shape for definition lists: `deflist` still carries an opaque
+# JSON tuple and its structural form is an open question upstream. So <dl> stays on the
+# transparent path and <dt>/<dd> keep the placeholder list_item mapping they already had.
+#
+# The `plain` rule is deliberately NOT propagated into them. It keys on the <li> TAG rather
+# than the list_item TYPE, because dt/dd mapping to list_item is a workaround for a gap
+# rather than a statement that a definition IS a list item -- and extending a rule through
+# a shared placeholder type would invent a shape for something upstream left open. That is
+# the fifth-shape failure this file keeps recording.
+query IIII
+SELECT element_type, content, level, attributes['list_type']
+FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE content IN ('term', 'definition') OR (element_type = 'list' AND attributes['list_type'] = 'ordered')
+ORDER BY element_order;
+----
+list	NULL	2	ordered
+list_item	term	2	NULL
+list_item	definition	2	NULL
+

@@ -461,11 +461,19 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			}
 			block.content = text;
 			out.push_back(std::move(block));
-		} else if (tag == "ul" || tag == "ol" || tag == "dl") {
+		} else if (tag == "ul" || tag == "ol") {
 			// A LIST IS A CONTAINER. Previously these fell through to the
 			// unknown-element branch, which recursed and dropped the grouping: the
 			// <li>s came out as bare list_items with nothing saying they belonged
 			// together, or whether they were bulleted or numbered.
+			//
+			// <dl> IS DELIBERATELY NOT HERE. It was, briefly, and that was wrong: a
+			// definition list would have been emitted as list_type='bullet', which is a
+			// straight falsehood about the document. duck_block has no settled shape for
+			// definition lists -- `deflist` still carries an opaque JSON tuple and its
+			// structural form is an open question upstream -- so <dl> stays on the
+			// transparent path until there is a real answer to conform to. Guessing a
+			// parent type is how a format grows a shape nobody can consume.
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_LIST;
 			block.container = true;
@@ -509,10 +517,17 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				block.level = depth;
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
-			} else if (type == DuckBlockTypes::TYPE_LIST_ITEM) {
+			} else if (tag == "li") {
 				// <li>text</li>: the TIGHT form. Its bare run becomes a `plain` -- a
 				// block-level text run with NO paragraph semantics, which is precisely
 				// Pandoc's Plain constructor and precisely what this markup is.
+				//
+				// KEYED ON THE TAG, NOT THE TYPE, and the difference matters: <dt> and <dd>
+				// also map to list_item here, and that mapping is a workaround for a gap
+				// rather than a statement that a definition IS a list item. duck_block has
+				// no settled shape for definition lists, so propagating the plain rule into
+				// them on the strength of a shared placeholder type would be inventing a
+				// shape for something upstream has explicitly left open.
 				//
 				// The tight/loose distinction is real: the two forms render with different
 				// spacing, and HTML, Pandoc and duck_block all carry it. It lives in the

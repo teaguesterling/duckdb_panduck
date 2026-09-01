@@ -10,6 +10,8 @@ real-world multi-directory book needs and a one-file book never exercises:
   * chapters are STORED in the archive in reverse of their reading order
   * the package document sits in its own directory, so manifest hrefs climb with ../
   * one chapter's filename contains a space, so its href is percent-encoded
+  * a DEFINITION list, which must not be mislabelled as a bullet list -- duck_block
+    has no settled shape for one, so the reader must not invent a list_type for it
   * an ORDERED list with a non-default start -- every <ol> in the two real-writer
     fixtures lives in a nav/toc document outside the spine, so nothing exercised
     ordered lists at all and `start`/`number_style`/`number_delim` went untested
@@ -109,6 +111,7 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <hr/>
 <pre>  indented   code</pre>
 <ol start="3"><li>third</li></ol>
+<dl><dt>term</dt><dd>definition</dd></dl>
 </section>
 </body>
 </html>

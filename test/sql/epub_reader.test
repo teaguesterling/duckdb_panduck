@@ -345,3 +345,28 @@ paragraph	bullet one	5	NULL
 list_item	NULL	4	NULL
 paragraph	bullet two	5	NULL
 
+# ---------------------------------------------------------------------------
+# ORDERED LISTS, AND BOTH SPELLINGS OF ORDEREDNESS. attributes['ordered'] is the CANONICAL
+# name -- spec v1.0 documented it -- and 'list_type' is an alias that arrived later with
+# duck_block_utils' Pandoc reader. For a while that reader emitted only list_type, so a
+# consumer written against the published v1 spec read nothing at all from a Pandoc list.
+# Both producers now emit both names, and so does panduck: prefer `ordered` when writing
+# new code, tolerate either when reading.
+#
+# start/number_style/number_delim are emitted ALWAYS on an ordered list, including at their
+# defaults, matching the stricter of the two upstream producers so there is one shape
+# rather than two. `start` here is 3 rather than 1 precisely so a reader that ignored the
+# attribute and hardcoded the default would still be caught.
+#
+# This fixture carries the only ordered list in the suite. Every <ol> in the two
+# real-writer EPUBs sits in a nav or toc document, which is outside the spine and therefore
+# never read -- so this whole code path was unexercised until the fixture gained one.
+query IIIIII
+SELECT element_type, level, attributes['ordered'], attributes['list_type'],
+       attributes['start'], attributes['number_style']
+FROM read_epub_blocks('test/fixtures/spine_order.epub')
+WHERE element_type = 'list' ORDER BY element_order;
+----
+list	2	false	bullet	NULL	NULL
+list	2	true	ordered	3	Decimal
+

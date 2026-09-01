@@ -675,6 +675,14 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
 		if (!block.list_type.empty()) {
+			// BOTH SPELLINGS, deliberately. attributes['ordered'] is the CANONICAL name --
+			// duck_block spec v1.0 documented it -- and 'list_type' is an alias that
+			// arrived later with duck_block_utils' Pandoc reader. That reader emitted only
+			// the alias for a while, so a consumer written against the published v1 spec
+			// read nothing at all from a Pandoc-produced list. Emitting both is what both
+			// upstream producers now do; prefer `ordered` when writing new code against
+			// this output, tolerate either when reading it.
+			row.attributes["ordered"] = block.list_type == "ordered" ? "true" : "false";
 			row.attributes["list_type"] = block.list_type;
 			if (!block.list_start.empty()) {
 				row.attributes["start"] = block.list_start;

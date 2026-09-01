@@ -10,6 +10,9 @@ real-world multi-directory book needs and a one-file book never exercises:
   * chapters are STORED in the archive in reverse of their reading order
   * the package document sits in its own directory, so manifest hrefs climb with ../
   * one chapter's filename contains a space, so its href is percent-encoded
+  * an ORDERED list with a non-default start -- every <ol> in the two real-writer
+    fixtures lives in a nav/toc document outside the spine, so nothing exercised
+    ordered lists at all and `start`/`number_style`/`number_delim` went untested
   * each chapter links a DIFFERENT stylesheet, and chapter two USES a class that only
     chapter one's stylesheet defines -- so a leaked rule set is visible
 
@@ -105,6 +108,7 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <div></div>
 <hr/>
 <pre>  indented   code</pre>
+<ol start="3"><li>third</li></ol>
 </section>
 </body>
 </html>

@@ -48,7 +48,7 @@ MACROS_RELPATH = os.path.join("vendor", "duck_block_conformance.sql")
 # .toml/.yaml are here deliberately: those two registry branches synthesise a block by
 # hand instead of passing one up from a reader, which is exactly the kind of element a
 # reader test never covers. They shipped a NULL level because of it.
-FIXTURE_GLOBS = ("*.rtf", "*.docx", "*.odt", "*.epub", "*.tex", "*.toml", "*.yaml", "*.org", "*.rst")
+FIXTURE_GLOBS = ("*.rtf", "*.docx", "*.odt", "*.epub", "*.tex", "*.toml", "*.yaml", "*.org", "*.rst", "*.ipynb")
 
 SEP = "|"
 

@@ -28,6 +28,8 @@ find_package(miniz CONFIG REQUIRED)
 # through a submodule include path -- see src/include/duck_block_types.hpp for why, and
 # for how to re-sync it against upstream.
 include_directories(src/include)
+# DuckDB vendors yyjson as its own target, so .ipynb parses with NO new dependency.
+include_directories(duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
     src/docx_reader.cpp
@@ -41,6 +43,7 @@ set(EXTENSION_SOURCES
     src/org_scanner.cpp
     src/rst_reader.cpp
     src/rst_scanner.cpp
+    src/ipynb_reader.cpp
     src/pandoc_ast_map.cpp
     src/reader_registry.cpp
     src/rtf_reader.cpp
@@ -51,8 +54,8 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-target_link_libraries(${EXTENSION_NAME} pugixml::pugixml miniz::miniz)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz)
+target_link_libraries(${EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
 
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)

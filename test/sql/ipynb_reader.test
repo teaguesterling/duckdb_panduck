@@ -1,0 +1,132 @@
+# name: test/sql/ipynb_reader.test
+# description: read_ipynb_blocks() -- Jupyter notebooks, parsed with DuckDB's own yyjson
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# EACH CELL IS A CONTAINER, carrying its kind in attributes['source_type']. A notebook's
+# cell boundaries are structure a consumer needs -- "which cell produced this" is the
+# question notebooks exist to answer -- so they are not flattened away.
+#
+# A CODE CELL'S OUTPUTS ARE CONTENT. What a notebook computed is part of what it says; a
+# notebook read without its outputs is a script. Both output spellings appear below: a
+# `stream` (stdout) and an `execute_result` (a returned value), which are different shapes
+# in the file and must both be found.
+# CONTENT IS NOT SELECTED HERE: a markdown cell's raw content spans lines, and
+# sqllogictest cannot hold a newline inside a tab-delimited value. The shape is asserted
+# here and the content just below, which also keeps the two failures separable.
+query IIII
+SELECT element_type, level, attributes['source_type'], encoding
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE kind = 'block' ORDER BY element_order;
+----
+div	1	markdown	text
+raw	2	NULL	markdown
+div	1	code	text
+code	2	NULL	text
+div	2	stream	text
+code	3	NULL	text
+div	1	code	text
+code	2	NULL	text
+div	2	execute_result	text
+code	3	NULL	text
+div	1	raw	text
+raw	2	NULL	text
+
+# The code and output text, on one line each.
+query II
+SELECT element_type, content FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE element_type = 'code' ORDER BY element_order;
+----
+code	print('hello')
+code	hello
+code	6 * 7
+code	42
+
+# A code cell's language comes from the notebook's kernelspec, which records it ONCE at the
+# top rather than per cell.
+query I
+SELECT DISTINCT attributes['language'] FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE element_type = 'code' AND attributes['language'] IS NOT NULL;
+----
+python
+
+# ---------------------------------------------------------------------------
+# A MARKDOWN CELL IS HELD RAW, and that is a DEFERRAL rather than a resting place.
+#
+# The content is a DOCUMENT -- it would be duck_blocks -- which makes it a different case
+# from a whole-file .toml or .yaml blob, where verbatim is the correct and final answer
+# because there is nothing it should become.
+#
+# It is raw because delegating would make this reader's output depend on which extensions
+# happen to be installed: panduck's delegation lives in the SQL dispatch layer, and a C++
+# reader cannot reach those functions. One consistent behaviour beats two that vary by
+# environment. A consumer wanting blocks can call md_to_blocks() on this content today.
+#
+# Asserted as VERBATIM, markers and all: if this ever starts returning parsed text the
+# deferral has been discharged somewhere and this test is where that shows up.
+query II
+SELECT encoding, replace(content, chr(10), ' // ') FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE element_type = 'raw' AND encoding = 'markdown';
+----
+markdown	# Notebook Title //  // Prose with *emphasis*.
+
+# ---------------------------------------------------------------------------
+# NOTEBOOK METADATA -> kind='value', and this reader EXCEEDS pandoc deliberately.
+#
+# Measured: pandoc puts a notebook's ENTIRE metadata into one opaque `jupyter` MetaMap --
+# title, authors, kernelspec and all -- so a consumer asking "who wrote this" has to walk a
+# blob. The fields are plainly in the file, and recovering them is the same approved
+# exception the docx and odt readers take.
+#
+# attributes['source_type'] carries the ORIGINAL PATH, so a format-derived field stays
+# distinguishable from a pandoc-derived one -- the condition attached to exceeding the
+# reference -- and a consumer can see exactly which part of the notebook it came from.
+query IIII
+SELECT kind, attributes['key'], attributes['source_type'], content
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE kind = 'value' OR (kind = 'inline' AND element_order > (
+  SELECT min(element_order) FROM read_ipynb_blocks('test/fixtures/notebook.ipynb') WHERE kind = 'value'))
+ORDER BY element_order;
+----
+value	author	metadata.authors	NULL
+inline	NULL	NULL	A. Writer
+value	kernel	metadata.kernelspec.language	NULL
+inline	NULL	NULL	python
+value	title	metadata.title	NULL
+inline	NULL	NULL	NB Title
+
+# Metadata is appended AFTER the blocks -- spec 6.2 makes that a contract.
+query I
+SELECT count(*) FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE kind = 'value' AND element_order < (
+  SELECT max(element_order) FROM read_ipynb_blocks('test/fixtures/notebook.ipynb') WHERE kind = 'block');
+----
+0
+
+# ---------------------------------------------------------------------------
+# MALFORMED JSON YIELDS NOTHING rather than throwing. A reader that fails the whole query
+# on one bad file is worse than one reporting an empty document, and every other panduck
+# reader degrades the same way.
+query I
+SELECT count(*) FROM read_ipynb_blocks_string('{not json at all');
+----
+0
+
+# `source` is an ARRAY OF LINES in every notebook nbformat 4 writes, and a plain STRING in
+# some hand-built ones. Both spellings are legal, and a reader handling one silently
+# produces nothing for the other -- so both are asserted.
+query II
+SELECT element_type, content FROM read_ipynb_blocks_string(
+  '{"cells":[{"cell_type":"code","source":"x = 1"}],"metadata":{},"nbformat":4}')
+WHERE element_type = 'code';
+----
+code	x = 1
+
+query II
+SELECT element_type, content FROM read_ipynb_blocks_string(
+  '{"cells":[{"cell_type":"code","source":["x = ","1"]}],"metadata":{},"nbformat":4}')
+WHERE element_type = 'code';
+----
+code	x = 1

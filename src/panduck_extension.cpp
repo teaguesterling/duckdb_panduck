@@ -6,6 +6,7 @@
 #include "epub_reader.hpp"
 #include "latex_reader.hpp"
 #include "org_reader.hpp"
+#include "ipynb_reader.hpp"
 #include "rst_reader.hpp"
 #include "latex_tokenizer.hpp"
 #include "odt_reader.hpp"
@@ -72,6 +73,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterLatexReaderFunction(loader);
 	org::RegisterOrgReader(loader);
 	rst::RegisterRstReader(loader);
+	ipynb::RegisterIpynbReader(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

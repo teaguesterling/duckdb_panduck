@@ -13,6 +13,7 @@ static const char *const EXT_ODT[] = {"odt", nullptr};
 static const char *const EXT_EPUB[] = {"epub", nullptr};
 static const char *const EXT_LATEX[] = {"tex", "latex", nullptr};
 static const char *const EXT_RST[] = {"rst", nullptr};
+static const char *const EXT_IPYNB[] = {"ipynb", nullptr};
 static const char *const EXT_ORG[] = {"org", nullptr};
 static const char *const EXT_MEDIAWIKI[] = {"wiki", "mediawiki", nullptr};
 static const char *const EXT_RTF[] = {"rtf", nullptr};
@@ -47,6 +48,16 @@ const FormatReader FORMATS[] = {
      "items, blockquotes, divs, links and images; run formatting resolves through CSS "
      "classes because LibreOffice's export emits no semantic markup at all. Tables and "
      "footnotes are not read yet"},
+    {"ipynb", EXT_IPYNB, "read_ipynb_blocks", STATUS_IMPLEMENTED,
+     "a Jupyter notebook, parsed with the yyjson DuckDB already vendors -- so .ipynb needs "
+     "NO third-party extension, unlike the toml and yaml paths. Each cell is a `div` "
+     "carrying its kind in attributes['source_type']; a code cell's OUTPUTS are content and "
+     "are kept, because a notebook read without them is a script. A markdown cell is held "
+     "RAW with encoding='markdown' -- a DEFERRAL rather than a resting place, since that "
+     "content would be duck_blocks, discharged by a post-parse helper for embedded formats "
+     "rather than by markdown parsing landing here. Notebook title, authors and kernel are "
+     "recovered as kind='value', which EXCEEDS pandoc: it puts the whole of a notebook's "
+     "metadata into one opaque `jupyter` blob"},
     {"latex", EXT_LATEX, "read_latex_blocks", STATUS_IMPLEMENTED,
      "a tokenizer plus a macro DISPOSITION table -- semantic, transparent, dropped, text -- "
      "rather than a grammar, because LaTeX has no document model to parse against. "

@@ -1,5 +1,12 @@
 #include "latex_macros.hpp"
 
+// element_type comes from the VENDORED VOCABULARY, never from a literal here. A rename
+// upstream is then a compile error at every row; a literal would compile clean and
+// silently stop matching what consumers look for -- the exact trade
+// src/include/duck_block_types.hpp:19-20 spells out. The constants are constexpr, so the
+// table below is still statically initialised.
+#include "duck_block_types.hpp"
+
 #include <cstddef>
 
 namespace duckdb {
@@ -9,35 +16,35 @@ namespace {
 
 const MacroEntry MACROS[] = {
     // SEMANTIC -- inline
-    {"textbf", Disposition::SEMANTIC, "bold", 1, 0, nullptr},
-    {"bf", Disposition::SEMANTIC, "bold", 1, 0, nullptr},
-    {"emph", Disposition::SEMANTIC, "italic", 1, 0, nullptr},
-    {"textit", Disposition::SEMANTIC, "italic", 1, 0, nullptr},
-    {"it", Disposition::SEMANTIC, "italic", 1, 0, nullptr},
-    {"underline", Disposition::SEMANTIC, "underline", 1, 0, nullptr},
-    {"uline", Disposition::SEMANTIC, "underline", 1, 0, nullptr},
-    {"sout", Disposition::SEMANTIC, "strikethrough", 1, 0, nullptr},
-    {"st", Disposition::SEMANTIC, "strikethrough", 1, 0, nullptr},
-    {"texttt", Disposition::SEMANTIC, "code", 1, 0, nullptr},
-    {"textsc", Disposition::SEMANTIC, "smallcaps", 1, 0, nullptr},
-    {"textsuperscript", Disposition::SEMANTIC, "superscript", 1, 0, nullptr},
-    {"textsubscript", Disposition::SEMANTIC, "subscript", 1, 0, nullptr},
-    {"href", Disposition::SEMANTIC, "link", 2, 1, nullptr},
-    {"url", Disposition::SEMANTIC, "link", 1, 0, nullptr},
-    {"includegraphics", Disposition::SEMANTIC, "image", 1, 0, nullptr},
-    {"footnote", Disposition::SEMANTIC, "note", 1, 0, nullptr},
-    {"cite", Disposition::SEMANTIC, "cite", 1, 0, nullptr},
+    {"textbf", Disposition::SEMANTIC, DuckBlockTypes::INLINE_BOLD, 1, 0, nullptr},
+    {"bf", Disposition::SEMANTIC, DuckBlockTypes::INLINE_BOLD, 1, 0, nullptr},
+    {"emph", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
+    {"textit", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
+    {"it", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
+    {"underline", Disposition::SEMANTIC, DuckBlockTypes::INLINE_UNDERLINE, 1, 0, nullptr},
+    {"uline", Disposition::SEMANTIC, DuckBlockTypes::INLINE_UNDERLINE, 1, 0, nullptr},
+    {"sout", Disposition::SEMANTIC, DuckBlockTypes::INLINE_STRIKETHROUGH, 1, 0, nullptr},
+    {"st", Disposition::SEMANTIC, DuckBlockTypes::INLINE_STRIKETHROUGH, 1, 0, nullptr},
+    {"texttt", Disposition::SEMANTIC, DuckBlockTypes::INLINE_CODE, 1, 0, nullptr},
+    {"textsc", Disposition::SEMANTIC, DuckBlockTypes::INLINE_SMALLCAPS, 1, 0, nullptr},
+    {"textsuperscript", Disposition::SEMANTIC, DuckBlockTypes::INLINE_SUPERSCRIPT, 1, 0, nullptr},
+    {"textsubscript", Disposition::SEMANTIC, DuckBlockTypes::INLINE_SUBSCRIPT, 1, 0, nullptr},
+    {"href", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 2, 1, nullptr},
+    {"url", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 1, 0, nullptr},
+    {"includegraphics", Disposition::SEMANTIC, DuckBlockTypes::INLINE_IMAGE, 1, 0, nullptr},
+    {"footnote", Disposition::SEMANTIC, DuckBlockTypes::INLINE_NOTE, 1, 0, nullptr},
+    {"cite", Disposition::SEMANTIC, DuckBlockTypes::INLINE_CITE, 1, 0, nullptr},
 
     // SEMANTIC -- sectioning. heading_level is resolved at parse time from the
     // documentclass, so element_type alone is not enough; the reader consults
     // HeadingLevelFor() rather than a level column here.
-    {"part", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"chapter", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"section", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"subsection", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"subsubsection", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"paragraph", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
-    {"subparagraph", Disposition::SEMANTIC, "heading", 1, 0, nullptr},
+    {"part", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"chapter", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"section", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"subsection", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"subsubsection", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"paragraph", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
+    {"subparagraph", Disposition::SEMANTIC, DuckBlockTypes::TYPE_HEADING, 1, 0, nullptr},
 
     // TRANSPARENT -- drop the macro, DESCEND into the content argument.
     {"hypertarget", Disposition::TRANSPARENT, nullptr, 2, 1, nullptr},
@@ -80,12 +87,12 @@ const MacroEntry MACROS[] = {
 const size_t MACRO_COUNT = sizeof(MACROS) / sizeof(MACROS[0]);
 
 const MacroEntry ENVIRONMENTS[] = {
-    {"itemize", Disposition::SEMANTIC, "list", 0, -1, "bullet"},
-    {"enumerate", Disposition::SEMANTIC, "list", 0, -1, "ordered"},
-    {"quote", Disposition::SEMANTIC, "blockquote", 0, -1, nullptr},
-    {"quotation", Disposition::SEMANTIC, "blockquote", 0, -1, nullptr},
-    {"verbatim", Disposition::SEMANTIC, "code", 0, -1, nullptr},
-    {"lstlisting", Disposition::SEMANTIC, "code", 0, -1, nullptr},
+    {"itemize", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "bullet"},
+    {"enumerate", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "ordered"},
+    {"quote", Disposition::SEMANTIC, DuckBlockTypes::TYPE_BLOCKQUOTE, 0, -1, nullptr},
+    {"quotation", Disposition::SEMANTIC, DuckBlockTypes::TYPE_BLOCKQUOTE, 0, -1, nullptr},
+    {"verbatim", Disposition::SEMANTIC, DuckBlockTypes::TYPE_CODE, 0, -1, nullptr},
+    {"lstlisting", Disposition::SEMANTIC, DuckBlockTypes::TYPE_CODE, 0, -1, nullptr},
     {"center", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"abstract", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"document", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},

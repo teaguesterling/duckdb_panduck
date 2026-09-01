@@ -197,3 +197,20 @@ SELECT element_type, content, level FROM read_latex_blocks_string('\textbf{x}')
 WHERE kind = 'inline' ORDER BY element_order;
 ----
 bold	x	2
+
+# AN EMPTY LINK LABEL IS NOT A NULL LINK. \href{url}{} would otherwise emit the one shape
+# left in this reader that a consumer can neither render nor index: NULL content with no
+# children to justify the NULL -- the same objection that makes \section{} not a heading.
+# \url{url} already labels a link with its target, so an empty \href label gets that same
+# answer rather than a second convention. The second row proves the text after it survives.
+query III
+SELECT element_type, content, attributes['href'] FROM read_latex_blocks_string('\href{http://x}{} kept')
+WHERE kind = 'inline' AND element_type = 'link' ORDER BY element_order;
+----
+link	http://x	http://x
+
+query I
+SELECT count(*) FROM read_latex_blocks_string('\href{http://x}{} kept')
+WHERE element_type = 'text' AND trim(content) = 'kept';
+----
+1

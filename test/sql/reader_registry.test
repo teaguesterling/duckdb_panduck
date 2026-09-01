@@ -278,6 +278,15 @@ WITH r AS (
   UNION ALL SELECT 'e_epub_spine', element_order, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
   UNION ALL SELECT 'f_epub_libre', element_order, level FROM read_epub_blocks('test/fixtures/libreoffice.epub')
   UNION ALL SELECT 'g_latex', element_order, level FROM read_latex_blocks('test/fixtures/handwritten.tex')
+  UNION ALL SELECT 'h_latex_pandoc', element_order, level FROM read_latex_blocks('test/fixtures/pandoc.tex')
+  -- ...AND A NESTED ONE, which no fixture on disk supplies: handwritten.tex and pandoc.tex
+  -- both write \textbf{bold} flat, so neither exercises the case this invariant is most
+  -- likely to catch. Inline nesting is the one place a panduck reader emits a level deeper
+  -- than block+1, and a jump of 2 there means the parent run is missing from the stream and
+  -- the tree cannot be rebuilt. Asserted through the string form because putting nesting in
+  -- a fixture would change what the two-writer equivalence tests compare.
+  UNION ALL SELECT 'i_latex_nested', element_order, level
+    FROM read_latex_blocks_string('deep \textbf{a \emph{b \texttt{c \textsc{d}}}} tail.')
 ), d AS (
   SELECT src, level, level - lag(level) OVER (PARTITION BY src ORDER BY element_order) AS delta FROM r
 )
@@ -294,6 +303,8 @@ d_epub	0	0	0
 e_epub_spine	0	0	0
 f_epub_libre	0	0	0
 g_latex	0	0	0
+h_latex_pandoc	0	0	0
+i_latex_nested	0	0	0
 
 # ---------------------------------------------------------------------------
 # EVERY HEADING CARRIES attributes['heading_level']. Under spec 3.0 a heading without it

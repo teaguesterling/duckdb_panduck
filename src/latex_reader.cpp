@@ -613,6 +613,14 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 		if (children.empty()) {
 			inl.content = std::move(text);
 		}
+		if (element_type == DuckBlockTypes::INLINE_LINK && inl.content.empty() && children.empty()) {
+			// \href{url}{} HAS NO LABEL, and a link with NULL content and no children is the
+			// one shape a consumer can neither render nor index -- the same objection that
+			// makes \section{} not a heading. \url{url} already answers it by labelling the
+			// link with its target; an empty \href label is the same question, so it gets the
+			// same answer rather than a second convention.
+			inl.content = inl.href;
+		}
 	}
 	if (inl.content.empty() && children.empty() && inl.src.empty() && inl.href.empty()) {
 		return; // an empty formatted run is not an element, it is punctuation

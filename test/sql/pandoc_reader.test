@@ -187,3 +187,43 @@ SELECT content FROM read_pandoc_blocks_string('{"pandoc-api-version":[1,23,1],"m
   [["",[],[]],[]]]}]}') WHERE element_type = 'table';
 ----
 {"headers":[],"rows":[["BoldCell"]]}
+
+# ---------------------------------------------------------------------------
+# THE FLATTENER MUST REACH ALL THREE INLINE SHAPES, and my first fix reached one.
+#
+# I claimed a Link's inlines fall out of a general descent "without a per-constructor arm".
+# Measured, they do not -- there are THREE shapes and they need three treatments:
+#
+#   Strong/Emph        `c` IS the inline list              descending reaches it
+#   Link/Image         `c` is [attr, [inlines], target]    inlines in an INNER ARRAY, and
+#                                                          all three elements are arrays,
+#                                                          so an object-only walk stops dead
+#   Code/Math/Raw      `c` is [attr, "text"]               a BARE STRING, unreachable by
+#                                                          descending at any depth
+#
+# The third is the one genuinely unavoidable per-constructor arm, and the reason is the
+# whole point: A BARE STRING IS INDISTINGUISHABLE FROM A LINK'S URL. A flattener that takes
+# every string it walks past recovers the code text AND leaks `http://x.example` into the
+# cell. Taking c[1] by position is what keeps one without the other.
+query I
+SELECT content FROM read_pandoc_blocks('test/fixtures/table_inlines.pandoc.json')
+WHERE element_type = 'table';
+----
+{"headers":["H"],"rows":[["text and co**de"]]}
+
+# THE NEGATIVE ASSERTIONS ARE THE LOAD-BEARING ONES. An assertion that only checks the text
+# is PRESENT passes for a leaking implementation -- appending everything it walks past
+# recovers the words and the URL together. Only asserting the absence discriminates.
+query II
+SELECT content NOT LIKE '%x.example%' AS no_host, content NOT LIKE '%http%' AS no_scheme
+FROM read_pandoc_blocks('test/fixtures/table_inlines.pandoc.json') WHERE element_type = 'table';
+----
+true	true
+
+# An image cell keeps its ALT TEXT and not its filename, which is the same discrimination
+# on the other constructor: `c` is [attr, [alt], target] and only c[1] is content.
+query I
+SELECT content FROM read_pandoc_blocks('test/fixtures/table_image.pandoc.json')
+WHERE element_type = 'table';
+----
+{"headers":["H"],"rows":[["alt text"]]}

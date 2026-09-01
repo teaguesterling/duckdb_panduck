@@ -180,21 +180,40 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 			result += " ";
 		} else if (strcmp(t, "LineBreak") == 0) {
 			result += "\n";
+		} else if (strcmp(t, "Code") == 0 || strcmp(t, "Math") == 0 || strcmp(t, "RawInline") == 0) {
+			// SHAPE THREE: `c` is [attr-or-mathtype, "text"] -- the text is a BARE STRING and
+			// is unreachable by descending at any depth. This is the one genuinely
+			// unavoidable per-constructor arm, because a bare string is INDISTINGUISHABLE
+			// from a Link's URL: a flattener that takes every string it walks past leaks
+			// URLs and attr ids into cell text. Taking c[1] by position is what keeps
+			// `http://x.example` out of the result while keeping the code text in.
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
+				yyjson_val *text_val = yyjson_arr_get(c_val, 1);
+				if (text_val && yyjson_is_str(text_val)) {
+					result.append(yyjson_get_str(text_val), yyjson_get_len(text_val));
+				}
+			}
+		} else if (strcmp(t, "Link") == 0 || strcmp(t, "Image") == 0) {
+			// SHAPE TWO: `c` is [attr, [inlines], target]. The inlines are in an INNER ARRAY,
+			// and every one of the three elements is an array -- so a walk that only enters
+			// objects stops dead here. Taking c[1] explicitly is also what keeps the TARGET
+			// out: an Image cell keeps its alt text and not `pic.png`.
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
+				ExtractInlinesTextValInto(yyjson_arr_get(c_val, 1), result);
+			}
 		} else if (c_val) {
-			// RECURSE INTO FORMATTING CONTAINERS. Without this, Strong, Emph, Code, Link and
-			// every other wrapper contributed NOTHING -- so a heading of `**Bold** title`
-			// flattened to " title", and a table cell whose only content was `**BoldCell**`
-			// flattened to the EMPTY STRING. The cell's text was not mangled, it was GONE,
-			// inside the native {headers, rows} schema whose whole purpose is that cell text
-			// be searchable.
+			// SHAPE ONE: `c` IS the inline list -- Strong, Emph, Underline, Strikeout, Span,
+			// Quoted, SmallCaps and the rest. Descending reaches it.
 			//
-			// Found by measuring a formatted heading after duck_block_utils reported the
-			// same class in duckdb_markdown. The table-cell case is the more serious half
-			// and neither of us was looking at tables.
+			// THE THREE SHAPES ARE WHY "recurse over the whole c" WAS NOT ENOUGH. I wrote
+			// that a Link's inlines fall out of a general descent without a per-constructor
+			// arm; measured, `| [text](http://x/p) and \`co**de\` |` still flattened to
+			// " and " -- BOTH the link text and the code text lost. Correct about Strong,
+			// wrong about the other two, and the fix looked complete because the fixture
+			// only had Strong in it.
 			//
-			// A Link's `c` is [attr, inlines, target]; an Image's the same. Recursing over
-			// the whole `c` picks the inlines out of either without a per-constructor arm,
-			// because attr and target are not Str objects and contribute nothing.
+			// Reported by duck_block_utils, who implemented my description and then measured
+			// what it actually did rather than what it was supposed to do.
 			ExtractInlinesTextValInto(c_val, result);
 		}
 	};
@@ -203,6 +222,12 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 		size_t idx, max;
 		yyjson_val *item;
 		yyjson_arr_foreach(inlines_arr, idx, max, item) {
+			if (yyjson_is_arr(item)) {
+				// NESTED ARRAYS are entered, not skipped: a Link's inlines sit one array
+				// deeper than the walk used to reach.
+				ExtractInlinesTextValInto(item, result);
+				continue;
+			}
 			process_item(item);
 		}
 	} else if (yyjson_is_obj(inlines_arr)) {

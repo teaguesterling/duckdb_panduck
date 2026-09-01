@@ -208,10 +208,18 @@ has no branch for it
 # Every format the registry claims for a document must be dispatchable. This is the
 # general form of the assertion above: it fails when a format is added to the registry
 # without a branch, rather than waiting for someone to read such a file.
+#
+# The exclusion list is formats DISPATCHED BY A BRANCH rather than by a named reader
+# function. `zim` earned its place by firing this assertion when its row was added, which
+# is the check working -- and it is the one entry whose branch is a deliberate REFUSAL
+# rather than a reader: a .zim is a corpus of many articles and "read it as a document" has
+# no answer. Dispatchable includes "dispatches to an error that names the alternative",
+# because the failure this guards against is a format that falls through to the CODE
+# fallback and returns a parse tree instead of a document.
 query I
 SELECT count(*) FROM panduck_reader_registry()
 WHERE kind = 'doc'
-  AND format NOT IN ('markdown', 'html', 'pdf', 'pandoc_ast', 'toml', 'yaml', 'code')
+  AND format NOT IN ('markdown', 'html', 'pdf', 'pandoc_ast', 'toml', 'yaml', 'code', 'zim')
   AND function IS NULL;
 ----
 0
@@ -365,3 +373,27 @@ g_epub_spine	2	0
 h_latex	2	0
 i_latex_pandoc	2	0
 
+
+# ---------------------------------------------------------------------------
+# A ZIM ARCHIVE IS NOT A DOCUMENT, and the honest refusal matters more than the row.
+#
+# Before this, `.zim` resolved to NULL and FELL THROUGH to `code` -- handed to sitting_duck
+# and parsed as source. A binary archive read as a programming language is a silently wrong
+# answer, which is worse than an honest no. Raised by duckeye, who routes .zim to
+# duckdb_zim directly and needs panduck to answer honestly rather than plausibly.
+#
+# duckdb_zim emits its own schema and has no duck_block awareness, so there is nothing to
+# route to. A .zim holds thousands of articles; "read it as a document" has no answer. The
+# zim extension indexes and searches the archive, and a single resolved article IS a
+# document -- reaching panduck as HTML, by a path that already exists.
+query III
+SELECT ext, format, reader_ext FROM panduck_reader_registry() WHERE ext = '.zim';
+----
+.zim	zim	zim
+
+# The resolution is what stops the fall-through: anything that resolves to NULL becomes
+# `code`, so a declared format is the mechanism, not decoration.
+query I
+SELECT panduck_resolved_format('wiki.zim', 'auto');
+----
+zim

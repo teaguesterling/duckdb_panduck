@@ -61,6 +61,13 @@ ReaderRegistry::ReaderRegistry() {
 	    {".html", "html", "webbed", "", KIND_DOC},
 	    {".htm", "html", "webbed", "", KIND_DOC},
 	    {".pdf", "pdf", "pdf", "", KIND_DOC},
+	    // A .zim is a CORPUS, not a document -- an archive of many articles, closer to a
+	    // .zip than to a .docx. It is declared here so it stops FALLING THROUGH to `code`
+	    // and being handed to sitting_duck as source: a binary archive parsed as a
+	    // programming language is a silently wrong answer, which is worse than an honest
+	    // refusal. Raised by duckeye, who routes .zim to duckdb_zim directly and needs
+	    // panduck to answer honestly rather than plausibly.
+	    {".zim", "zim", "zim", "", KIND_DOC},
 	    {".json", "data", "json", "", KIND_TABLE},
 	    // Config trees: a nested key-value document. Not prose, but not rows either.
 	    {".toml", "toml", "toml", "", KIND_DOC},
@@ -511,6 +518,19 @@ SELECT * FROM query(
                  'content AS content, 1 AS level, ' ||
                  '''yaml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
                  '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
+
+        -- A ZIM ARCHIVE IS NOT A DOCUMENT, and this refuses it with the reason.
+        --
+        -- duckdb_zim emits its own schema and has no duck_block awareness, so there is
+        -- nothing to route to: a .zim holds thousands of articles and "read it as a
+        -- document" has no answer. The zim extension indexes the archive, searches it, and
+        -- resolves a single article -- which IS a document, and reaches panduck as HTML.
+        --
+        -- An error naming the alternative beats both silence and a plausible wrong answer.
+        WHEN panduck_resolved_format(src, format) = 'zim'
+            THEN error('panduck: ' || src || ' is a ZIM archive -- a corpus of many ' ||
+                       'articles, not one document. Use the zim extension to index or ' ||
+                       'search it, and read a single article once resolved.')
 
         -- Anything unclaimed falls through to source code. The exclusion rule is BY
         -- CONSTRUCTION: .md is in the registry, so it can never arrive here.

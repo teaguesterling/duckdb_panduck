@@ -6,6 +6,29 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
+# Run every independent guard and report ALL of them, then fail if any failed.
+#
+# WRITTEN THIS WAY DELIBERATELY. A recipe of sequential lines stops at the first non-zero
+# exit, so a red run silently skips whatever came after it and reads as an ordinary failure
+# rather than "and three things went unverified". duck_block_utils shipped exactly that and
+# measured it: 2 of 8 checks executing on a failure. These four are independent -- nothing
+# justifies sequencing them -- so each runs, each reports, and the target fails at the end.
+#
+# The same hazard bit this repo one level down and cost more: sqllogictest aborts a .test
+# file at the first failed assertion, so a real runaway defect sat behind an earlier
+# failure and the test that existed for it never ran. THAT one cannot be fixed from here --
+# when the suite is red, treat the assertion count as a floor, not a total.
+.PHONY: check
+check:
+	@rc=0; \
+	for c in check-vocabulary check-conformance test_pandoc_alignment test_roundtrip; do \
+	  printf '\n=== %s ===\n' "$$c"; \
+	  $(MAKE) --no-print-directory $$c || rc=1; \
+	done; \
+	printf '\n'; \
+	if [ $$rc -ne 0 ]; then echo "FAILED: one or more checks above"; else echo "All checks passed."; fi; \
+	exit $$rc
+
 # Check the vendored duck_block vocabulary against upstream, by NAME AND VALUE. A
 # vendored copy and a submodule pin are both copies, and neither notices when upstream
 # moves; more importantly, the C++ constants catch a rename but NOT a changed value,

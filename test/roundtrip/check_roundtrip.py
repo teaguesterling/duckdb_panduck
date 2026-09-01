@@ -118,6 +118,18 @@ ODT_SCOPE = (
     "text level caught.",
 )
 
+EPUB_SECTION_DIV = (
+    REFERENCE_WRONG,
+    "panduck maps <section> to the `section` element_type; pandoc emits a generic Div. "
+    "MEASURED, and pandoc's own output settles it: for <section id=\"heading-one\" "
+    "class=\"level1\"> it emits Div with classes [\"section\", \"level1\"] -- it SAYS "
+    "section, in a CSS class on a container, rather than in a type. duck_block declares "
+    "`section` as an element_type with the HTML5 sectioning set as its role vocabulary "
+    "exactly so a consumer does not have to parse class lists to find structure. Same "
+    "posture as the LibreOffice fixtures: being more faithful than the reference is not a "
+    "divergence to fix.",
+)
+
 EPUB_LO_CSS = (
     REFERENCE_WRONG,
     "panduck reports the run formatting; pandoc reports none. LibreOffice's EPUB export "
@@ -195,11 +207,24 @@ CASES = [
         "test/fixtures/pandoc.epub",
         "epub",
         "read_epub_blocks",
-        # THE ONLY FIXTURE THAT AGREES AT EVERY LEVEL, and the empty ledger entry is the
-        # assertion: EPUB content documents are XHTML, so both readers see the same tree
-        # and there is nothing left to excuse. If a divergence ever appears here it is a
-        # real defect, because no representational gap remains to blame.
-        expect={},
+        # THIS WAS THE ONLY FIXTURE THAT AGREED AT EVERY LEVEL, and the empty ledger was
+        # the assertion: EPUB content documents are XHTML, so both readers see the same
+        # tree and there is nothing left to excuse. "If a divergence ever appears here it
+        # is a real defect, because no representational gap remains to blame."
+        #
+        # THE INVARIANT DID ITS JOB AND IS NOW SPENT. It fired on 272c3e4, which mapped
+        # <section> to the `section` element_type -- a deliberate improvement, not a
+        # defect, but one that ended this fixture's total agreement. Worth stating plainly
+        # that something was lost here: an empty ledger is a much stronger assertion than
+        # a declared divergence, and no fixture carries it any more.
+        #
+        # It also went UNSEEN for a day. This harness was not in any aggregated target, so
+        # nothing ran it while every other guard stayed green and was reported as such.
+        # `make check` now runs all four and reports all four.
+        expect={
+            "skeleton": EPUB_SECTION_DIV,
+            "marked": EPUB_SECTION_DIV,
+        },
         note="pandoc-generated EPUB: semantic XHTML",
     ),
     Case(

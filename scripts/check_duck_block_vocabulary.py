@@ -63,8 +63,16 @@ import urllib.error
 import urllib.request
 
 HEADER_REL = "src/include/duck_block_vocabulary.hpp"
-UPSTREAM_RAW = ("https://raw.githubusercontent.com/teaguesterling/"
-                "duckdb_duck_block_utils/main/" + HEADER_REL)
+UPSTREAM_REPO = "teaguesterling/duckdb_duck_block_utils"
+UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
+# NOTE the {ref} slot. Fetching this with ref="main" is WRONG and the reason this
+# indirection exists: raw.githubusercontent.com serves BRANCH urls from a cache that
+# lags, so a branch fetch can hand back a superseded header and the check then reports
+# "in sync" against content upstream has already replaced. Observed live: the API had
+# main at 26bfe05 with SPEC_VERSION 2.0 while the branch url was still serving 1.2.
+# Resolving main to a sha first and fetching THAT is immune -- a sha url is immutable,
+# so it is cached correctly by construction.
+UPSTREAM_RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + HEADER_REL
 
 # Vendored first: that is panduck's arrangement. The submodule paths stay as
 # fallbacks so this script is not the thing that breaks if that is revisited.
@@ -140,13 +148,41 @@ def read_upstream_git(repo, ref):
                  f"{exc.stderr.strip()}")
 
 
-def read_upstream_https(url, timeout):
-    """Fetch the published header. Returns None when the network is unavailable."""
+def _get(url, timeout):
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError, TimeoutError):
         return None
+
+
+def resolve_main_sha(timeout):
+    """Resolve upstream main to a commit sha, so the fetch can bypass the branch cache."""
+    body = _get(UPSTREAM_API, timeout)
+    if not body:
+        return None
+    m = re.search(r'"sha"\s*:\s*"([0-9a-f]{40})"', body)
+    return m.group(1) if m else None
+
+
+def read_upstream_https(timeout):
+    """Fetch the published header at a resolved sha.
+
+    Returns (text, ref_label) or (None, reason). Falls back to the branch url when the
+    API is unreachable, and SAYS SO -- a branch fetch may be stale, and a check that
+    quietly compares against cached content is worse than one that admits it could not
+    reach the authority.
+    """
+    sha = resolve_main_sha(timeout)
+    if sha:
+        text = _get(UPSTREAM_RAW.format(ref=sha), timeout)
+        if text:
+            return text, f"main @ {sha[:7]}"
+        return None, "resolved main but could not fetch the header at that sha"
+    text = _get(UPSTREAM_RAW.format(ref="main"), timeout)
+    if text:
+        return text, "main (BRANCH URL -- may be cached/stale, sha unresolved)"
+    return None, "upstream unreachable"
 
 
 def branched_on(root):
@@ -180,17 +216,38 @@ def report(local, upstream, root, show_gaps=True):
         print("DRIFT  gone upstream (our references would no longer compile):")
         for k in removed:
             print(f"         {k} = {local[k]!r}")
+    # SPEC_VERSION is not vocabulary, it is a statement ABOUT the vocabulary, so it gets
+    # its own arm. A bump can mean the SHAPE rules changed while every name and value
+    # stayed put -- 2.0 ("one shape per element_type") moved list_item from carrying
+    # content to owning a paragraph child, and no constant moved at all. Reporting that
+    # as "our output silently stops matching" would point the reader at the type names,
+    # which are fine; the thing to go read is the spec.
+    spec_moved = "SPEC_VERSION" in changed
+    changed = [k for k in changed if k != "SPEC_VERSION"]
     if changed:
         breaking = True
         print("DRIFT  value changed upstream (our output silently stops matching):")
         for k in changed:
             print(f"         {k}: {local[k]!r} -> {upstream[k]!r}")
+    if spec_moved:
+        breaking = True
+        print(f"SPEC   version moved: {local['SPEC_VERSION']!r} -> "
+              f"{upstream['SPEC_VERSION']!r}")
+        print("       Names and values may be untouched while the SHAPE rules changed.")
+        print("       Read docs/duck_blocks_spec.md upstream before re-syncing; this is")
+        print("       the only signal a structural change gives you.")
     if added:
         print("NEW    published upstream, not in our copy:")
         for k in added:
             print(f"         {k} = {upstream[k]!r}")
     if not (removed or changed or added):
-        print("vocabulary is in sync (compared by name and value)")
+        if spec_moved:
+            # Both true at once, and the pairing is the whole point: names can be
+            # perfectly in sync while the structure they describe has changed under you.
+            print("       (every name and value IS in sync -- that is exactly why a")
+            print("        shape change needs its own signal.)")
+        else:
+            print("vocabulary is in sync (compared by name and value)")
 
     if show_gaps:
         named, literal = branched_on(root)
@@ -301,12 +358,12 @@ def main():
         text = read_upstream_git(args.upstream, args.ref)
         source = f"{args.upstream}@{args.ref}"
     else:
-        text = read_upstream_https(UPSTREAM_RAW, args.timeout)
-        source = UPSTREAM_RAW
+        text, ref_label = read_upstream_https(args.timeout)
+        source = f"{UPSTREAM_REPO} {ref_label}"
         if text is None:
             # Skipping loudly beats failing a build over a flaky network, but
             # --strict exists so CI can refuse to skip.
-            msg = (f"SKIPPED: cannot reach upstream ({UPSTREAM_RAW}).\n"
+            msg = (f"SKIPPED: cannot reach upstream ({ref_label}).\n"
                    f"         The vendored copy was NOT verified against anything.")
             if args.strict:
                 print(msg.replace("SKIPPED", "FAILED"))

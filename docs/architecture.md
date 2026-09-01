@@ -44,7 +44,7 @@ If either of those stops working, the layering has been violated.
 | Extension | Depends on | When |
 |---|---|---|
 | `duck_block_utils` | nothing (core `json` for encoding utilities) | — |
-| `panduck` | `duck_block_utils`' vocabulary header | build time, via submodule |
+| `panduck` | `duck_block_utils`' vocabulary header | build time, vendored copy |
 | `panduck` | format extensions | on demand, per format read |
 | `panduck` | `duck_block_utils` | on demand, **`doc_*` only** |
 
@@ -54,22 +54,42 @@ structural. panduck's `doc_*` is sugar: every reader, the registry and both disp
 work with `duck_block_utils` absent. Only the convenience wrappers need it, and they name
 it in the error when it is missing.
 
-## The vocabulary is shared, not copied
+## The vocabulary has exactly one definition, and it is vendored
 
-`duck_block_utils` publishes `duck_block_vocabulary.hpp` link-free, specifically so siblings
-consume it via submodule. panduck does:
+`duck_block_utils` publishes `duck_block_vocabulary.hpp` link-free. panduck inherits from
+it:
 
 ```cpp
 class DuckBlockTypes : public DuckBlockVocabulary { … };
 ```
 
 There is exactly one definition of every `element_type` name in a panduck build — zero
-local, one from the submodule. Both readers use `DuckBlockTypes::TYPE_HEADING` rather than
-`"heading"`, so a typo is a compile error rather than a structurally valid block that no
-consumer handles and every test passes.
+local. Both readers use `DuckBlockTypes::TYPE_HEADING` rather than `"heading"`, so a typo
+is a compile error rather than a structurally valid block that no consumer handles and
+every test passes. That property is what matters, and it is unchanged by where the header
+comes from.
 
-This matters because the portfolio has already watched copies diverge: three separate
-implementations of the same Pandoc inline walker drifted into three different bug sets.
+It arrives as a **vendored byte-for-byte copy** at `src/include/duck_block_vocabulary.hpp`.
+This was a submodule until `duck_block_utils` decided the other way: a whole submodule
+checkout to place one 167-line constants header on the include path is a large mechanism
+for a small dependency.
+
+**The obvious objection, answered honestly.** The portfolio has already watched copies
+diverge — three separate implementations of the same Pandoc inline walker drifted into
+three different bug sets. That is a real scar and it is the reason this section exists.
+The distinction is that those were copies of *logic*, which diverge by being edited on
+purpose: each fork grew fixes the others never got, and no diff could tell you which of
+the three was right. This is a copy of *constants*, kept byte-identical on purpose, where
+any divergence at all is a defect and `diff` names it in one line.
+
+So the risk does not vanish, it changes shape: it is no longer "three implementations
+disagree" but "someone edits the local copy and nothing says so." That is the failure mode
+to watch, which is why the file is marked do-not-edit at its point of use and the re-sync
+command lives in `duck_block_types.hpp` next to the upstream SHA it was taken from.
+
+A submodule would not have removed this risk either — it only moves it from "edited
+without saying so" to "never synced", which is why `duck_block_utils` recommends asserting
+agreement at *test* time regardless of how the header arrives.
 
 ## Derived, not maintained
 

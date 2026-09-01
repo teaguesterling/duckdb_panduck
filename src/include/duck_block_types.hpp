@@ -1,14 +1,35 @@
 #pragma once
 
-// The duck_block vocabulary comes from duck_block_utils' PUBLISHED header via the
-// submodule -- not copied. That header is link-free by design ("Sibling extensions are
-// expected to consume this via a submodule rather than copying it; copies drift
-// silently"), so including it costs no linking and there is now exactly one definition
-// of every element_type name in this build.
+// The duck_block vocabulary comes from duck_block_utils' PUBLISHED header, VENDORED into
+// this directory as src/include/duck_block_vocabulary.hpp. The header is link-free by
+// design, so including it costs no linking and there is exactly one definition of every
+// element_type name in this build.
 //
-// Pinned to a BRANCH commit (feat-doc-query-pipeline @ 628dcd7) rather than main,
-// deliberately and temporarily: the header has not landed on main yet. Repoint at main
-// when it does -- a branch pin is a weaker guarantee than a tag or a merged commit.
+// WHY VENDORED RATHER THAN A SUBMODULE. It was a submodule, and the header's own banner
+// still recommends that. duck_block_utils has since decided the other way: a whole
+// submodule checkout to put ONE 167-line constants header on the include path is a large
+// mechanism for a small dependency, and it costs every consumer a --recurse-submodules
+// clone plus a pin to keep current. The header carries no code, so the usual argument for
+// a submodule -- avoiding a divergent fork of real logic -- does not apply.
+//
+// VENDORED IS NOT A LICENCE TO EDIT. src/include/duck_block_vocabulary.hpp is a
+// byte-for-byte copy, kept that way SPECIFICALLY so drift is a one-line diff. Editing it
+// locally is the failure mode this arrangement is most exposed to -- the copy stops being
+// a copy and nothing says so. To re-sync, replace it wholesale and read the diff:
+//
+//     curl -sL https://raw.githubusercontent.com/teaguesterling/duckdb_duck_block_utils/main/src/include/duck_block_vocabulary.hpp \
+//       | diff -u src/include/duck_block_vocabulary.hpp -
+//
+// Copied from duck_block_utils main @ 5f993e9 (header last touched by 2b60fcb,
+// "rename db_* to duck_block_* / duck_blocks_*; page -> page_break").
+//
+// WHAT THIS COPY DOES NOT COVER. It is a COMPILE-TIME dependency on constant names, and
+// nothing more. The functions panduck calls at runtime -- db_blocks_toc and friends, used
+// by the doc_* macros -- come from whatever duck_block_utils is INSTALLED, which is the
+// community build. duck_block_utils has renamed those to duck_blocks_* on main, so this
+// header being current says NOTHING about whether those calls still resolve. They are two
+// independent clocks, and reading one as evidence about the other is exactly the
+// "fixed upstream is not fixed installed" mistake.
 #include "duck_block_vocabulary.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types.hpp"

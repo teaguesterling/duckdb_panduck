@@ -24,7 +24,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(pugixml CONFIG REQUIRED)
 find_package(miniz CONFIG REQUIRED)
 
-include_directories(src/include duck_block_utils/src/include)
+# The duck_block vocabulary header is VENDORED into src/include rather than reached
+# through a submodule include path -- see src/include/duck_block_types.hpp for why, and
+# for how to re-sync it against upstream.
+include_directories(src/include)
 
 set(EXTENSION_SOURCES
     src/docx_reader.cpp

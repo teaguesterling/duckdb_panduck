@@ -43,7 +43,7 @@ struct LatexInline {
 struct LatexBlock {
 	std::string element_type;
 	std::string content;      //!< empty when a container, or when inlines are populated
-	std::string list_type;    //!< list only: "bullet" / "ordered" / "definition"
+	std::string list_type;    //!< list only: DuckBlockTypes::LIST_TYPE_* value
 	std::string role;         //!< duck_block role vocabulary: term / definition on an item
 	std::string list_start, number_style, number_delim; //!< ordered lists, always set
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise

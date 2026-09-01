@@ -30,7 +30,7 @@ struct MacroEntry {
 	                           //!< (TRANSPARENT only), or -1
 	const char *expansion;    //!< literal replacement text for TEXT; for environments
 	                           //!< this field instead carries the list type
-	                           //!< ("bullet"/"ordered") -- see the environment table
+	                           //!< ("bullet"/"ordered"/"definition"; use DuckBlockTypes::LIST_TYPE_*) -- see the environment table
 	                           //!< below for why that reuse is intentional
 };
 

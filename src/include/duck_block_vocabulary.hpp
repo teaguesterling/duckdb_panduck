@@ -424,6 +424,19 @@ struct DuckBlockVocabulary {
 	static constexpr const char *ROLE_FRONTMATTER = "frontmatter"; // has a document body after it
 	static constexpr const char *ROLE_DOCUMENT = "document";       // the blob IS the whole document
 
+	// ========================================================================
+	// `list_type` values -- the attribute is ATTR_LIST_TYPE
+	//
+	// The KEY got a constant and the VALUES did not, which duckdb_markdown named as the
+	// shape that keeps recurring: "the key gets a constant, the value it is compared
+	// against does not." Their writer branches on `list_type == "definition"` to choose
+	// the definition-list rendering, so a value rename upstream turns every definition
+	// list into a bullet list, silently, with every check green.
+	// ========================================================================
+	static constexpr const char *LIST_TYPE_BULLET = "bullet";
+	static constexpr const char *LIST_TYPE_ORDERED = "ordered";
+	static constexpr const char *LIST_TYPE_DEFINITION = "definition";
+
 	// `list_item` in a definition list
 	static constexpr const char *ROLE_TERM = "term";
 	static constexpr const char *ROLE_DEFINITION = "definition";

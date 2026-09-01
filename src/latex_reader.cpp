@@ -733,10 +733,10 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		// environment there is no expansion text, and duck_block owns the two spellings --
 		// minting a local constant for a value the spec defines would be this project
 		// inventing a name for someone else's vocabulary.
-		block.list_type = entry->expansion ? entry->expansion : "bullet";
+		block.list_type = entry->expansion ? entry->expansion : DuckBlockTypes::LIST_TYPE_BULLET;
 		std::string optional;
 		SkipOptional(toks, i, &optional);
-		if (block.list_type == "ordered") {
+		if (block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED) {
 			// ALWAYS, not only when the source said so. A consumer that renders numbering
 			// otherwise has to invent the default the reader already knows.
 			block.list_start = ParseListStart(optional);
@@ -747,7 +747,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		// A literal, because duck_block declares ATTR_LIST_TYPE but none of its VALUES --
 		// the same hole duck_block_utils just closed for `role`. A misspelled "definiton"
 		// here would be valid, conformant and lint-clean. Raised upstream.
-		frame.is_definition = block.list_type == "definition";
+		frame.is_definition = block.list_type == DuckBlockTypes::LIST_TYPE_DEFINITION;
 		frame.list_depth = depth;
 	}
 	blocks.push_back(std::move(block));
@@ -852,11 +852,14 @@ void Parser::ResolveList(EnvFrame &frame) {
 
 void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
 	if (env_stack.empty() || !env_stack.back().is_list) {
-		// \item WITH NO LIST TO BELONG TO. \begin{description} is TRANSPARENT -- duck_block
-		// has no settled shape for a definition list, and emitting list_type='bullet' for
-		// one would be a falsehood about the document -- so its items land here. Ending the
-		// run is all that can be honoured; the label is left as text, because deleting text
-		// on a guess is worse than losing the structure.
+		// \item WITH NO LIST TO BELONG TO. This used to be reached by \begin{description},
+		// which was TRANSPARENT while duck_block had no settled list_type for a definition
+		// list. Since spec 5.0 a description IS a list, so that route is gone -- but the
+		// branch is still live for a bare \item and for one inside a genuinely transparent
+		// environment such as `center`.
+		//
+		// Ending the run is all that can be honoured; the label is left as text, because
+		// deleting text on a guess is worse than losing the structure.
 		return;
 	}
 	auto &frame = env_stack.back();
@@ -1272,7 +1275,8 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			// BOTH SPELLINGS, matching every other panduck reader: `list_type` is canonical
 			// under spec 4.0 and `ordered` is the legacy alias consumers written against v1
 			// still read.
-			row.attributes["ordered"] = block.list_type == "ordered" ? "true" : "false";
+			row.attributes["ordered"] =
+			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {
 				row.attributes["start"] = block.list_start;

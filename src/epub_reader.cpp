@@ -259,11 +259,16 @@ const std::set<std::string> SECTIONING = {"section", "article", "aside", "nav",
 //! different things per format.
 // NOTE WHAT IS *NOT* HERE. `table` was, alongside script and style, which meant every
 // cell's TEXT was discarded rather than its structure. duck_block still has no structural
-// table -- no table_row, no table_cell, and `table` itself carries an opaque JSON tuple --
-// so panduck cannot represent the grid either way. But it was shipping a bug (the words
-// are gone) in order to avoid a gap (the shape is unrepresented) that it had regardless.
-// Falling through to the transparent branch yields the cells as paragraphs: honestly wrong
-// about shape, honestly right about content, and reversible when a real table lands.
+// table. When this was written duck_block had no table_row or table_cell and `table` itself
+// carried an opaque Pandoc tuple, so panduck could not represent the grid either way -- but
+// skipping was shipping a BUG (the words are gone) to avoid a GAP (the shape is
+// unrepresented) that it had regardless. Falling through to the transparent branch yielded
+// the cells as paragraphs: honestly wrong about shape, honestly right about content.
+//
+// That is history now. Spec 5.0 gave `table` the native {headers, rows} schema and the
+// table branch in WalkBlocks emits it, so <table> is neither skipped nor transparent. Kept
+// as a record of why it must never go back into this set: whatever is unrepresentable about
+// a construct, discarding its text is the one response that is always wrong.
 const std::set<std::string> SKIPPED = {"head", "script", "style", "template", "svg", "math"};
 
 bool IsBlockTag(const std::string &tag) {
@@ -587,7 +592,9 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			block.element_type = DuckBlockTypes::TYPE_LIST;
 			block.container = true;
 			block.level = depth;
-			block.list_type = (tag == "ol") ? "ordered" : (tag == "dl") ? "definition" : "bullet";
+			block.list_type = (tag == "ol")   ? DuckBlockTypes::LIST_TYPE_ORDERED
+			                  : (tag == "dl") ? DuckBlockTypes::LIST_TYPE_DEFINITION
+			                                  : DuckBlockTypes::LIST_TYPE_BULLET;
 			if (tag == "ol") {
 				std::string start = child.attribute("start").value();
 				block.list_start = start.empty() ? "1" : start;
@@ -926,7 +933,8 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			// read nothing at all from a Pandoc-produced list. Emitting both is what both
 			// upstream producers now do; prefer `ordered` when writing new code against
 			// this output, tolerate either when reading it.
-			row.attributes["ordered"] = block.list_type == "ordered" ? "true" : "false";
+			row.attributes["ordered"] =
+			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			if (!block.list_start.empty()) {
 				row.attributes["start"] = block.list_start;

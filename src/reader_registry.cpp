@@ -446,10 +446,15 @@ SELECT * FROM query(
                       panduck_quote(src) || '))) AS b)'
                  ELSE error('panduck: pdf needs the pdf and markdown extensions') END
 
-        -- A config tree is entirely document metadata, so it becomes ONE metadata block
-        -- carrying the parsed document as JSON rather than being flattened to a string or
-        -- refused. When kind='value' lands in duck_block_utils this should become value
-        -- elements -- MetaMap is the shape a nested key-value tree actually wants.
+        -- A config tree is entirely document metadata, so it becomes ONE metadata block.
+        --
+        -- This carried a deferral -- "when kind='value' lands this should become value
+        -- elements, MetaMap is the shape a nested key-value tree wants" -- and the deferral
+        -- was OVERTAKEN rather than met. kind='value' did land, and the answer went the
+        -- other way: the ruling is that panduck keeps the blob verbatim and does not parse
+        -- it at all, so there is no tree to shape. Removed rather than left standing,
+        -- because a deferral pointing at a decision already made differently is worse than
+        -- a stale one: it reads as the plan.
         --
         -- `level` is 1 and not NULL. It was NULL until 2026-09-01, which duck_blocks_validate
         -- rejects outright: "level is NULL; every element carries an explicit structural

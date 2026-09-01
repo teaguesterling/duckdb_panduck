@@ -102,8 +102,8 @@ const MacroEntry MACROS[] = {
 const size_t MACRO_COUNT = sizeof(MACROS) / sizeof(MACROS[0]);
 
 const MacroEntry ENVIRONMENTS[] = {
-    {"itemize", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "bullet"},
-    {"enumerate", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "ordered"},
+    {"itemize", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, DuckBlockTypes::LIST_TYPE_BULLET},
+    {"enumerate", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, DuckBlockTypes::LIST_TYPE_ORDERED},
     {"quote", Disposition::SEMANTIC, DuckBlockTypes::TYPE_BLOCKQUOTE, 0, -1, nullptr},
     {"quotation", Disposition::SEMANTIC, DuckBlockTypes::TYPE_BLOCKQUOTE, 0, -1, nullptr},
     {"verbatim", Disposition::SEMANTIC, DuckBlockTypes::TYPE_CODE, 0, -1, nullptr},
@@ -115,7 +115,7 @@ const MacroEntry ENVIRONMENTS[] = {
     // for a definition list, and inventing one would have produced a value no consumer
     // could read. Spec 5.0 settled it -- a definition list is a LIST KIND, `deflist` is
     // deprecated -- so the deferral is discharged on its own stated condition.
-    {"description", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, "definition"},
+    {"description", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, DuckBlockTypes::LIST_TYPE_DEFINITION},
     // Dropped whole: descending yields mangled cell and coordinate text as prose.
     {"tabular", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},

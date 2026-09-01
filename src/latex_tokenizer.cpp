@@ -29,6 +29,74 @@ const char *KindName(TokenKind kind) {
 	}
 }
 
+namespace {
+
+//! Called with `i` just past a `\begin` control word. If the environment being opened is
+//! one whose body is BYTES rather than tokens, emit the whole `{name} body \end{name}` run
+//! and advance `i` past it; otherwise leave both untouched and return false so the normal
+//! scanner reads the brace group.
+//!
+//! The environment names live here rather than in the macro table on purpose: which
+//! environments suspend tokenization is a LEXICAL fact, and the table's job is to say what
+//! a construct MEANS. `verbatim` still appears there as a SEMANTIC code block, because
+//! both facts are true of it.
+bool LexVerbatim(const std::string &src, size_t &i, std::vector<Token> &out) {
+	size_t k = i;
+	while (k < src.size() && (src[k] == ' ' || src[k] == '\t')) {
+		k++;
+	}
+	if (k >= src.size() || src[k] != '{') {
+		return false;
+	}
+	auto close = src.find('}', k + 1);
+	if (close == std::string::npos) {
+		return false;
+	}
+	std::string env = src.substr(k + 1, close - k - 1);
+	if (env != "verbatim" && env != "lstlisting") {
+		return false;
+	}
+	out.push_back(Token {TokenKind::BEGIN_GROUP, "{", false});
+	out.push_back(Token {TokenKind::TEXT, env, false});
+	out.push_back(Token {TokenKind::END_GROUP, "}", false});
+	size_t body = close + 1;
+	// \begin{lstlisting}[language=C] -- the options describe the listing, they are not in it.
+	if (body < src.size() && src[body] == '[') {
+		auto opt = src.find(']', body);
+		if (opt != std::string::npos) {
+			body = opt + 1;
+		}
+	}
+	// The newline that ends the \begin line is layout. The next line's INDENTATION is not,
+	// so only the break itself is eaten.
+	size_t skip = body;
+	while (skip < src.size() && (src[skip] == ' ' || src[skip] == '\t' || src[skip] == '\r')) {
+		skip++;
+	}
+	if (skip < src.size() && src[skip] == '\n') {
+		body = skip + 1;
+	}
+	const std::string terminator = "\\end{" + env + "}";
+	auto stop = src.find(terminator, body);
+	std::string text = src.substr(body, (stop == std::string::npos ? src.size() : stop) - body);
+	while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ' || text.back() == '\t')) {
+		text.pop_back();
+	}
+	if (!text.empty()) {
+		out.push_back(Token {TokenKind::TEXT, text, false});
+	}
+	// The closer is emitted as ordinary tokens even when the source ran out without one, so
+	// the reader's environment stack always sees a balanced pair and cannot leak a level.
+	out.push_back(Token {TokenKind::CONTROL_WORD, "end", false});
+	out.push_back(Token {TokenKind::BEGIN_GROUP, "{", false});
+	out.push_back(Token {TokenKind::TEXT, env, false});
+	out.push_back(Token {TokenKind::END_GROUP, "}", false});
+	i = stop == std::string::npos ? src.size() : stop + terminator.size();
+	return true;
+}
+
+} // namespace
+
 std::vector<Token> Tokenize(const std::string &src) {
 	std::vector<Token> out;
 	std::string text;
@@ -58,6 +126,13 @@ std::vector<Token> Tokenize(const std::string &src) {
 				i++;
 			}
 			out.push_back(Token {TokenKind::CONTROL_WORD, name, false});
+			if (name == "begin") {
+				// VERBATIM IS A LEXICAL MODE, not an environment with a body: inside it `%`
+				// is a percent sign, `\emph` is five characters and `---` is three hyphens.
+				// Every one of those rules has ALREADY run by the time the reader sees
+				// tokens, so the body has to be cut out here, where the bytes still exist.
+				LexVerbatim(src, i, out);
+			}
 			continue;
 		}
 		// \( \) \[ \] are the OTHER spelling of math, and pandoc prefers them. They

@@ -100,11 +100,30 @@ public:
 	std::vector<LatexBlock> Parse();
 
 private:
+	//! One open \begin{...}. The stack exists so that \end can be matched BY NAME: a
+	//! generic begin/end counter lets \end{document} close an unclosed \begin{itemize},
+	//! after which the document's real ending has been spent as a nest level and the reader
+	//! runs to end of input emitting the tail it was supposed to stop before.
+	struct EnvFrame {
+		std::string name;
+		int saved_depth = 1; //!< depth to restore when this environment closes
+		int list_depth = 1;  //!< lists only: the depth the `list` block itself sits at
+		bool is_list = false;
+		//! An environment the macro table never claimed. Its runs are `plain` rather than
+		//! `paragraph` -- see RunElementType().
+		bool unknown = false;
+		bool saw_par = false;      //!< a paragraph break has occurred in this scope
+		bool item_open = false;    //!< lists only
+		bool item_saw_par = false; //!< lists only: a paragraph break inside the OPEN item
+		size_t item_index = 0;     //!< lists only: the open list_item's index in `blocks`
+	};
+
 	std::vector<Token> tokens;
 	std::string document_class = "article";
 	std::vector<LatexBlock> blocks;
-	//! Structural depth of the block currently being built. Containers (Task 6) push this;
-	//! for now every block is top-level and every inline is one deeper.
+	std::vector<EnvFrame> env_stack;
+	//! Structural depth of the block currently being built. A container pushes this and its
+	//! \end restores it, so every block emitted between the two is at least one deeper.
 	int depth = 1;
 	//! How many INLINE scopes are open around the run being accumulated. Zero while reading
 	//! a block's own text; one inside \textbf{...}; two inside the \emph within it.
@@ -128,8 +147,15 @@ private:
 	void Run(std::vector<Token> &toks);
 	void ControlWord(std::vector<Token> &toks, size_t &i, const std::string &name);
 	bool ReadGroup(std::vector<Token> &toks, size_t &i, std::vector<Token> &out);
-	void SkipOptional(std::vector<Token> &toks, size_t &i);
-	void SkipEnvironment(std::vector<Token> &toks, size_t &i);
+	void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = nullptr);
+	void BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::string &name);
+	void EndEnvironment(const std::string &name);
+	void PopEnvironment();
+	void ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &name, std::string *raw);
+	void StartItem(std::vector<Token> &toks, size_t &i);
+	void CloseItem(EnvFrame &frame);
+	void NoteParagraphBreak();
+	const char *RunElementType() const;
 	void AppendText(const std::string &text);
 	void PushInline(LatexInline inl, std::vector<LatexInline> children);
 	void ParseInlineScope(std::vector<Token> &content, std::string &text, std::vector<LatexInline> &children);
@@ -309,6 +335,50 @@ void Parser::ParseInlineScope(std::vector<Token> &content, std::string &text, st
 	pending_inlines = std::move(outer_inlines);
 }
 
+//! `paragraph` or `plain` for the run about to be flushed. THE DIFFERENCE IS NOT
+//! COSMETIC: `plain` is Pandoc's Plain constructor -- block-level text carrying NO
+//! paragraph semantics -- and it is the whole of what makes a tight list item tight.
+const char *Parser::RunElementType() const {
+	if (env_stack.empty()) {
+		return DuckBlockTypes::TYPE_PARAGRAPH;
+	}
+	const auto &frame = env_stack.back();
+	if (frame.is_list) {
+		// A run inside \item that no paragraph break has separated is what the source
+		// literally wrote: text, not a paragraph. CloseItem() then folds a LONE one onto
+		// the item's own content, which is the content rule; one that has a block sibling
+		// stays a `plain` because it has nowhere else to live.
+		if (frame.item_open && !frame.item_saw_par) {
+			return DuckBlockTypes::TYPE_PLAIN;
+		}
+		return DuckBlockTypes::TYPE_PARAGRAPH;
+	}
+	if (frame.unknown && !frame.saw_par) {
+		// AN ENVIRONMENT PANDUCK DECLINED TO MODEL. Descending into it keeps the prose,
+		// which is right; calling that prose a `paragraph` would assert paragraph semantics
+		// on behalf of a construct we have just admitted we do not understand. `plain`
+		// claims only what is known. A KNOWN transparent environment -- center, abstract,
+		// description -- gets `paragraph`, because there the claim is one we can make.
+		return DuckBlockTypes::TYPE_PLAIN;
+	}
+	return DuckBlockTypes::TYPE_PARAGRAPH;
+}
+
+//! A blank line, or \par, which is the same fact spelled as a control word. Recorded on
+//! the innermost scope because it is what promotes that scope's runs from `plain` to
+//! `paragraph` -- the source asked for a paragraph, so it gets one.
+void Parser::NoteParagraphBreak() {
+	if (env_stack.empty()) {
+		return;
+	}
+	auto &frame = env_stack.back();
+	if (frame.is_list) {
+		frame.item_saw_par = true;
+		return;
+	}
+	frame.saw_par = true;
+}
+
 void Parser::FlushRun() {
 	if (inline_depth > 0) {
 		// AN INLINE SCOPE HAS NO BLOCK BOUNDARY INSIDE IT. Emitting a block from here would
@@ -326,7 +396,7 @@ void Parser::FlushRun() {
 			return;
 		}
 		LatexBlock block;
-		block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+		block.element_type = RunElementType();
 		block.content = pending;
 		block.level = depth;
 		pending.clear();
@@ -343,7 +413,7 @@ void Parser::FlushRun() {
 	}
 	pending.clear();
 	LatexBlock block;
-	block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+	block.element_type = RunElementType();
 	block.level = depth;
 	block.inlines = std::move(pending_inlines);
 	pending_inlines.clear();
@@ -400,7 +470,14 @@ bool Parser::ReadGroup(std::vector<Token> &toks, size_t &i, std::vector<Token> &
 	return true;
 }
 
-void Parser::SkipOptional(std::vector<Token> &toks, size_t &i) {
+//! Cut an optional `[...]` argument out of the token stream. `captured` receives its
+//! contents when it lay wholly inside one TEXT token, which is the only shape a caller
+//! that wants to READ the argument (\begin{enumerate}[3]) can rely on; a cross-token
+//! optional is skipped but reported as empty rather than half-reconstructed.
+void Parser::SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured) {
+	if (captured) {
+		captured->clear();
+	}
 	// `[` and `]` are ORDINARY CHARACTERS to the tokenizer -- they are not TeX syntax, only
 	// a convention macros implement themselves -- so an optional argument is not a token
 	// boundary and has to be cut out of the TEXT run it lives inside. pandoc's
@@ -422,6 +499,9 @@ void Parser::SkipOptional(std::vector<Token> &toks, size_t &i) {
 	}
 	size_t close = text.find(']', k);
 	if (close != std::string::npos) {
+		if (captured) {
+			*captured = text.substr(k + 1, close - k - 1);
+		}
 		text = text.substr(close + 1);
 		i = start;
 		return;
@@ -464,31 +544,219 @@ void Parser::SkipOptional(std::vector<Token> &toks, size_t &i) {
 	// `[` exactly where it is. It is then ordinary text, which is what it turned out to be.
 }
 
-void Parser::SkipEnvironment(std::vector<Token> &toks, size_t &i) {
-	// PLACEHOLDER FOR TASK 6, which gives environments their own dispositions. Skipping to
-	// the matching \end loses the content, which is wrong -- but it is wrong in a way that
-	// degrades rather than crashes, and every alternative available before the environment
-	// table is consumed invents a shape.
+//! Advance past the body of `\begin{name}`, stopping just after its OWN `\end{name}`.
+//! Nesting is counted only for environments of the SAME name, which is the whole
+//! difference from the placeholder this replaces: a generic begin/end counter treats
+//! \end{document} as the closer of an unclosed \begin{itemize}, spends the document's real
+//! ending on a nest level, and then runs to end of input.
+//!
+//! `raw`, when given, collects the body's TEXT tokens unfolded -- for verbatim, whose body
+//! the tokenizer has already delivered as one uninterpreted run.
+void Parser::ScanToEnd(std::vector<Token> &toks, size_t &i, const std::string &name, std::string *raw) {
 	int nest = 1;
-	while (i < toks.size() && toks[i].kind != TokenKind::END && nest > 0) {
-		if (toks[i].kind == TokenKind::CONTROL_WORD) {
-			if (toks[i].text == "begin") {
+	while (i < toks.size() && toks[i].kind != TokenKind::END) {
+		if (toks[i].kind == TokenKind::CONTROL_WORD && (toks[i].text == "begin" || toks[i].text == "end")) {
+			bool is_begin = toks[i].text == "begin";
+			size_t j = i + 1;
+			std::vector<Token> env;
+			ReadGroup(toks, j, env);
+			auto env_name = FlattenTrimmed(env);
+			i = j;
+			if (env_name != name) {
+				if (!is_begin && env_name == "document") {
+					// The DOCUMENT ending, reached inside an environment that never closed.
+					// Reading on past it is how the old counter emitted the tail.
+					stopped = true;
+					return;
+				}
+				continue;
+			}
+			if (is_begin) {
 				nest++;
-				i++;
-				std::vector<Token> name;
-				ReadGroup(toks, i, name);
 				continue;
 			}
-			if (toks[i].text == "end") {
-				nest--;
-				i++;
-				std::vector<Token> name;
-				ReadGroup(toks, i, name);
-				continue;
+			if (--nest == 0) {
+				return;
 			}
+			continue;
+		}
+		if (raw && toks[i].kind == TokenKind::TEXT) {
+			*raw += toks[i].text;
 		}
 		i++;
 	}
+}
+
+void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::string &name) {
+	auto *entry = LookupEnvironment(name);
+	if (entry && entry->disposition == Disposition::DROPPED) {
+		// tabular, figure, tikzpicture: descending yields cell and coordinate text as
+		// sentences, which reads as prose the document never contained.
+		ScanToEnd(toks, i, name, nullptr);
+		return;
+	}
+
+	EnvFrame frame;
+	frame.name = name;
+	frame.saved_depth = depth;
+	if (!entry || entry->disposition != Disposition::SEMANTIC) {
+		// UNKNOWN ENVIRONMENT -> TRANSPARENT, the exact opposite of the rule for an unknown
+		// MACRO. A macro is usually presentational and usually wraps a fragment, so
+		// descending into every one of them floods the output; an environment usually wraps
+		// PROSE, and dropping it loses paragraphs. `unknown` is remembered because it also
+		// decides `plain` vs `paragraph` -- see RunElementType().
+		frame.unknown = entry == nullptr;
+		env_stack.push_back(std::move(frame));
+		return;
+	}
+
+	std::string element_type = entry->element_type ? entry->element_type : "";
+	if (element_type.empty()) {
+		// A SEMANTIC entry with no element_type would emit a block with an empty type,
+		// which is the same defect as emitting `generic`: a row no consumer can dispatch
+		// on. Reading it as TRANSPARENT keeps the prose and claims nothing.
+		env_stack.push_back(std::move(frame));
+		return;
+	}
+	if (element_type == DuckBlockTypes::TYPE_CODE) {
+		// verbatim and lstlisting have no body to parse: the tokenizer took theirs as bytes.
+		std::string body;
+		ScanToEnd(toks, i, name, &body);
+		if (!body.empty()) {
+			LatexBlock block;
+			block.element_type = DuckBlockTypes::TYPE_CODE;
+			block.content = std::move(body);
+			block.level = depth;
+			blocks.push_back(std::move(block));
+		}
+		return;
+	}
+
+	LatexBlock block;
+	block.element_type = element_type;
+	block.level = depth;
+	if (element_type == DuckBlockTypes::TYPE_LIST) {
+		// The list TYPE rides in `expansion` rather than in a field of its own: for an
+		// environment there is no expansion text, and duck_block owns the two spellings --
+		// minting a local constant for a value the spec defines would be this project
+		// inventing a name for someone else's vocabulary.
+		block.list_type = entry->expansion ? entry->expansion : "bullet";
+		std::string optional;
+		SkipOptional(toks, i, &optional);
+		if (block.list_type == "ordered") {
+			// ALWAYS, not only when the source said so. A consumer that renders numbering
+			// otherwise has to invent the default the reader already knows.
+			block.list_start = "1";
+			for (size_t k = 0; k < optional.size(); k++) {
+				// `[3]` is the bare form; enumitem spells the same fact `[start=3]`.
+				if (optional[k] >= '0' && optional[k] <= '9') {
+					size_t end = optional.find_first_not_of("0123456789", k);
+					block.list_start = optional.substr(k, end == std::string::npos ? end : end - k);
+					break;
+				}
+			}
+			block.number_style = "Decimal";
+			block.number_delim = "Period";
+		}
+		frame.is_list = true;
+		frame.list_depth = depth;
+	}
+	blocks.push_back(std::move(block));
+	depth++;
+	env_stack.push_back(std::move(frame));
+}
+
+void Parser::PopEnvironment() {
+	auto &frame = env_stack.back();
+	if (frame.is_list) {
+		CloseItem(frame);
+	}
+	depth = frame.saved_depth;
+	env_stack.pop_back();
+}
+
+void Parser::EndEnvironment(const std::string &name) {
+	size_t found = env_stack.size();
+	for (size_t k = env_stack.size(); k > 0; k--) {
+		if (env_stack[k - 1].name == name) {
+			found = k - 1;
+			break;
+		}
+	}
+	if (found == env_stack.size()) {
+		// A STRAY \end CLOSES NOTHING -- popping a level that was never pushed would lift
+		// the rest of the document out of whatever container it really sits in. The one
+		// exception is \end{document}, which ends the document from wherever it is found,
+		// including from inside environments the source forgot to close.
+		if (name == "document") {
+			while (!env_stack.empty()) {
+				PopEnvironment();
+			}
+			stopped = true;
+		}
+		return;
+	}
+	while (env_stack.size() > found) {
+		PopEnvironment();
+	}
+	if (name == "document") {
+		stopped = true;
+	}
+}
+
+//! Finish the open \item. THE CONTENT RULE: content is carried iff the container's only
+//! child is a plain text run -- and a lone bare run IS that single text child, so it
+//! becomes the item's own content and no child row is emitted at all.
+//!
+//! DECIDED FROM WHAT THE CHILD IS, not from whether the item has block children. An item
+//! can hold a nested list and still be tight; a rule keyed on "has block children" reads
+//! `\item text` and `\item \par text` correctly and then gets `\item text + sublist`
+//! wrong, which is why the three are asserted together.
+void Parser::CloseItem(EnvFrame &frame) {
+	if (!frame.item_open) {
+		return;
+	}
+	frame.item_open = false;
+	if (blocks.size() != frame.item_index + 2) {
+		return; // no children, or a block sibling: the run keeps its own row
+	}
+	auto &child = blocks.back();
+	if (child.element_type != DuckBlockTypes::TYPE_PLAIN || !child.inlines.empty()) {
+		// A `paragraph` is a paragraph the source asked for. A formatted run has no single
+		// string to carry, so it stays a `plain` with its inline tree intact -- which is
+		// also what Pandoc emits for `\item \textbf{a} b`.
+		return;
+	}
+	blocks[frame.item_index].content = std::move(child.content);
+	blocks.pop_back();
+}
+
+void Parser::StartItem(std::vector<Token> &toks, size_t &i) {
+	if (env_stack.empty() || !env_stack.back().is_list) {
+		// \item WITH NO LIST TO BELONG TO. \begin{description} is TRANSPARENT -- duck_block
+		// has no settled shape for a definition list, and emitting list_type='bullet' for
+		// one would be a falsehood about the document -- so its items land here. Ending the
+		// run is all that can be honoured; the label is left as text, because deleting text
+		// on a guess is worse than losing the structure.
+		return;
+	}
+	auto &frame = env_stack.back();
+	CloseItem(frame);
+	// \item[label] is a CUSTOM BULLET: presentational, and duck_block has no field for it.
+	// Dropped INSIDE a list, kept as text outside one, where it is the only text there is.
+	SkipOptional(toks, i);
+	LatexBlock item;
+	item.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+	item.level = frame.list_depth + 1;
+	blocks.push_back(std::move(item));
+	frame.item_index = blocks.size() - 1;
+	frame.item_open = true;
+	// Per ITEM, not per list: `\begin{itemize}` followed by a blank line before the first
+	// \item is a common shape, and letting that one break loosen every item in the list
+	// would read a layout habit as an authorial one. The cost is that a list whose items
+	// are separated by blank lines unevenly comes out unevenly, which is what it says.
+	frame.item_saw_par = false;
+	depth = frame.list_depth + 2;
 }
 
 void Parser::EmitHeading(const std::string &name, std::vector<Token> &arg) {
@@ -514,16 +782,35 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 		FlushRun();
 		std::vector<Token> env;
 		ReadGroup(toks, i, env);
-		SkipEnvironment(toks, i);
+		BeginEnvironment(toks, i, FlattenTrimmed(env));
 		return;
 	}
 	if (name == "end") {
+		// FLUSH FIRST, and the order is load-bearing: the run still belongs to the scope
+		// that is about to close, so an item's last run has to be finished while the item
+		// is still open for CloseItem() to see it.
 		FlushRun();
 		std::vector<Token> env;
 		ReadGroup(toks, i, env);
-		if (FlattenTrimmed(env) == "document") {
-			stopped = true;
+		EndEnvironment(FlattenTrimmed(env));
+		return;
+	}
+	if (name == "item") {
+		FlushRun();
+		StartItem(toks, i);
+		return;
+	}
+	if (name == "par") {
+		// \par IS A BLANK LINE spelled as a control word, and the tokenizer only produces
+		// PAR_BREAK from the blank-line spelling. Keying the tight/loose rule on the token
+		// alone would read `\item \par text` as tight, because the macro table never
+		// claimed \par and an unclaimed macro is simply dropped.
+		if (inline_depth > 0) {
+			AppendText(" ");
+			return;
 		}
+		NoteParagraphBreak();
+		FlushRun();
 		return;
 	}
 
@@ -646,6 +933,9 @@ void Parser::Run(std::vector<Token> &toks) {
 				// have to end mid-argument -- so it is the word boundary it looks like.
 				AppendText(" ");
 			} else {
+				// NOTED BEFORE THE FLUSH: the run ENDING at a blank line is itself a
+				// paragraph, so the scope has to know before the run is typed.
+				NoteParagraphBreak();
 				FlushRun();
 			}
 			i++;
@@ -741,6 +1031,13 @@ std::vector<LatexBlock> Parser::Parse() {
 	std::vector<Token> body(tokens.begin() + body_start, tokens.end());
 	Run(body);
 	FlushRun();
+	// A TRUNCATED SOURCE still has to finish its containers: `\begin{itemize}\item a` with
+	// no \end reaches here with the item open, and an item closed by end-of-input gets the
+	// same content rule as one closed by \end -- the document being cut short is not a
+	// statement about how its last item was written.
+	while (!env_stack.empty()) {
+		PopEnvironment();
+	}
 	return std::move(blocks);
 }
 

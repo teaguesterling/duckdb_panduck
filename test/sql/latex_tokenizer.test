@@ -75,3 +75,32 @@ query I
 SELECT count(*) FROM panduck_latex_tokens('\(a\) and \[b\]') WHERE kind = 'math_shift';
 ----
 4
+
+# VERBATIM IS A LEXICAL MODE, NOT A MACRO. Inside it `%` is a percent sign, `\c` is two
+# characters and `---` is three hyphens -- and every one of those rules has already run by
+# the time a reader sees tokens, so the body has to be cut out HERE, where the bytes still
+# exist. Reconstructing it downstream cannot get back what the comment scanner ate.
+#
+# The \begin and \end are still ordinary tokens, so the reader's environment stack sees a
+# balanced pair and needs no lexical special case of its own.
+query II
+SELECT kind, text FROM panduck_latex_tokens(E'\\begin{verbatim}\na % b \\c ---\n\\end{verbatim}');
+----
+control_word	begin
+begin_group	{
+text	verbatim
+end_group	}
+text	a % b \c ---
+control_word	end
+begin_group	{
+text	verbatim
+end_group	}
+
+# ...and an UNTERMINATED verbatim still closes. The tokenizer emits the \end it never saw,
+# because a body that runs to end of input is a truncated document rather than a reason to
+# leave an environment open for whatever follows -- there is nothing that follows.
+query I
+SELECT count(*) FROM panduck_latex_tokens(E'\\begin{verbatim}\nx')
+WHERE kind = 'control_word' AND text = 'end';
+----
+1

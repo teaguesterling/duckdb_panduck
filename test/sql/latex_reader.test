@@ -214,3 +214,246 @@ SELECT count(*) FROM read_latex_blocks_string('\href{http://x}{} kept')
 WHERE element_type = 'text' AND trim(content) = 'kept';
 ----
 1
+
+# ---------------------------------------------------------------------------
+# ENVIRONMENTS AND LISTS.
+# ---------------------------------------------------------------------------
+
+# LISTS ARE CONTAINERS AND SO ARE THEIR ITEMS. A bare \item text is a TIGHT item: its run
+# is a `plain`, a block-level text run with NO paragraph semantics -- Pandoc's Plain
+# constructor, and exactly what the source wrote. Both attribute spellings are emitted:
+# list_type is canonical, `ordered` is the legacy alias a v1-era consumer reads.
+query IIIII
+SELECT element_type, content, level, attributes['list_type'], attributes['ordered']
+FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
+----
+list	NULL	1	bullet	false
+list_item	bullet one	2	NULL	NULL
+list_item	bullet two	2	NULL	NULL
+
+# ...and the handwritten spelling of the same list -- `\item bullet one` on ONE line rather
+# than pandoc's `\item` + indented continuation -- reads identically. The two fixtures are
+# the same document, so a list rule that depended on where the newline fell would show up
+# here and nowhere else.
+query III
+SELECT element_type, content, level FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE element_type IN ('list', 'list_item', 'plain') ORDER BY element_order;
+----
+list	NULL	1
+list_item	bullet one	2
+list_item	bullet two	2
+
+# A blockquote owns its paragraph one level deeper and carries no content itself.
+query III
+SELECT element_type, content, level FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE element_type = 'blockquote' OR content = 'A block quote.' ORDER BY element_order;
+----
+blockquote	NULL	1
+paragraph	A block quote.	2
+
+# \tightlist emits nothing -- it is pandoc's spacing hint, not content. If it leaked the
+# two fixtures would stop being equivalent, since handwritten.tex has no such macro.
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE content LIKE '%tightlist%';
+----
+0
+
+# THE ASYMMETRY FOR UNKNOWN INPUT. An unknown MACRO is dropped with its arguments, because
+# most unrecognised macros are presentational and descending would flood the output. An
+# unknown ENVIRONMENT is descended into, because most still wrap prose. `tabular` is the
+# documented exception: descending yields mangled cell text as sentences.
+#
+# Its run is a `plain` and not a `paragraph`, and that is the asymmetry stated a second
+# way: the environment is one panduck declined to model, so `plain` claims only what is
+# known -- block-level text -- where `paragraph` would assert paragraph semantics on
+# behalf of a construct we just admitted we do not understand. A KNOWN transparent
+# environment (\begin{center}, \begin{abstract}) does get `paragraph`, because there the
+# claim is one we can make.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  '\begin{document}\vspace{2em}\begin{unknownenv}kept\end{unknownenv}\begin{tabular}{ll}a&b\\\end{tabular}\end{document}')
+WHERE kind = 'block' ORDER BY element_order;
+----
+plain	kept
+
+# ...and the KNOWN transparent half, which is what makes the line above a distinction
+# rather than a blanket rule.
+query II
+SELECT element_type, content FROM read_latex_blocks_string('\begin{center}centred\end{center}')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	centred
+
+# UTF-8 and the em-dash ligature both survive. handwritten.tex carries "café --- em-dash".
+query I
+SELECT count(*) FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE content LIKE '%café — em-dash%';
+----
+1
+
+# ---------------------------------------------------------------------------
+# THE CONTENT RULE, AND THE THREE ROWS THAT DISCRIMINATE IT.
+#
+# content is populated IFF the container's only child is a plain text run, and a lone bare
+# run IS that single text child -- so `\item text` carries its text and grows no child at
+# all. `plain` is for a run with nowhere else to live: beside a block sibling.
+#
+# THE THIRD CASE IS THE WHOLE POINT. An item can hold a nested list and STILL be tight, so
+# a rule keyed on "does the item have block children" gets a_bare and b_par right and
+# c_nested wrong -- it would fold c_nested's text away or promote it to a paragraph. Only
+# asserting all three together catches that, which is why they are one query.
+# ---------------------------------------------------------------------------
+query IIII
+SELECT src, element_type, content, level FROM (
+  SELECT 'a_bare' AS src, element_type, content, level, element_order
+    FROM read_latex_blocks_string('\begin{itemize}\item text\end{itemize}')
+  UNION ALL
+  SELECT 'b_par', element_type, content, level, element_order
+    FROM read_latex_blocks_string('\begin{itemize}\item \par text\end{itemize}')
+  UNION ALL
+  SELECT 'c_nested', element_type, content, level, element_order
+    FROM read_latex_blocks_string('\begin{itemize}\item text\begin{itemize}\item sub\end{itemize}\end{itemize}')
+) ORDER BY src, element_order;
+----
+a_bare	list	NULL	1
+a_bare	list_item	text	2
+b_par	list	NULL	1
+b_par	list_item	NULL	2
+b_par	paragraph	text	3
+c_nested	list	NULL	1
+c_nested	list_item	NULL	2
+c_nested	plain	text	3
+c_nested	list	NULL	3
+c_nested	list_item	sub	4
+
+# A BLANK LINE IS \par SPELLED THE OTHER WAY, and both have to reach the same rule: a
+# reader that keyed only on the PAR_BREAK token would read `\item \par text` as tight,
+# because \par is a control word the macro table never claimed.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(E'\\begin{itemize}\\item\n\ntext\\end{itemize}')
+ORDER BY element_order;
+----
+list	NULL	1
+list_item	NULL	2
+paragraph	text	3
+
+# A FORMATTED RUN IS NOT A BARE TEXT RUN, so it stays a `plain` child with its own inline
+# tree rather than being flattened onto the item's content -- there is no single string to
+# carry, and Pandoc emits Plain here too. The content rule asks what the only child IS.
+#
+# content is TRIMMED in the projection only: the trailing run really is " b", because the
+# space between `\textbf{a}` and `b` is a word boundary rather than layout and the reader
+# keeps it. Asserting it raw would be testing sqllogictest's whitespace handling.
+query IIII
+SELECT kind, element_type, trim(content), level
+FROM read_latex_blocks_string('\begin{itemize}\item \textbf{a} b\end{itemize}') ORDER BY element_order;
+----
+block	list	NULL	1
+block	list_item	NULL	2
+block	plain	NULL	3
+inline	bold	a	4
+inline	text	b	4
+
+# ---------------------------------------------------------------------------
+# ORDERED LISTS carry start/number_style/number_delim ALWAYS, matching read_epub_blocks:
+# a consumer that renders numbering should never have to guess a default that the reader
+# already knows.
+# ---------------------------------------------------------------------------
+query IIIIII
+SELECT element_type, attributes['list_type'], attributes['ordered'], attributes['start'],
+       attributes['number_style'], attributes['number_delim']
+FROM read_latex_blocks_string('\begin{enumerate}\item a\end{enumerate}')
+WHERE element_type = 'list';
+----
+list	ordered	true	1	Decimal	Period
+
+# ...and an explicit start survives. `\begin{enumerate}[3]` is the shape the optional
+# argument takes; enumitem's `[start=3]` spells the same fact and reads the same.
+query II
+SELECT list_start, count(*) FROM (
+  SELECT attributes['start'] AS list_start
+    FROM read_latex_blocks_string('\begin{enumerate}[3]\item a\end{enumerate}') WHERE element_type = 'list'
+  UNION ALL
+  SELECT attributes['start']
+    FROM read_latex_blocks_string('\begin{enumerate}[start=3]\item a\end{enumerate}') WHERE element_type = 'list'
+) GROUP BY 1;
+----
+3	2
+
+# A BULLET LIST HAS NO start/number_style/number_delim. Emitting them anyway would tell a
+# consumer that an unordered list is numbered from 1, which is a statement about the
+# document rather than a harmless default.
+query III
+SELECT attributes['start'], attributes['number_style'], attributes['number_delim']
+FROM read_latex_blocks_string('\begin{itemize}\item a\end{itemize}') WHERE element_type = 'list';
+----
+NULL	NULL	NULL
+
+# ---------------------------------------------------------------------------
+# \end MUST MATCH BY NAME. Counting \begin/\end generically -- which the Task 4 placeholder
+# did -- lets \end{document} close an unclosed \begin{itemize}: the document's real ending
+# is consumed as a nest level and the reader then runs to end of input, emitting the tail
+# it was supposed to stop before.
+# ---------------------------------------------------------------------------
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string(
+  '\begin{document}\begin{itemize}\item one\end{document} after this') ORDER BY element_order;
+----
+list	NULL	1
+list_item	one	2
+
+# ...and the same for a DROPPED environment, which skips to its own \end rather than
+# parsing: `\begin{tabular}` with no `\end{tabular}` must not eat the rest of the document
+# silently past the point the document ends.
+query I
+SELECT count(*) FROM read_latex_blocks_string(
+  '\begin{document}\begin{tabular}{ll}a\end{document} after this')
+WHERE content LIKE '%after this%';
+----
+0
+
+# A STRAY \end CLOSES NOTHING. Popping a level that was never pushed would lift the rest
+# of the document out of whatever container it really sits in. The text on BOTH sides
+# survives and both rows stay at level 1 -- an \end is still a block boundary, which is why
+# this is two paragraphs rather than one.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string('before \end{itemize} after')
+ORDER BY element_order;
+----
+paragraph	before	1
+paragraph	after	1
+
+# ---------------------------------------------------------------------------
+# VERBATIM IS A LEXICAL MODE, NOT AN ENVIRONMENT WITH A BODY. Inside it `%` is a percent
+# sign and `\emph` is five characters, so the body has to be taken as BYTES before the
+# comment rule and the control-word scanner have run -- reconstructing it from tokens
+# afterwards cannot get back what those already ate.
+# ---------------------------------------------------------------------------
+query III
+SELECT kind, element_type, content
+FROM read_latex_blocks_string(E'\\begin{verbatim}\n100% \\emph{raw} ---\n\\end{verbatim}') ORDER BY element_order;
+----
+block	code	100% \emph{raw} ---
+
+# ...and lstlisting's options are not code.
+query II
+SELECT element_type, content
+FROM read_latex_blocks_string(E'\\begin{lstlisting}[language=C]\nint x;\n\\end{lstlisting}') ORDER BY element_order;
+----
+code	int x;
+
+# ---------------------------------------------------------------------------
+# \item OUTSIDE A LIST. \begin{description} is TRANSPARENT -- duck_block has no settled
+# shape for a definition list, so inventing list_type='bullet' for one would be a
+# falsehood about the document -- which leaves its \item with no container to belong to.
+# The run is ended and the label stays as text, because deleting text on a guess is the
+# one outcome worse than losing the structure.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  '\begin{description}\item[Term] the definition\end{description}')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	[Term] the definition

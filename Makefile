@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -37,6 +37,21 @@ check:
 .PHONY: check-vocabulary
 check-vocabulary:
 	python3 scripts/check_duck_block_vocabulary.py
+
+# The CONVERTER'S regression net, moved here ahead of the converter itself.
+#
+# duck_block_utils' rule for this relocation is FIX BEFORE MOVING: relocating buggy code
+# relocates the bugs, so the net is green HERE first and the code moves under it. A
+# regression after the move is then unambiguously caused by the move.
+#
+# During the handoff it runs against the converter still living upstream, loaded into
+# panduck's binary. Once the converter is linked in locally, drop --load and the same
+# assertions run unchanged -- which is the point: the net does not know which side of the
+# move it is on.
+.PHONY: check-converter
+check-converter:
+	python3 test/converter/check_roundtrip_sweep.py \
+	  --load "$(realpath ../duckdb_duck_block_utils)/build/release/extension/duck_block_utils/duck_block_utils.duckdb_extension"
 
 # Check every reader's output against duck_block_utils' pure-SQL conformance macros.
 # Until this target existed, panduck's test suite checked panduck's own behaviour and

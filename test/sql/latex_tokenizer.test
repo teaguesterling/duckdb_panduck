@@ -133,3 +133,79 @@ SELECT count(*) FROM panduck_latex_tokens(E'\\begin{verbatim}\nx')
 WHERE kind = 'control_word' AND text = 'end';
 ----
 1
+
+# ---------------------------------------------------------------------------
+# THE LIGATURES. pandoc spells every quotation mark and every unbreakable space this way:
+#   $ pandoc -f markdown -t latex <<< 'He said "hello" to Dr. Smith.'
+#   He said ``hello'' to Dr.~Smith.
+# so a tokenizer that resolves only the dashes returns literal backticks and tildes where
+# the SAME document read as DOCX or EPUB returns real punctuation -- which defeats the one
+# thing this reader exists to provide. All five in one run, because their ORDER matters:
+# `` must be tried before a lone backtick and '' before a lone quote.
+query II
+SELECT kind, text FROM panduck_latex_tokens('a---b--c ``q'''' d');
+----
+text	a—b–c “q” d
+
+# ...and the fifth, asserted BY CODE POINT because it has no visible spelling: `~` is a
+# TIE, a space that cannot break, so `Dr.~Smith` is two words. Writing U+00A0 into the
+# expected block below would put an invisible byte in a test file; 160 is legible.
+query I
+SELECT list_transform(regexp_split_to_array(text, ''), lambda c: unicode(c))[4]
+FROM panduck_latex_tokens('Dr.~Smith');
+----
+160
+
+# ...and a LONE ` or ' is left exactly as written. TeX curls them into single quotes, but
+# `'` is also how English spells an apostrophe and nothing here can tell the two apart;
+# guessing would rewrite `don't` into `don’t` on the strength of no evidence.
+query I
+SELECT text FROM panduck_latex_tokens('don''t `x');
+----
+don't `x
+
+# LIGATURES DO NOT RUN INSIDE MATH OR VERBATIM. Both bodies were cut out as raw bytes
+# before this loop ever sees them, and the new ligatures must not have re-opened that:
+# `~` in a formula is a TeX tie in the source and has to come back byte for byte.
+query I
+SELECT text FROM panduck_latex_tokens('$a~b``c''''d$') WHERE kind = 'text';
+----
+a~b``c''d
+
+query I
+SELECT text FROM panduck_latex_tokens(E'\\begin{verbatim}\na ~ b `` c\n\\end{verbatim}')
+WHERE kind = 'text' AND text LIKE 'a %';
+----
+a ~ b `` c
+
+# A CONTROL SYMBOL IS ONE CHARACTER, WHICH IS NOT ONE BYTE. `\é` -- the accent spelled
+# directly rather than as \'e -- is a two-byte code point, and taking its lead byte alone
+# both made an invalid control symbol and left the continuation byte to poison the text
+# run after it. The whole code point is one token; nothing is left over.
+query II
+SELECT kind, text FROM panduck_latex_tokens('caf\é and more');
+----
+text	caf
+control_symbol	é
+text	 and more
+
+# AN UNCLOSED LISTING OPTION IS NOT AN OPTION. `src.find(']')` from the `[` runs to the
+# first `]` ANYWHERE in the rest of the file -- `int x = a[0];` two lines down will do --
+# and silently deletes every source line before it. The bound is the newline that ends the
+# \begin line, because the body starts on the next one; unclosed by then, the `[` is part
+# of the listing and stays there.
+query I
+SELECT replace(text, chr(10), '\n') FROM panduck_latex_tokens(
+  E'\\begin{lstlisting}[caption=Fig 1\nint x = a[0];\nint y = 2;\n\\end{lstlisting}')
+WHERE kind = 'text' AND text LIKE '%int y%';
+----
+[caption=Fig 1\nint x = a[0];\nint y = 2;
+
+# ...and a WELL-FORMED option list is still removed, closing bracket and all. The bound
+# would be useless if it also cost the reader the ordinary spelling.
+query I
+SELECT replace(text, chr(10), '\n') FROM panduck_latex_tokens(
+  E'\\begin{lstlisting}[language=C]\nint x = a[0];\n\\end{lstlisting}')
+WHERE kind = 'text' AND text LIKE '%int x%';
+----
+int x = a[0];

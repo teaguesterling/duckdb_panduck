@@ -45,7 +45,6 @@ struct LatexBlock {
 	std::string content;      //!< empty when a container, or when inlines are populated
 	std::string list_type;    //!< list only: "bullet" / "ordered"
 	std::string list_start, number_style, number_delim; //!< ordered lists, always set
-	std::string display;      //!< math only
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
 	int level = 1;            //!< structural depth; never 0, never NULL on emission
 	std::vector<LatexInline> inlines;

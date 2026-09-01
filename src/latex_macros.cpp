@@ -16,11 +16,16 @@ namespace {
 
 const MacroEntry MACROS[] = {
     // SEMANTIC -- inline
+    // \bf and \it are DELIBERATELY ABSENT. They are font SWITCHES -- `{\bf hello world}`
+    // makes the whole group bold and takes no argument at all -- so declaring them as
+    // one-argument macros made the reader eat a single character and emit `bold "h"`
+    // followed by `text "ello world"`. Their modern spellings, \textbf and \textit, DO
+    // take an argument and are right below. Unclaimed, a switch drops its name and keeps
+    // every character around it: the formatting is lost, the prose is not, which is the
+    // same trade every other unclaimed presentational macro already makes.
     {"textbf", Disposition::SEMANTIC, DuckBlockTypes::INLINE_BOLD, 1, 0, nullptr},
-    {"bf", Disposition::SEMANTIC, DuckBlockTypes::INLINE_BOLD, 1, 0, nullptr},
     {"emph", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
     {"textit", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
-    {"it", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
     {"underline", Disposition::SEMANTIC, DuckBlockTypes::INLINE_UNDERLINE, 1, 0, nullptr},
     {"uline", Disposition::SEMANTIC, DuckBlockTypes::INLINE_UNDERLINE, 1, 0, nullptr},
     {"sout", Disposition::SEMANTIC, DuckBlockTypes::INLINE_STRIKETHROUGH, 1, 0, nullptr},
@@ -112,8 +117,13 @@ const MacroEntry ENVIRONMENTS[] = {
     // Dropped whole: descending yields mangled cell and coordinate text as prose.
     {"tabular", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},
-    // Display math, dropped until Task 7 gives it a shape. The starred spellings --
-    // align*, gather* -- reach these through LookupEnvironment, which strips the star.
+    // DISPLAY MATH ENVIRONMENTS ARE DROPPED, AND `\[..\]` IS NOT. The asymmetry is
+    // intended, not pending: `\[..\]` has one formula with a body the tokenizer can cut
+    // out whole, so it becomes an inline `math` run. These environments hold a numbered,
+    // aligned, multi-row LAYOUT -- `&` columns, `\\` rows, \intertext between them -- and
+    // there is no duck_block shape for that, so emitting their source as one formula would
+    // claim something the document does not say. The starred spellings -- align*, gather*
+    // -- reach these through LookupEnvironment, which strips the star.
     {"equation", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"align", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"gather", Disposition::DROPPED, nullptr, 0, -1, nullptr},

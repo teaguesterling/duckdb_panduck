@@ -93,6 +93,36 @@ SELECT count(*) FROM doc_toc('test/fixtures/pandoc_pstyle.docx');
 ----
 2
 
+# ...AND THE .tex ARM, which is the headline goal stated as an assertion rather than as
+# prose: "a LaTeX document and the same document in DOCX, ODT, EPUB or RTF produce the same
+# table of contents". Three writers with nothing in common -- Word's paragraph styles,
+# RTF's outline levels, and a person typing \section -- routed through three readers into
+# one vocabulary. Asserted in BOTH directions, because EXCEPT is one-sided and the pair
+# above only rules out extra rows on the docx side.
+query III
+SELECT level, title, indent FROM doc_toc('test/fixtures/handwritten.tex') ORDER BY element_order;
+----
+1	Heading One	0
+2	Heading Two	1
+
+query I
+SELECT count(*) FROM (
+  (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
+  EXCEPT
+  (SELECT level, title FROM doc_toc('test/fixtures/handwritten.tex'))
+);
+----
+0
+
+query I
+SELECT count(*) FROM (
+  (SELECT level, title FROM doc_toc('test/fixtures/handwritten.tex'))
+  EXCEPT
+  (SELECT level, title FROM doc_toc('test/fixtures/pandoc_outlinelevel.rtf'))
+);
+----
+0
+
 # doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
 query I
 SELECT count(*) FROM (

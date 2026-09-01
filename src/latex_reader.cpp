@@ -119,6 +119,11 @@ private:
 		//! lists only: every list_item's index in `blocks`. Kept because the content rule
 		//! cannot be applied until the list closes and its tightness is known.
 		std::vector<size_t> item_indices;
+		//! Index in `blocks` of the container this environment emitted, or NO_BLOCK for a
+		//! TRANSPARENT or DROPPED environment that emitted none. Kept so that the container
+		//! can be WITHDRAWN if it turns out to have closed empty -- see PopEnvironment.
+		static constexpr size_t NO_BLOCK = (size_t)-1;
+		size_t block_index = NO_BLOCK;
 	};
 
 	std::vector<Token> tokens;
@@ -150,7 +155,6 @@ private:
 	void Run(std::vector<Token> &toks);
 	void ControlWord(std::vector<Token> &toks, size_t &i, const std::string &name);
 	bool ReadGroup(std::vector<Token> &toks, size_t &i, std::vector<Token> &out);
-	void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = nullptr);
 	void BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::string &name);
 	void EndEnvironment(const std::string &name);
 	void PopEnvironment();
@@ -166,10 +170,96 @@ private:
 	void EmitHeading(const std::string &name, std::vector<Token> &arg);
 };
 
+//! Cut an optional `[...]` argument out of the token stream. `captured` receives its
+//! contents when it lay wholly inside one TEXT token, which is the only shape a caller
+//! that wants to READ the argument (\begin{enumerate}[3]) can rely on; a cross-token
+//! optional is skipped but reported as empty rather than half-reconstructed.
+//!
+//! ONE COPY, CALLED FROM BOTH PATHS. Flatten() used to scan a macro's arguments itself,
+//! and its copy never learned about optional ones -- so `\section{Fig
+//! \includegraphics[width=2cm]{f.png} end}` came out titled "Fig [width=2cm]f.png end"
+//! while the parsing path read the same macro correctly. Headings are what doc_toc
+//! returns, so the divergence surfaced in the reader's primary output. Free function
+//! rather than a Parser member for exactly that reason: it touches no parser state, and
+//! Flatten is not a member.
+void SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured = nullptr) {
+	if (captured) {
+		captured->clear();
+	}
+	// `[` and `]` are ORDINARY CHARACTERS to the tokenizer -- they are not TeX syntax, only
+	// a convention macros implement themselves -- so an optional argument is not a token
+	// boundary and has to be cut out of the TEXT run it lives inside. pandoc's
+	// `\documentclass[\n]{article}` is exactly this shape.
+	size_t start = i;
+	while (start < toks.size() && toks[start].kind == TokenKind::TEXT && IsBlank(toks[start].text)) {
+		start++;
+	}
+	if (start >= toks.size() || toks[start].kind != TokenKind::TEXT) {
+		return;
+	}
+	auto &text = toks[start].text;
+	size_t k = 0;
+	while (k < text.size() && IsSpace(text[k])) {
+		k++;
+	}
+	if (k >= text.size() || text[k] != '[') {
+		return;
+	}
+	size_t close = text.find(']', k);
+	if (close != std::string::npos) {
+		if (captured) {
+			*captured = text.substr(k + 1, close - k - 1);
+		}
+		text = text.substr(close + 1);
+		i = start;
+		return;
+	}
+	// A `[` whose `]` is in a LATER token is still a real optional argument --
+	// `\includegraphics[width=\textwidth]{img.png}` lexes as TEXT "[width=",
+	// CONTROL_WORD textwidth, TEXT "]" -- so the search has to cross tokens. It must not
+	// cross a construct an optional argument can never CONTAIN, though, and that boundary is
+	// the whole safety of this function: an UNCLOSED `[` otherwise scans to the first `]`
+	// anywhere in the rest of the document, deletes both spans and welds two paragraphs into
+	// one. Run in the preamble the same runaway consumes \begin{document}, `body_start` is
+	// never found, and the reader returns NOTHING for a document it could mostly have read.
+	//
+	// The budget is a second belt: a pathological source with a bracket and a boundary-free
+	// tail should cost a bounded scan, not a quadratic one.
+	constexpr size_t OPTIONAL_ARG_BUDGET = 64;
+	const size_t limit = toks.size() < start + 1 + OPTIONAL_ARG_BUDGET ? toks.size() : start + 1 + OPTIONAL_ARG_BUDGET;
+	for (size_t j = start + 1; j < limit; j++) {
+		auto kind = toks[j].kind;
+		if (kind == TokenKind::END || kind == TokenKind::PAR_BREAK || kind == TokenKind::MATH_SHIFT ||
+		    kind == TokenKind::BEGIN_GROUP || kind == TokenKind::END_GROUP) {
+			break;
+		}
+		if (kind == TokenKind::CONTROL_WORD && (toks[j].text == "begin" || toks[j].text == "end")) {
+			break;
+		}
+		if (kind != TokenKind::TEXT) {
+			continue;
+		}
+		auto found = toks[j].text.find(']');
+		if (found == std::string::npos) {
+			continue;
+		}
+		toks[j].text = toks[j].text.substr(found + 1);
+		text.clear();
+		i = j;
+		return;
+	}
+	// Unclosed, or closed only beyond a boundary an optional argument cannot cross: leave the
+	// `[` exactly where it is. It is then ordinary text, which is what it turned out to be.
+}
+
 //! Flatten tokens to plain text, resolving the dispositions that can contribute
 //! characters. Used for anything that is text BY CONSTRUCTION -- a heading's title, a
 //! link's target, the documentclass -- where structure cannot survive anyway.
-void Flatten(const std::vector<Token> &toks, std::string &out);
+//!
+//! NON-CONST because it shares SkipOptional with the parsing path, and that helper cuts
+//! the optional argument out of the TEXT token it lives inside. Both callers already hand
+//! over a token group they own and do not read again.
+void Flatten(std::vector<Token> &toks, std::string &out);
 
 void FlattenAppend(std::string &out, const std::string &text) {
 	for (char c : text) {
@@ -183,7 +273,7 @@ void FlattenAppend(std::string &out, const std::string &text) {
 	}
 }
 
-void Flatten(const std::vector<Token> &toks, std::string &out) {
+void Flatten(std::vector<Token> &toks, std::string &out) {
 	for (size_t i = 0; i < toks.size(); i++) {
 		const auto &tok = toks[i];
 		switch (tok.kind) {
@@ -206,6 +296,10 @@ void Flatten(const std::vector<Token> &toks, std::string &out) {
 			int want = entry ? entry->args : 0;
 			size_t j = i + 1;
 			for (int a = 0; a < want; a++) {
+				// The SAME skip the parsing path performs before every required argument.
+				// Without it a heading title picks up \includegraphics's [width=2cm] as
+				// prose, and the two paths disagree about the same macro.
+				SkipOptional(toks, j);
 				while (j < toks.size() && toks[j].kind == TokenKind::TEXT && IsBlank(toks[j].text)) {
 					j++;
 				}
@@ -255,7 +349,7 @@ void Flatten(const std::vector<Token> &toks, std::string &out) {
 	}
 }
 
-std::string FlattenTrimmed(const std::vector<Token> &toks) {
+std::string FlattenTrimmed(std::vector<Token> &toks) {
 	std::string out;
 	Flatten(toks, out);
 	return Trim(out);
@@ -462,8 +556,13 @@ bool Parser::ReadGroup(std::vector<Token> &toks, size_t &i, std::vector<Token> &
 			return true;
 		}
 		if (toks[j].kind == TokenKind::TEXT && !toks[j].text.empty()) {
-			out.push_back(Token {TokenKind::TEXT, std::string(1, toks[j].text[0]), false});
-			toks[j].text.erase(0, 1);
+			// A SINGLE TOKEN IS A SINGLE CHARACTER, AND A CHARACTER IS NOT A BYTE. Taking
+			// one byte cuts `\textbf émile` between the two bytes of `é`, which is not a
+			// degraded reading of well-formed LaTeX -- it is an Invalid unicode error out
+			// of DuckDB, on input this reader promises to read.
+			const size_t n = Utf8SequenceLength(toks[j].text, 0);
+			out.push_back(Token {TokenKind::TEXT, toks[j].text.substr(0, n), false});
+			toks[j].text.erase(0, n);
 			i = j;
 			return true;
 		}
@@ -488,85 +587,11 @@ bool Parser::ReadGroup(std::vector<Token> &toks, size_t &i, std::vector<Token> &
 	return true;
 }
 
-//! Cut an optional `[...]` argument out of the token stream. `captured` receives its
-//! contents when it lay wholly inside one TEXT token, which is the only shape a caller
-//! that wants to READ the argument (\begin{enumerate}[3]) can rely on; a cross-token
-//! optional is skipped but reported as empty rather than half-reconstructed.
-void Parser::SkipOptional(std::vector<Token> &toks, size_t &i, std::string *captured) {
-	if (captured) {
-		captured->clear();
-	}
-	// `[` and `]` are ORDINARY CHARACTERS to the tokenizer -- they are not TeX syntax, only
-	// a convention macros implement themselves -- so an optional argument is not a token
-	// boundary and has to be cut out of the TEXT run it lives inside. pandoc's
-	// `\documentclass[\n]{article}` is exactly this shape.
-	size_t start = i;
-	while (start < toks.size() && toks[start].kind == TokenKind::TEXT && IsBlank(toks[start].text)) {
-		start++;
-	}
-	if (start >= toks.size() || toks[start].kind != TokenKind::TEXT) {
-		return;
-	}
-	auto &text = toks[start].text;
-	size_t k = 0;
-	while (k < text.size() && IsSpace(text[k])) {
-		k++;
-	}
-	if (k >= text.size() || text[k] != '[') {
-		return;
-	}
-	size_t close = text.find(']', k);
-	if (close != std::string::npos) {
-		if (captured) {
-			*captured = text.substr(k + 1, close - k - 1);
-		}
-		text = text.substr(close + 1);
-		i = start;
-		return;
-	}
-	// A `[` whose `]` is in a LATER token is still a real optional argument --
-	// `\\includegraphics[width=\\textwidth]{img.png}` lexes as TEXT "[width=",
-	// CONTROL_WORD textwidth, TEXT "]" -- so the search has to cross tokens. It must not
-	// cross a construct an optional argument can never CONTAIN, though, and that boundary is
-	// the whole safety of this function: an UNCLOSED `[` otherwise scans to the first `]`
-	// anywhere in the rest of the document, deletes both spans and welds two paragraphs into
-	// one. Run in the preamble the same runaway consumes \\begin{document}, `body_start` is
-	// never found, and the reader returns NOTHING for a document it could mostly have read.
-	//
-	// The budget is a second belt: a pathological source with a bracket and a boundary-free
-	// tail should cost a bounded scan, not a quadratic one.
-	constexpr size_t OPTIONAL_ARG_BUDGET = 64;
-	const size_t limit = toks.size() < start + 1 + OPTIONAL_ARG_BUDGET ? toks.size() : start + 1 + OPTIONAL_ARG_BUDGET;
-	for (size_t j = start + 1; j < limit; j++) {
-		auto kind = toks[j].kind;
-		if (kind == TokenKind::END || kind == TokenKind::PAR_BREAK || kind == TokenKind::MATH_SHIFT ||
-		    kind == TokenKind::BEGIN_GROUP || kind == TokenKind::END_GROUP) {
-			break;
-		}
-		if (kind == TokenKind::CONTROL_WORD && (toks[j].text == "begin" || toks[j].text == "end")) {
-			break;
-		}
-		if (kind != TokenKind::TEXT) {
-			continue;
-		}
-		auto found = toks[j].text.find(']');
-		if (found == std::string::npos) {
-			continue;
-		}
-		toks[j].text = toks[j].text.substr(found + 1);
-		text.clear();
-		i = j;
-		return;
-	}
-	// Unclosed, or closed only beyond a boundary an optional argument cannot cross: leave the
-	// `[` exactly where it is. It is then ordinary text, which is what it turned out to be.
-}
-
 //! Advance past the body of `\begin{name}`, stopping just after its OWN `\end{name}`.
-//! Nesting is counted only for environments of the SAME name, which is the whole
-//! difference from the placeholder this replaces: a generic begin/end counter treats
-//! \end{document} as the closer of an unclosed \begin{itemize}, spends the document's real
-//! ending on a nest level, and then runs to end of input.
+//! Nesting is counted only for environments of the SAME name, and that is the whole point:
+//! a generic begin/end counter treats \end{document} as the closer of an unclosed
+//! \begin{itemize}, spends the document's real ending on a nest level, and then runs to end
+//! of input emitting the tail it was supposed to stop before.
 //!
 //! `raw`, when given, collects the body's TEXT tokens unfolded -- for verbatim, whose body
 //! the tokenizer has already delivered as one uninterpreted run.
@@ -700,6 +725,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 		frame.list_depth = depth;
 	}
 	blocks.push_back(std::move(block));
+	frame.block_index = blocks.size() - 1;
 	depth++;
 	env_stack.push_back(std::move(frame));
 }
@@ -708,6 +734,17 @@ void Parser::PopEnvironment() {
 	auto &frame = env_stack.back();
 	if (frame.is_list) {
 		ResolveList(frame);
+	}
+	// AN EMPTY CONTAINER IS WITHDRAWN, not published. `\begin{itemize}\end{itemize}` and
+	// `\begin{quote}\end{quote}` otherwise emit a block with NULL content and no children,
+	// which is the one shape a duck_block consumer can neither render nor index -- the same
+	// objection that already makes `\section{}` not a heading, `\href{url}{}` not a link and
+	// an empty formatted run not an element. Being the LAST block is what proves it is
+	// empty: every block emitted since it opened was emitted while it was open, so it is a
+	// descendant. Innermost environments pop first, so a container holding nothing but
+	// another empty container is withdrawn in the same sweep.
+	if (frame.block_index != EnvFrame::NO_BLOCK && frame.block_index + 1 == blocks.size()) {
+		blocks.erase(blocks.begin() + (long)frame.block_index);
 	}
 	depth = frame.saved_depth;
 	env_stack.pop_back();
@@ -838,7 +875,8 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 	if (name == "end") {
 		// FLUSH FIRST, and the order is load-bearing: the run still belongs to the scope
 		// that is about to close, so an item's last run has to be finished while the item
-		// is still open for CloseItem() to see it.
+		// is still open -- ResolveList settles every item from the blocks that sit between
+		// them, and a run left pending here would not be among those blocks.
 		FlushRun();
 		std::vector<Token> env;
 		ReadGroup(toks, i, env);
@@ -992,8 +1030,11 @@ void Parser::Run(std::vector<Token> &toks) {
 			break;
 		case TokenKind::BEGIN_GROUP:
 		case TokenKind::END_GROUP:
-			// A bare group is a SCOPE, and scopes are Task 5. Until then the braces are
-			// transparent: keeping the text they wrap is the smaller error.
+			// A BARE GROUP IS TRANSPARENT. In TeX it is a scope, and a font switch inside it
+			// (`{\bfseries x}`) applies to exactly the text it wraps -- but the reader keeps
+			// no scope stack, so the choice is between keeping the text and losing the
+			// formatting, or dropping both. Keeping the text is the smaller error, and it is
+			// the same answer \strong and every other unclaimed macro already gets.
 			i++;
 			break;
 		case TokenKind::MATH_SHIFT: {
@@ -1174,9 +1215,6 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 				row.attributes["number_style"] = block.number_style;
 				row.attributes["number_delim"] = block.number_delim;
 			}
-		}
-		if (!block.display.empty()) {
-			row.attributes["display"] = block.display;
 		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD of
 		// its block, so it is at least one deeper. The inline's own level is authoritative

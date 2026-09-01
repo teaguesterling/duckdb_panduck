@@ -3,10 +3,8 @@
 // This table IS the LaTeX reader's scope boundary: every macro and environment
 // panduck claims to understand is listed here, and nothing the reader emits comes
 // from a mapping invented ad hoc in latex_reader.cpp. Deliberately NOT exposed as a
-// table function -- see the brief for Task 3 (2026-08-31-latex-reader) for why that
-// argument does not survive contact: a static table in a source file is already
-// enumerable by reading it, and every entry that matters is exercised by the
-// reader's own tests.
+// table function: a static table in a source file is already enumerable by reading
+// it, and every entry that matters is exercised by the reader's own tests.
 
 #include <string>
 

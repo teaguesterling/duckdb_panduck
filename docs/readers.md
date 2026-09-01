@@ -192,6 +192,14 @@ but level 2 in `book`/`report`, where `\chapter` takes level 1. Lists are `bulle
 Inline formatting nests genuinely (`\textbf{\emph{x}}` is bold containing italic, not a
 single flattened run), unlike RTF's flat inline vocabulary.
 
+TeX's five **ligatures** are resolved in the tokenizer: `---` and `--` to em and en dashes,
+` `` ` and `''` to curly double quotes, and `~` to a no-break space. This is not cosmetic —
+pandoc spells every quotation mark and every unbreakable space that way, so without it the
+same sentence read from `.tex` and from `.docx` would differ in its punctuation. A lone
+`` ` `` or `'` is left alone, because `'` is also how English spells an apostrophe. None of
+the five run inside math or verbatim, whose bodies are cut out as raw bytes before the
+ligature rules ever see them.
+
 **Math is read opaque.** `$..$`, `\(..\)` (inline) and `$$..$$`, `\[..\]` (display) all
 become a `math` inline with `attributes['display']` set accordingly, but the TeX between
 the shifts is carried verbatim as `content` — never parsed, never macro-expanded. There is

@@ -29,6 +29,34 @@ const char *KindName(TokenKind kind) {
 	}
 }
 
+size_t Utf8SequenceLength(const std::string &s, size_t pos) {
+	if (pos >= s.size()) {
+		return 0;
+	}
+	const unsigned char lead = (unsigned char)s[pos];
+	size_t len;
+	if ((lead & 0xE0) == 0xC0) {
+		len = 2;
+	} else if ((lead & 0xF0) == 0xE0) {
+		len = 3;
+	} else if ((lead & 0xF8) == 0xF0) {
+		len = 4;
+	} else {
+		// ASCII, or a byte that is not a lead byte at all. Either way one byte is all that
+		// can be claimed, and claiming exactly that is what keeps malformed input moving.
+		return 1;
+	}
+	if (pos + len > s.size()) {
+		return 1;
+	}
+	for (size_t k = 1; k < len; k++) {
+		if (((unsigned char)s[pos + k] & 0xC0) != 0x80) {
+			return 1; // truncated sequence: do not swallow whatever followed it
+		}
+	}
+	return len;
+}
+
 namespace {
 
 //! Called with `i` just past a `\begin` control word. If the environment being opened is
@@ -65,9 +93,25 @@ bool LexVerbatim(const std::string &src, size_t &i, std::vector<Token> &out) {
 	out.push_back(Token {TokenKind::END_GROUP, "}", false});
 	size_t body = close + 1;
 	// \begin{lstlisting}[language=C] -- the options describe the listing, they are not in it.
+	//
+	// BOUNDED, for the same reason the reader's optional-argument scan is (see
+	// Parser::SkipOptional): searching for the first `]` anywhere in the rest of the file
+	// finds one inside the listing -- `int x = a[0];` on the second line will do -- and
+	// then every source line before it is silently deleted from the code block. The bound
+	// is the newline that ends the \begin line, because the body demonstrably starts on the
+	// NEXT line (that is what the skip just below assumes), so an option list that has not
+	// closed by then was never an option list. The budget is a second belt against a
+	// pathological single line.
 	if (body < src.size() && src[body] == '[') {
-		auto opt = src.find(']', body);
-		if (opt != std::string::npos) {
+		constexpr size_t VERBATIM_OPTION_BUDGET = 256;
+		const size_t limit = src.size() < body + VERBATIM_OPTION_BUDGET ? src.size() : body + VERBATIM_OPTION_BUDGET;
+		size_t opt = body;
+		while (opt < limit && src[opt] != ']' && src[opt] != '\n') {
+			opt++;
+		}
+		// Unclosed before the end of the line: leave the `[` alone. It is then part of the
+		// listing, which is what it turned out to be.
+		if (opt < limit && src[opt] == ']') {
 			body = opt + 1;
 		}
 	}
@@ -207,8 +251,13 @@ std::vector<Token> Tokenize(const std::string &src) {
 		}
 		if (c == '\\' && i + 1 < src.size()) {
 			flush();
-			out.push_back(Token {TokenKind::CONTROL_SYMBOL, std::string(1, src[i + 1]), false});
-			i += 2;
+			// A CONTROL SYMBOL IS ONE CHARACTER, WHICH IS NOT ONE BYTE. `caf\é` -- the
+			// accent spelled directly rather than as \'e -- puts a two-byte code point
+			// here, and taking its lead byte alone both makes an invalid CONTROL_SYMBOL
+			// and leaves the continuation byte behind to poison the next text run.
+			const size_t len = Utf8SequenceLength(src, i + 1);
+			out.push_back(Token {TokenKind::CONTROL_SYMBOL, src.substr(i + 1, len), false});
+			i += 1 + len;
 			continue;
 		}
 		if (c == '{' || c == '}') {
@@ -266,6 +315,13 @@ std::vector<Token> Tokenize(const std::string &src) {
 			i = after;
 			continue;
 		}
+		// THE LIGATURES, LONGEST SPELLING FIRST. These are not decoration: pandoc writes
+		// every quotation mark and every unbreakable space this way -- `He said ``hi'' to
+		// Dr.~Smith` is its ordinary output for straight quotes -- so a reader that leaves
+		// them alone returns backticks and tildes where the SAME document read as DOCX or
+		// EPUB returns real punctuation, which is exactly the equivalence this reader
+		// exists to provide. Math and verbatim never reach here: both were cut out as raw
+		// bytes upstream, before this loop ever sees them.
 		if (c == '-' && src.compare(i, 3, "---") == 0) {
 			text += "—"; // em dash
 			i += 3;
@@ -274,6 +330,27 @@ std::vector<Token> Tokenize(const std::string &src) {
 		if (c == '-' && src.compare(i, 2, "--") == 0) {
 			text += "–"; // en dash
 			i += 2;
+			continue;
+		}
+		if (c == '`' && src.compare(i, 2, "``") == 0) {
+			text += "“"; // left double quotation mark
+			i += 2;
+			continue;
+		}
+		if (c == '\'' && src.compare(i, 2, "''") == 0) {
+			text += "”"; // right double quotation mark
+			i += 2;
+			continue;
+		}
+		// A LONE ` or ' IS LEFT ALONE. TeX turns them into single curly quotes, but `'` is
+		// also how English spells an apostrophe, and there is no way to tell the two apart
+		// without a parser for prose. The doubled forms have no such ambiguity.
+		if (c == '~') {
+			// A TIE IS A SPACE THAT CANNOT BREAK, not a tilde character: `Dr.~Smith` is two
+			// words with a space between them, and rendering it as `Dr.~Smith` is wrong in
+			// a way a reader downstream cannot undo.
+			text += "\u00A0"; // U+00A0, spelled as an escape because the byte is invisible
+			i++;
 			continue;
 		}
 		text.push_back(c);

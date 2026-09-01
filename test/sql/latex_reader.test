@@ -702,3 +702,109 @@ SELECT element_type, content FROM read_latex_blocks_string(
 WHERE kind = 'block' ORDER BY element_order;
 ----
 paragraph	Body text.
+
+# ---------------------------------------------------------------------------
+# THE PROMISE IS THAT MALFORMED INPUT DEGRADES AND NEVER THROWS. These two spellings are
+# not even malformed -- `{\bf émile}` and `caf\é` are ordinary accented LaTeX -- and both
+# raised `Invalid Input Error: Invalid unicode` out of DuckDB, because an unbraced
+# single-token argument and a control symbol each took ONE BYTE where the character was
+# two. Braced accents (`\textbf{café}`) never hit either path, which is why no fixture
+# reaches this.
+# ---------------------------------------------------------------------------
+query II
+SELECT element_type, content FROM read_latex_blocks_string('{\bf émile} rest')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	émile rest
+
+query II
+SELECT element_type, content FROM read_latex_blocks_string('caf\é and more')
+WHERE kind = 'block' ORDER BY element_order;
+----
+paragraph	caf and more
+
+# The unbraced-argument path in isolation: `\textbf` DOES take an argument, and TeX gives
+# an unbraced macro exactly one CHARACTER of it -- `é`, not the first half of `é`.
+query II
+SELECT element_type, content FROM read_latex_blocks_string('\textbf émile') ORDER BY element_order;
+----
+paragraph	NULL
+bold	é
+text	mile
+
+# \bf AND \it ARE FONT SWITCHES, NOT ONE-ARGUMENT MACROS. `{\bf hello world}` makes the
+# whole group bold; declaring \bf with one argument made it eat a single character and
+# emit `bold "h"` + `text "ello world"`. Unclaimed, the switch drops its name and every
+# character survives -- formatting lost, prose kept, which is the trade every other
+# unclaimed presentational macro already makes.
+query II
+SELECT element_type, content FROM read_latex_blocks_string('{\bf hello world} tail')
+ORDER BY element_order;
+----
+paragraph	hello world tail
+
+query II
+SELECT element_type, content FROM read_latex_blocks_string('{\it hello world} tail')
+ORDER BY element_order;
+----
+paragraph	hello world tail
+
+# THE LIGATURES REACH THE BLOCKS. This is real pandoc output --
+#   $ pandoc -f markdown -t latex <<< 'He said "hello" to Dr. Smith, page 3.'
+#   He said ``hello'' to Dr.~Smith, page 3.
+# -- so without `` / '' / ~ a pandoc-generated .tex yields literal backticks and tildes
+# where the SAME document as DOCX or EPUB yields real punctuation, which is exactly the
+# equivalence this reader exists to provide. (The tie is a U+00A0, invisible here; the
+# tokenizer test asserts it by code point.)
+query I
+SELECT replace(content, chr(160), '<NB>') FROM read_latex_blocks_string(
+  'He said ``hello'''' to Dr.~Smith, page 3.') WHERE element_type = 'paragraph';
+----
+He said “hello” to Dr.<NB>Smith, page 3.
+
+# ...and NOT inside math, whose body was cut as raw bytes upstream. The new ligatures must
+# not have re-opened what math_opacity closed.
+query I
+SELECT content FROM read_latex_blocks_string('$a~b``c''''d$') WHERE element_type = 'math';
+----
+a~b``c''d
+
+# FLATTEN AND THE PARSING PATH SHARE ONE OPTIONAL-ARGUMENT SCAN. They used to have a copy
+# each and the copies diverged: Flatten never learned to skip `[...]`, so a heading -- the
+# one thing doc_toc returns -- came out titled "Fig [width=2cm]f.png end" while the main
+# path read the same macro correctly.
+query II
+SELECT element_type, content FROM read_latex_blocks_string(
+  '\section{Fig \includegraphics[width=2cm]{f.png} end}') ORDER BY element_order;
+----
+heading	Fig f.png end
+
+# AN EMPTY ENVIRONMENT CONTAINER IS WITHDRAWN, not published with NULL content and no
+# children -- the one shape a duck_block consumer can neither render nor index, and the
+# same objection that already makes `\section{}` not a heading and `\href{url}{}` not a
+# link. Innermost pops first, so a container holding nothing but another empty container
+# goes in the same sweep.
+query I
+SELECT count(*) FROM read_latex_blocks_string('\begin{itemize}\end{itemize}');
+----
+0
+
+query I
+SELECT count(*) FROM read_latex_blocks_string('\begin{quote}\end{quote}');
+----
+0
+
+query I
+SELECT count(*) FROM read_latex_blocks_string('\begin{quote}\begin{itemize}\end{itemize}\end{quote}');
+----
+0
+
+# ...and a container with ANYTHING in it is untouched. The rule has to be "closed empty",
+# not "carries no content of its own": every container in this reader carries its text in
+# children.
+query III
+SELECT element_type, content, level FROM read_latex_blocks_string('\begin{quote}hi\end{quote}')
+ORDER BY element_order;
+----
+blockquote	NULL	1
+paragraph	hi	2

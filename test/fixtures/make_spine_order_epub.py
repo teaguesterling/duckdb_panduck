@@ -10,6 +10,11 @@ real-world multi-directory book needs and a one-file book never exercises:
   * chapters are STORED in the archive in reverse of their reading order
   * the package document sits in its own directory, so manifest hrefs climb with ../
   * one chapter's filename contains a space, so its href is percent-encoded
+  * a nested list in BOTH the tight and loose spellings. An item can hold block
+    children and still be TIGHT -- pandoc emits Plain, not Para, for
+    `- outer` with an indented sublist -- so tight/loose is a property of the RUN
+    and not of whether the item has block children. The two must differ, and a
+    reader keyed on "has block children" would make them identical
   * a NESTED list, which no real-writer fixture contained. duck_block_utils' exporter
     dropped these entirely because its branch required list_level+1 while a nested
     list sits at +2 as a child of its item -- a defect invisible to panduck until a
@@ -124,6 +129,7 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <pre>  indented   code</pre>
 <ol start="3"><li>third</li></ol>
 <ul><li>outer<ul><li>inner</li></ul></li></ul>
+<ul><li><p>louter</p><ul><li>linner</li></ul></li></ul>
 <dl><dt>term</dt><dd>definition</dd></dl>
 <table><tr><td>cell one</td><td>cell two</td></tr></table>
 <article><p>art</p></article>

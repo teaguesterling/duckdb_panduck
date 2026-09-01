@@ -376,6 +376,8 @@ list	2	false	bullet	NULL	NULL
 list	2	true	ordered	3	Decimal
 list	2	false	bullet	NULL	NULL
 list	4	false	bullet	NULL	NULL
+list	2	false	bullet	NULL	NULL
+list	4	false	bullet	NULL	NULL
 
 # ---------------------------------------------------------------------------
 # A DEFINITION LIST IS NOT A BULLET LIST, and the reader must not claim it is. <dl> briefly
@@ -432,15 +434,20 @@ section	section	2
 # lines up: losing structure is a gap, losing text is a bug. It was shipping the bug in
 # order to avoid a gap it had anyway.
 #
-# The cells come through as paragraphs, which is honestly wrong about shape and honestly
-# right about content. When a structural table lands upstream this becomes a real mapping;
-# until then the words are in the document rather than gone from it.
+# The cells come through as `plain` runs -- honestly wrong about shape, honestly right
+# about content. When a structural table lands upstream this becomes a real mapping; until
+# then the words are in the document rather than gone from it.
+#
+# Worth noting they arrive as `plain` WITHOUT a table-specific rule. A cell's text is a
+# bare block-level run, so the general rule produces it, and duck_block_utils independently
+# specified `<td>cell</td> -> plain` before this reader could emit one. A rule that lands
+# on a case nobody wrote it for is doing more work than a special case would.
 query II
 SELECT element_type, content FROM read_epub_blocks('test/fixtures/spine_order.epub')
 WHERE content IN ('cell one', 'cell two') ORDER BY element_order;
 ----
-paragraph	cell one
-paragraph	cell two
+plain	cell one
+plain	cell two
 
 # ---------------------------------------------------------------------------
 # THE ROLE VOCABULARY IS HTML5'S SECTIONING SET, exactly and on purpose: section, article,
@@ -488,18 +495,22 @@ paragraph	NULL	mainly
 #         list_item 6
 #           plain   7
 #
-# The item's own text is a `paragraph` here rather than a `plain`, which is asserted as
-# CURRENT BEHAVIOUR rather than endorsed: `plain` is documented as what a bare block-level
-# text run becomes, and this run is bare. Raised upstream rather than guessed at, because
-# guessing which of two block types a construct takes is how the four-shape list_item
-# sequence happened.
+# THE ITEM'S OWN RUN DISCRIMINATES TIGHT FROM LOOSE, and this is the assertion that
+# matters. An item can hold block children and STILL BE TIGHT -- pandoc emits
+# BulletList > Plain > Str for `- outer` with an indented sublist, not Para -- so
+# "has block children, therefore loose" is false at its first step. Tight/loose is a
+# property of the RUN, not of the item's shape.
+#
+# Asserting only one spelling would pass against the wrong rule: a reader keyed on "has
+# block children" makes both forms identical, and either row alone looks correct. The two
+# DIFFERING is what discriminates.
 query III
 SELECT element_type, content, level FROM read_epub_blocks('test/fixtures/spine_order.epub')
-WHERE content IN ('outer', 'inner')
-   OR (element_type = 'list' AND level = 4)
+WHERE content IN ('outer', 'inner', 'louter', 'linner')
 ORDER BY element_order;
 ----
-paragraph	outer	4
-list	NULL	4
+plain	outer	4
 plain	inner	6
+paragraph	louter	4
+plain	linner	6
 

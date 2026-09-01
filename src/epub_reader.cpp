@@ -439,11 +439,20 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 		if (child.type() == pugi::node_pcdata || child.type() == pugi::node_cdata) {
 			// Bare text directly inside a container is rare but legal, and dropping it
 			// would be the ODT text:list mistake again: losing structure is a gap, losing
-			// text is a bug. It becomes a paragraph of its own so document order holds.
+			// text is a bug.
+			//
+			// It becomes a `plain` -- a block-level run with NO paragraph semantics --
+			// because that is exactly what it is: the author wrote a naked run and no <p>.
+			// This is what discriminates a TIGHT list item from a loose one, and the
+			// discrimination is a property of the RUN rather than of its container: an
+			// item can hold block children and still be tight, which pandoc confirms by
+			// emitting Plain rather than Para for `- outer` with an indented sublist. A
+			// reader that decided tightness from "does the item have block children"
+			// collapses the two spellings into one and loses the distinction silently.
 			std::string text = Trim(child.value());
 			if (!text.empty()) {
 				EpubBlock block;
-				block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+				block.element_type = DuckBlockTypes::TYPE_PLAIN;
 				block.level = depth;
 				block.content = text;
 				out.push_back(std::move(block));

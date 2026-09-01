@@ -180,3 +180,16 @@ query II
 SELECT element_type, content FROM read_rst_blocks_string(E'.. this is a comment\n\nBody.\n');
 ----
 paragraph	Body.
+
+# ---------------------------------------------------------------------------
+# A FORMATTED HEADING KEEPS BOTH, and this reader's bug was WORSE than flattening: the
+# title never went through the inline pass at all, so `**Bold** title` reached `content` as
+# LITERAL SOURCE. Markup leaking as text is a different failure from losing it -- a
+# consumer sees asterisks the document never displayed.
+query IIII
+SELECT kind, element_type, level, coalesce(content, '<NULL>') FROM read_rst_blocks_string(
+  E'**Bold** title\n==============\n') ORDER BY element_order;
+----
+block	heading	1	Bold title
+inline	bold	2	Bold
+inline	text	2	 title

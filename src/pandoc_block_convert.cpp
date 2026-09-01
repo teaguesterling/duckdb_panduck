@@ -152,6 +152,8 @@ static void StorePandocAttr(const PandocAttr &attr, map<string, string> &attrs) 
 	}
 }
 
+static void ExtractInlinesTextValInto(yyjson_val *node, string &out);
+
 static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 	if (!inlines_arr) {
 		return "";
@@ -178,6 +180,22 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 			result += " ";
 		} else if (strcmp(t, "LineBreak") == 0) {
 			result += "\n";
+		} else if (c_val) {
+			// RECURSE INTO FORMATTING CONTAINERS. Without this, Strong, Emph, Code, Link and
+			// every other wrapper contributed NOTHING -- so a heading of `**Bold** title`
+			// flattened to " title", and a table cell whose only content was `**BoldCell**`
+			// flattened to the EMPTY STRING. The cell's text was not mangled, it was GONE,
+			// inside the native {headers, rows} schema whose whole purpose is that cell text
+			// be searchable.
+			//
+			// Found by measuring a formatted heading after duck_block_utils reported the
+			// same class in duckdb_markdown. The table-cell case is the more serious half
+			// and neither of us was looking at tables.
+			//
+			// A Link's `c` is [attr, inlines, target]; an Image's the same. Recursing over
+			// the whole `c` picks the inlines out of either without a per-constructor arm,
+			// because attr and target are not Str objects and contribute nothing.
+			ExtractInlinesTextValInto(c_val, result);
 		}
 	};
 
@@ -191,6 +209,10 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 		process_item(inlines_arr);
 	}
 	return result;
+}
+
+static void ExtractInlinesTextValInto(yyjson_val *node, string &out) {
+	out += ExtractInlinesTextVal(node);
 }
 
 // Plain text of a Pandoc [Block] list -- used to project table cells, whose
@@ -831,6 +853,16 @@ static void ProcessPandocBlockVal(yyjson_val *block_val, int32_t &order, vector<
 		if (InlinesAreTextOnly(inline_children)) {
 			inline_children.clear();
 			order = order_before_children;
+		} else if (block_type == DuckBlockTypes::TYPE_HEADING) {
+			// A HEADING KEEPS BOTH -- duck_block ruling d003d32. Clearing the content here
+			// left a formatted heading with NO title in `content`, which every consumer
+			// reading an outline depends on: doc_toc, section slugs, table-of-contents
+			// queries. The children carry the formatting and the content carries a DERIVED
+			// flattening; children are authoritative when both are present, and the shape
+			// marks itself because a lone text child produces no children at all.
+			//
+			// Restricted to `heading` deliberately. Elsewhere two copies of one fact is the
+			// shape that hid an image alt-text loss upstream for months.
 		} else {
 			content.clear();
 		}

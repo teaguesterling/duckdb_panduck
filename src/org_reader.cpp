@@ -282,13 +282,24 @@ private:
 		if (runs.size() == 1 && runs[0].element_type == DuckBlockTypes::INLINE_TEXT) {
 			b.content = runs[0].content;
 		} else {
-			// Headings FLATTEN, as in every other panduck reader: a heading's text is its
-			// identity, and a consumer reading an outline needs a string.
+				// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
+				// inline children beside it (duck_block ruling d003d32).
+				//
+				// Flattening alone loses formatting irreversibly -- `**Bold** title` and
+				// `Bold title` become byte-identical, so a round trip rewrites the first as
+				// the second. Children alone break every consumer that reads a title from
+				// `content`, which doc_toc does.
+				//
+				// The structure marks itself and needs no new vocabulary: a lone text child
+				// lives in `content` and produces NO children, so children alongside
+				// non-empty content can only mean the content is a DERIVED flattening.
+				// CHILDREN ARE AUTHORITATIVE when both are present.
 			std::string all;
 			for (auto &r : runs) {
 				all += r.content;
 			}
 			b.content = all;
+			b.inlines = std::move(runs);
 		}
 		blocks_.push_back(std::move(b));
 	}

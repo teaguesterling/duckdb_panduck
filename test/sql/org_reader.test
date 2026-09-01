@@ -208,3 +208,21 @@ SELECT count(*) FROM (
 );
 ----
 0
+
+# ---------------------------------------------------------------------------
+# A FORMATTED HEADING KEEPS BOTH its flattened title and its rich children (duck_block
+# ruling d003d32). This reader used to flatten ONLY -- `*Bold* title` and `Bold title`
+# produced byte-identical output, so the formatting was lost irreversibly.
+query IIII
+SELECT kind, element_type, level, coalesce(content, '<NULL>')
+FROM read_org_blocks_string('* *Bold* title') ORDER BY element_order;
+----
+block	heading	1	Bold title
+inline	bold	2	Bold
+inline	text	2	 title
+
+# An unformatted heading still produces content and NO children.
+query III
+SELECT kind, element_type, content FROM read_org_blocks_string('* Plain title');
+----
+block	heading	Plain title

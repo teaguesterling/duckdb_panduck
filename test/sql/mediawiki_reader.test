@@ -276,3 +276,37 @@ SELECT element_type, content FROM read_mediawiki_blocks_string(
   E'<span id="x"></span> and some words');
 ----
 paragraph	<span id="x"></span> and some words
+
+# ---------------------------------------------------------------------------
+# DUCKEYE'S ACCEPTANCE CASE, adopted verbatim because it encodes the specific failure a
+# native reader has to beat rather than a generic "does it parse".
+#
+# Measured by them against pandoc 3.1.3 on this exact input:
+#
+#   pandoc -f mediawiki  ->  ['Header', 'Para', 'Header', 'Para']
+#   pandoc, inferred     ->  ['Para',   'Para', 'Para',   'Para']   exit 0
+#
+# Inference warns on stderr, exits 0, and turns BOTH headings into paragraphs. All the text
+# survives. Nothing in the output or the status says the document lost its structure.
+#
+# THE ASSERTION HAS TO NAME THE STRUCTURE, which is duckeye's actual point and the reason
+# this is written with heading_level rather than as a content check: a reader that returned
+# four paragraphs and no headings would satisfy any assertion of the form "the text is
+# there". Content measured where the property is structure.
+query III
+SELECT element_type, coalesce(attributes['heading_level'], '-'), content
+FROM read_mediawiki_blocks_string(E'= Guide =\n\nintro\n\n== Usage ==\n\nusage body\n')
+ORDER BY element_order;
+----
+heading	1	Guide
+paragraph	-	intro
+heading	2	Usage
+paragraph	-	usage body
+
+# panduck cannot reproduce pandoc's failure here even in principle, and that is worth
+# pinning: the format comes from the REGISTRY, not from sniffing an extension. `.mediawiki`
+# is the spelling pandoc cannot deduce, so this is the routing that matters.
+query I
+SELECT panduck_format_for('guide.mediawiki');
+----
+mediawiki

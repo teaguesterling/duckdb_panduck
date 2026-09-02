@@ -1157,6 +1157,33 @@ static yyjson_mut_val *ConvertDivToPandocVal(yyjson_mut_doc *doc, const vector<V
 // a type added to one dispatch is invisible to the other, which is how table,
 // deflist and lineblock came to be dropped inside containers, and code blocks,
 // blockquotes and horizontal rules inside list items.
+//! The pandoc RawBlock/RawInline format name for a duck_block `raw` element.
+//!
+//! duck_block documents TYPE_RAW as "literal content in a NAMED format", and `encoding` is
+//! the field that names it -- ipynb emits encoding='markdown' for a held-raw markdown cell.
+//! So `encoding` is consulted, and it is consulted FIRST after the explicit attribute,
+//! because it is the vocabulary's own answer rather than this converter's private key.
+//!
+//! attributes['format'] still wins where present. It is not in the vocabulary at all, but
+//! it is what the export path has always read, and a reader carrying a format the encoding
+//! enumeration cannot yet spell -- `mediawiki`, today -- has nowhere else to put it.
+//!
+//! "html" remains the default, which is what pandoc assumes for unlabelled raw content, and
+//! `text` is treated as ABSENT rather than as a format: it is the vocabulary's default
+//! encoding, present on every element, so honouring it literally would relabel every raw
+//! block in the tree as format "text".
+static string ResolveRawFormat(const Value &block) {
+	auto format = GetElementAttribute(block, "format");
+	if (!format.empty()) {
+		return format;
+	}
+	auto encoding = GetElementStringField(block, DuckBlockTypes::ENCODING_IDX);
+	if (!encoding.empty() && encoding != DuckBlockTypes::ENCODING_TEXT) {
+		return encoding;
+	}
+	return "html";
+}
+
 static yyjson_mut_val *ConvertUnhandledChildToPandocVal(yyjson_mut_doc *doc, const vector<Value> &blocks_list,
                                                         idx_t &idx, idx_t depth, const Value &child,
                                                         const string &child_type, const string &content,
@@ -1177,6 +1204,31 @@ static yyjson_mut_val *ConvertUnhandledChildToPandocVal(yyjson_mut_doc *doc, con
 		                                    nullptr, nullptr);
 		idx = skip;
 		return hr_obj;
+	}
+
+	// `raw` is the same case as `hr` above, and arrives here for the same reason: the
+	// container walk enumerates it at top level and nowhere else, so a raw block nested in
+	// a div, list item or blockquote came out as `Div class="raw"` wrapping a Plain.
+	//
+	// The content survived that; THE FORMAT DID NOT. ipynb's markdown cell reached the AST
+	// with "markdown" nowhere in it, which is the one fact `encoding` exists to carry being
+	// discarded on export. Degraded, and -- exactly as the hr comment says -- degraded
+	// differently depending on which container it sat in.
+	if (child_type == DuckBlockTypes::TYPE_RAW) {
+		yyjson_mut_val *raw_obj = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, raw_obj, "t", "RawBlock");
+		yyjson_mut_val *rc = yyjson_mut_arr(doc);
+		auto format = ResolveRawFormat(child);
+		yyjson_mut_arr_add_strncpy(doc, rc, format.data(), format.size());
+		yyjson_mut_arr_add_strncpy(doc, rc, content.data(), content.size());
+		yyjson_mut_obj_add_val(doc, raw_obj, "c", rc);
+		// A raw block's content is LITERAL, so it has no children to descend into -- but the
+		// index still has to advance past any that exist, or they are re-emitted as siblings.
+		idx_t skip = idx;
+		ConvertContainerChildrenToPandocVal(doc, blocks_list, skip, child_level, depth + 1, yyjson_mut_arr(doc),
+		                                    nullptr, nullptr);
+		idx = skip;
+		return raw_obj;
 	}
 
 	yyjson_mut_val *fallback = yyjson_mut_obj(doc);
@@ -2243,10 +2295,11 @@ static string BuildBlocksJson(const vector<Value> &blocks_list) {
 			yyjson_mut_arr_add_val(blocks_arr, hr_obj);
 			block_idx++;
 		} else if (element_type == DuckBlockTypes::TYPE_RAW) {
-			auto format = GetElementAttribute(block, "format");
-			if (format.empty()) {
-				format = "html";
-			}
+			// Shared with the nested arm in ConvertUnhandledChildToPandocVal. Two copies of
+			// "how is a raw block's format decided" is how the two came to disagree in the
+			// first place: this one read attributes['format'] and the nested path read
+			// nothing at all.
+			auto format = ResolveRawFormat(block);
 			yyjson_mut_val *raw_obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, raw_obj, "t", "RawBlock");
 			yyjson_mut_val *rc_arr = yyjson_mut_arr(doc);

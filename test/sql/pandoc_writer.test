@@ -207,3 +207,45 @@ SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
 FROM read_panduck_doc('test/fixtures/spine_order.epub');
 ----
 true
+
+# ---------------------------------------------------------------------------
+# A RAW BLOCK MUST EXPORT AS RawBlock, AND KEEP ITS FORMAT -- at any depth.
+#
+# duck_block documents TYPE_RAW as "literal content in a NAMED format", and `encoding` is
+# the field that names it. A nested raw block came out as `Div class="raw"` wrapping a
+# Plain instead: the content survived, but the format name was discarded entirely, so
+# ipynb's markdown cell reached the AST with the word "markdown" nowhere in it.
+#
+# That is the one fact `encoding` exists to carry, dropped on the way out. It is also
+# exactly the defect this function's `hr` arm already fixed once, for the same reason
+# written in its comment: a type pandoc can express exactly should be written exactly, and
+# the same constructor should not depend on which container it sits in.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%RawBlock%'
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb');
+----
+true
+
+# ...and the format it names has to be the one the reader recorded, not the "html" default.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%"markdown"%'
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb');
+----
+true
+
+# The content must still be there -- emitting an empty RawBlock would satisfy both
+# assertions above.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%Notebook Title%'
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb');
+----
+true

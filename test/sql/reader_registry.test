@@ -27,12 +27,32 @@ SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ex
 .rtf	rtf	panduck	read_rtf_blocks
 
 # A planned-but-unimplemented format must NOT be routable: dispatch would name a function
-# that does not exist. .wiki is the current example -- .docx was, then .odt, then .epub,
-# then .tex, then .org, then .rst, each of which made this assertion correctly go red and
-# demand promotion rather than a patch. The example moving down the roadmap is the ratchet
-# working, and mediawiki is the last one left.
+# that does not exist.
+#
+# THE EXAMPLE IS EXHAUSTED. This assertion named a concrete extension for its whole life --
+# .docx, then .odt, then .epub, then .tex, then .org, then .rst, then .wiki -- and each
+# promotion made it go red and demand the format be finished rather than the test patched.
+# mediawiki was the last one, so `.wiki` IS routable now and there is no next example.
+#
+# So it is restated as the INVARIANT it was always standing in for, joined across the two
+# tables rather than pinned to a suffix. Stated honestly: with no planned formats left this
+# cannot fail today, and a check that cannot fail is worth exactly nothing until the
+# condition returns. It is kept, rather than deleted, because the day someone adds a
+# planned format is precisely the day the guard is needed again -- and rewriting it from
+# scratch under that pressure is how the rule gets lost.
 query I
-SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.wiki';
+SELECT count(*) FROM panduck_reader_registry() r
+WHERE EXISTS (SELECT 1 FROM panduck_supported_extensions() s
+              WHERE s.status = 'planned' AND list_contains(s.extensions, ltrim(r.ext, '.')));
+----
+0
+
+# THIS one can fail today, and is the half of the rule that has teeth: a planned format must
+# carry a NULL reader. The registry derives routability from exactly that, so a planned row
+# with a reader name would put an uncallable function into dispatch.
+query I
+SELECT count(*) FROM panduck_supported_extensions()
+WHERE status = 'planned' AND reader IS NOT NULL;
 ----
 0
 

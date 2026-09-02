@@ -42,7 +42,7 @@ EXT = REPO / "build" / "release" / "extension" / "panduck" / "panduck.duckdb_ext
 
 # Extensions read_panduck_doc routes to a block reader. Data formats and the .zim corpus
 # refusal are deliberately absent -- neither has blocks to write back.
-DOC_SUFFIXES = (".org", ".rst", ".tex", ".docx", ".epub", ".ipynb", ".odt", ".rtf")
+DOC_SUFFIXES = (".org", ".rst", ".tex", ".docx", ".epub", ".ipynb", ".odt", ".rtf", ".wiki")
 
 WRITE_SQL = """
 SELECT panduck_write_pandoc_ast('{out}', list(struct_pack(
@@ -76,6 +76,11 @@ CONSTRUCTS = [
     ("org definition list", r"read_org_blocks_string('- term :: definition')", "list"),
     ("rst field list", r"read_rst_blocks_string(E':Author: A. Writer')", "list"),
     ("org metadata", r"read_org_blocks_string(E'#+TITLE: T\n\nBody.')", "inlines"),
+    ("mediawiki table",
+     r"read_mediawiki_blocks_string(E'{|\n! H !! I\n|-\n| a || b\n|}')", "table"),
+    ("mediawiki template", r"read_mediawiki_blocks_string(E'{{Infobox|a=1}}')", "raw"),
+    ("mediawiki definition list", r"read_mediawiki_blocks_string(E'; term\n: definition')", "list"),
+    ("mediawiki figure", r"read_mediawiki_blocks_string(E'[[File:p.png|thumb|cap]]')", "figure"),
 ]
 
 COUNT_SQL = "SELECT count(*) FROM {source} WHERE element_type = '{element_type}';"

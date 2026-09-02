@@ -1,0 +1,278 @@
+# name: test/sql/mediawiki_reader.test
+# description: read_mediawiki_blocks() -- the last format the registry called 'planned'
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# THE `|` PROBLEM, which is the whole reason this scanner is not line-local.
+#
+# A `|` starting a line is a table cell. A `|` inside {{...}} is an argument separator.
+# Nothing about the prefix distinguishes them, so the scanner tracks brace nesting and a
+# template's interior never reaches the table branches. Templates NEST, so that is brace
+# BALANCING, not matching -- measured against pandoc, which returns {{a|{{b|x}}|y}} whole.
+query III
+SELECT element_type, content, attributes['template_name'] FROM read_mediawiki_blocks_string(
+  E'{{nested|{{inner|x}}|y}}') ORDER BY element_order;
+----
+raw	{{nested|{{inner|x}}|y}}	nested
+
+# A multi-line template is ONE block, not one per line.
+# The newlines are replaced in the QUERY, not the expectation: sqllogictest compares
+# tab-delimited lines and cannot hold a literal newline in an expected value.
+query II
+SELECT count(*), replace(max(content), chr(10), '~') FROM read_mediawiki_blocks_string(
+  E'{{Infobox person\n| name = X\n| born = 1970\n}}');
+----
+1	{{Infobox person~| name = X~| born = 1970~}}
+
+# The name is surfaced so "which articles carry an Infobox person" is a WHERE clause
+# rather than a regex over content. Additive: the block type and content still match
+# pandoc's RawBlock exactly, so this earns no divergence-ledger row.
+# THE FORMAT NAME IS AN ATTRIBUTE, NOT AN `encoding`, and getting that wrong is easy.
+# `encoding='mediawiki'` reads as obviously right and is NOT CONFORMANT: duck_block
+# validates encoding against a closed set that has no `mediawiki` in it, and
+# check-conformance rejects it. attributes['format'] is where it belongs -- and not by
+# invention, since the converter already reads exactly that key to build
+# RawBlock [<format>, ...]. The exporter was looking for it all along.
+query III
+SELECT element_type, attributes['format'], attributes['source_type']
+FROM read_mediawiki_blocks_string(E'{{convert|5|km}}');
+----
+raw	mediawiki	template
+
+# POSITION DECIDES BLOCK OR INLINE, matching pandoc: a template alone in a paragraph is a
+# RawBlock, one mid-sentence is a RawInline.
+query III
+SELECT kind, element_type, attributes['format'] FROM read_mediawiki_blocks_string(
+  E'Text with {{inline|t}} in it.') WHERE element_type = 'raw';
+----
+inline	raw	mediawiki
+
+# ---------------------------------------------------------------------------
+# A LEADING SPACE IS A CODE BLOCK.
+#
+# MediaWiki's own parser renders it <pre> -- measured 2026-09-02 against
+# maintenance/parse.php, not inferred from the format's documentation. Pandoc approximates
+# it as a paragraph of inline Code joined by LineBreaks, with every space replaced by
+# U+00A0, which is the signature of a reader with no block-level representation to use.
+# This is the one STRUCTURAL divergence in the format and it is declared in the ledger.
+query III
+SELECT element_type, level, replace(content, chr(10), '~') FROM read_mediawiki_blocks_string(
+  E' line one\n line two\n');
+----
+code	1	line one~line two
+
+# ---------------------------------------------------------------------------
+# BEHAVIOR SWITCHES ARE HELD RAW -- not dropped, and not leaked as prose.
+#
+# Measured: MediaWiki CONSUMES __TOC__, so it never reaches a reader, and pandoc emitting
+# `Str "__TOC__"` puts a token in the document that nobody viewing the wiki would see. But
+# it is a render-time instruction exactly as a template is, and really present in the
+# source, so discarding it would lose something real. An earlier draft of the design said
+# "dropped" and that was wrong.
+query IIII
+SELECT element_type, content, attributes['format'], attributes['source_type']
+FROM read_mediawiki_blocks_string(E'__TOC__\n');
+----
+raw	__TOC__	mediawiki	behavior_switch
+
+# It must NOT come back as a paragraph, which is the failure being guarded against.
+query I
+SELECT count(*) FROM read_mediawiki_blocks_string(E'__NOTOC__\n') WHERE element_type = 'paragraph';
+----
+0
+
+# ---------------------------------------------------------------------------
+# HEADINGS carry a slugified id, which is what makes doc_toc work on this format.
+query III
+SELECT content, attributes['heading_level'], attributes['id'] FROM read_mediawiki_blocks_string(
+  E'=== A Heading ===') ORDER BY element_order;
+----
+A Heading	3	a_heading
+
+# The id is built from the RENDERED text: markup contributes its text and its delimiters
+# contribute nothing, so the anchor matches the one pandoc generates.
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== Heading with ''''''bold'''''' ==') WHERE element_type = 'heading';
+----
+heading_with_bold
+
+# ---------------------------------------------------------------------------
+# LIST NESTING IS THE MARKER RUN'S LENGTH, not indentation -- `#*` is a bullet list inside
+# an ordered one.
+query IIII
+SELECT element_type, level, content, attributes['list_type'] FROM read_mediawiki_blocks_string(
+  E'# ordered\n#* nested bullet') ORDER BY element_order;
+----
+list	1	NULL	ordered
+list_item	2	ordered	NULL
+list	3	NULL	bullet
+list_item	4	nested bullet	NULL
+
+# `;` AND `:` ARE ONE DEFINITION LIST. They carry different marker characters, so comparing
+# them literally closes one list and opens another, leaving the term and its definition in
+# two sibling lists that share nothing.
+query IIII
+SELECT element_type, level, content, attributes['role'] FROM read_mediawiki_blocks_string(
+  E'; term\n: definition') ORDER BY element_order;
+----
+list	1	NULL	NULL
+list_item	2	term	term
+list_item	2	definition	definition
+
+# ---------------------------------------------------------------------------
+# TABLES use the spec 5.0 native schema, so a table is queryable without walking an AST.
+query III
+SELECT element_type, encoding, content FROM read_mediawiki_blocks_string(
+  E'{|\n! H1 !! H2\n|-\n| a || b\n|}');
+----
+table	json	{"headers":["H1","H2"],"rows":[["a","b"]]}
+
+# A headerless table spells that as an EMPTY headers array rather than by omitting the key,
+# so a consumer reads the same shape either way.
+query I
+SELECT content FROM read_mediawiki_blocks_string(E'{|\n| a || b\n|}');
+----
+{"headers":[],"rows":[["a","b"]]}
+
+# ---------------------------------------------------------------------------
+# INLINE MARKUP. `'''''both'''''` nests bold around italic -- measured, and in that order.
+query III
+SELECT element_type, level, content FROM read_mediawiki_blocks_string(
+  E'''''''''''both''''''''''') WHERE kind = 'inline' ORDER BY element_order;
+----
+bold	2	NULL
+italic	3	both
+
+# `<nowiki>` SUPPRESSES markup, it does not mark content: its body is plain text, which is
+# what pandoc yields too. Each apostrophe is DOUBLED in the SQL literal and single in the
+# expected value, which is the usual confusion when asserting on a quote-delimited format.
+query II
+SELECT element_type, content FROM read_mediawiki_blocks_string(
+  E'<nowiki>not ''''''bold''''''</nowiki>');
+----
+paragraph	not '''bold'''
+
+# AN INTERNAL LINK'S MARKER LIVES IN A STRANGE PLACE in pandoc: Link [..] ["A", "wikilink"]
+# overloads the link TITLE field as a type marker. Copying that into `title` would produce a
+# document full of links titled "wikilink", so it is read as what it means.
+query III
+SELECT element_type, attributes['href'], attributes['link_type'] FROM read_mediawiki_blocks_string(
+  E'[[Article|label]]') WHERE kind = 'inline';
+----
+link	Article	wikilink
+
+# An external link is not a wikilink, and must not be marked as one.
+query III
+SELECT element_type, content, attributes['link_type'] FROM read_mediawiki_blocks_string(
+  E'[http://example.com label]') WHERE kind = 'inline';
+----
+link	label	NULL
+
+# A NAMED REFERENCE KEEPS ITS NAME on both the definition and the reuse. Pandoc discards it
+# -- `<ref name="a"/>` becomes an EMPTY Note -- so a consumer cannot join a reuse back to
+# what it cites. Additive, so it is not a ledger row.
+query III
+SELECT element_type, content, attributes['name'] FROM read_mediawiki_blocks_string(
+  E'<ref name="a">the note</ref>') WHERE kind = 'inline';
+----
+note	the note	a
+
+query III
+SELECT element_type, content, attributes['name'] FROM read_mediawiki_blocks_string(
+  E'<ref name="a"/>') WHERE kind = 'inline';
+----
+note	NULL	a
+
+# ---------------------------------------------------------------------------
+# BLOCK-LEVEL HTML must not leak into a paragraph as literal tags. That is the failure the
+# Org reader already paid for once with :PROPERTIES: drawers: scoping a construct out has
+# to mean handled, not leaked.
+query III
+SELECT element_type, level, content FROM read_mediawiki_blocks_string(
+  E'<blockquote>quoted</blockquote>') ORDER BY element_order;
+----
+blockquote	1	NULL
+paragraph	2	quoted
+
+query III
+SELECT element_type, content, attributes['language'] FROM read_mediawiki_blocks_string(
+  E'<syntaxhighlight lang="python">\nprint(1)\n</syntaxhighlight>');
+----
+code	print(1)	python
+
+# `<references/>` stays RAW HTML, mirroring pandoc deliberately. It is a placeholder for
+# generated content exactly as __TOC__ is, and treating it as a behavior switch would be
+# defensible -- but pandoc emits RawBlock ["html", ...] for it as a CHOICE, and this reader
+# only diverges where pandoc leaked non-prose into prose. A choice is not a leak.
+query III
+SELECT element_type, encoding, attributes['source_type'] FROM read_mediawiki_blocks_string(
+  E'<references/>');
+----
+raw	html	references
+
+# ---------------------------------------------------------------------------
+# A FILE LINK becomes figure > caption + image, and `thumb` is a display option rather than
+# the caption -- MediaWiki's own rule is that the caption is the last non-option parameter.
+query III
+SELECT element_type, level, content FROM read_mediawiki_blocks_string(
+  E'[[File:Pic.png|thumb|the caption]]') ORDER BY element_order;
+----
+figure	1	NULL
+caption	2	the caption
+image	2	NULL
+
+query I
+SELECT attributes['src'] FROM read_mediawiki_blocks_string(
+  E'[[File:Pic.png|thumb|the caption]]') WHERE element_type = 'image';
+----
+Pic.png
+
+# ---------------------------------------------------------------------------
+# NO DOCUMENT METADATA. Like RST, and unlike every other panduck format, MediaWiki has
+# none -- pandoc returns an empty meta for every input tried. An article's title lives in
+# the page name or an XML dump's <title>, neither of which is in a .wiki file.
+query I
+SELECT count(*) FROM read_mediawiki_blocks_string(
+  E'== H ==\n\n''''''text'''''' and [[link]]\n') WHERE kind = 'value';
+----
+0
+
+# ---------------------------------------------------------------------------
+# A COMMENT IS NOT CONTENT, and an hr needs FOUR dashes in MediaWiki, not three.
+query I
+SELECT count(*) FROM read_mediawiki_blocks_string(E'<!-- hidden -->');
+----
+0
+
+query II
+SELECT element_type, count(*) FROM read_mediawiki_blocks_string(E'----') GROUP BY 1;
+----
+hr	1
+
+query I
+SELECT element_type FROM read_mediawiki_blocks_string(E'---');
+----
+paragraph
+
+# A LINE THAT IS ONLY TAGS is raw HTML, not prose. `pandoc -t mediawiki` writes
+# `<span id="x"></span>` before every heading, so this arrives in any pandoc-generated
+# document and arrives in NO hand-written one -- which is what the second fixture is for.
+#
+# The rule is about shape, not a tag list: `span` is an inline element and is a block here
+# only because it stands alone on a line, so adding it to the block-element list would be
+# the wrong fix.
+query III
+SELECT element_type, content, encoding FROM read_mediawiki_blocks_string(
+  E'<span id="introduction"></span>');
+----
+raw	<span id="introduction"></span>	html
+
+# ...but a line with tags AND text is still a paragraph, or the rule would swallow prose.
+query II
+SELECT element_type, content FROM read_mediawiki_blocks_string(
+  E'<span id="x"></span> and some words');
+----
+paragraph	<span id="x"></span> and some words

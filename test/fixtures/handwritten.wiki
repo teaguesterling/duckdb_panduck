@@ -1,0 +1,44 @@
+== Introduction ==
+
+A paragraph with '''bold''', ''italic'' and <code>inline code</code>.
+
+=== Nested Section ===
+
+* first bullet
+* second bullet
+** nested bullet
+# ordered one
+# ordered two
+
+; term
+: its definition
+
+A [[Main Page|wikilink]] and an [http://example.com external link].
+
+{| class="wikitable"
+! Name !! Value
+|-
+| alpha || 1
+|-
+| beta || 2
+|}
+
+<blockquote>A quoted passage.</blockquote>
+
+ preformatted line one
+ preformatted line two
+
+----
+
+<syntaxhighlight lang="python">
+print("hello")
+</syntaxhighlight>
+
+{{Infobox person
+| name = Example
+| born = 1970
+}}
+
+Text with an {{inline|template}} in the middle.
+
+<!-- this comment is not content -->

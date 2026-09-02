@@ -44,6 +44,7 @@ docx	read_docx_blocks
 epub	read_epub_blocks
 ipynb	read_ipynb_blocks
 latex	read_latex_blocks
+mediawiki	read_mediawiki_blocks
 odt	read_odt_blocks
 org	read_org_blocks
 pandoc	read_pandoc_blocks

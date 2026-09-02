@@ -7,6 +7,7 @@
 #include "latex_reader.hpp"
 #include "org_reader.hpp"
 #include "ipynb_reader.hpp"
+#include "mediawiki_reader.hpp"
 #include "pandoc_block_convert.hpp"
 #include "pandoc_reader.hpp"
 #include "rst_reader.hpp"
@@ -76,6 +77,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	org::RegisterOrgReader(loader);
 	rst::RegisterRstReader(loader);
 	ipynb::RegisterIpynbReader(loader);
+	mediawiki::RegisterMediaWikiReader(loader);
 	RegisterPandocReader(loader);
 	// The WRITE direction -- panduck_blocks_to_pandoc_ast and friends. Registered here
 	// rather than from RegisterPandocReader because the two are independent surfaces: the

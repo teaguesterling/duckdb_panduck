@@ -39,6 +39,8 @@ set(EXTENSION_SOURCES
     src/latex_reader.cpp
     src/latex_tokenizer.cpp
     src/odt_reader.cpp
+    src/mediawiki_reader.cpp
+    src/mediawiki_scanner.cpp
     src/org_reader.cpp
     src/org_scanner.cpp
     src/rst_reader.cpp

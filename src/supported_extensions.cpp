@@ -99,7 +99,18 @@ const FormatReader FORMATS[] = {
      "literate-programming layers, which are real Org and are not document structure. "
      "Drawers are DROPPED rather than left to fall through as prose; scoping a construct "
      "out has to mean dropped, not leaked"},
-    {"mediawiki", EXT_MEDIAWIKI, nullptr, STATUS_PLANNED, "roadmap phase 5"},
+    {"mediawiki", EXT_MEDIAWIKI, "read_mediawiki_blocks", STATUS_IMPLEMENTED,
+     "the scanner cannot be purely line-local, because a `|` starting a line is a table "
+     "cell while a `|` inside {{...}} is an argument separator. Templates NEST, so it "
+     "balances braces rather than matching them and hands the reader a whole call as one "
+     "line. Templates are held RAW with their name in attributes['template_name'] -- "
+     "unresolvable by construction, and MediaWiki's own parser renders an undefined one as "
+     "a red link, producing no content either. Behavior switches (__TOC__) are also raw, "
+     "with source_type='behavior_switch': MediaWiki CONSUMES them, so pandoc's literal "
+     "Str \"__TOC__\" puts a token in the document no reader ever sees. A leading space is "
+     "a `code` block, because MediaWiki renders it <pre> -- measured against "
+     "maintenance/parse.php, where pandoc approximates it as inline Code inside a "
+     "paragraph. No document metadata: like RST, this format has none"},
     {"rtf", EXT_RTF, "read_rtf_blocks", STATUS_IMPLEMENTED,
      "headings via \\outlinelevel or a {\\stylesheet} \\sN reference; paragraphs and inline "
      "bold/italic/underline/strikethrough. Lists, tables and footnotes are not read yet"},

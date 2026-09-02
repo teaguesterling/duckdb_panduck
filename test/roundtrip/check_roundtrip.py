@@ -179,6 +179,37 @@ EPUB_LO_CSS = (
     "size is evidence for a heading rather than a statement of one.",
 )
 
+MEDIAWIKI_PREFORMATTED = (
+    REFERENCE_WRONG,
+    "a LEADING SPACE is a code block, and this one is settled by MediaWiki rather than by "
+    "argument. MEASURED 2026-09-02 against MediaWiki's own parser (maintenance/parse.php on "
+    "a throwaway SQLite wiki): ` line one` renders as `<pre>line one</pre>`.\n\n"
+    "pandoc reads it as a PARAGRAPH containing inline Code runs joined by LineBreaks, with "
+    "every space replaced by U+00A0. That is the signature of a reader approximating block "
+    "structure it has no representation for -- and pandoc's own writer never PRODUCES the "
+    "construct, writing code blocks as `<pre>` instead, so its reader and writer disagree "
+    "about it.\n\n"
+    "This is the only STRUCTURAL divergence in the format -- it changes a block's type, "
+    "which is the expensive kind. It shipped for one day with the premise flagged as "
+    "unverified, because there was no wikitext renderer on the machine; installing one was "
+    "cheaper than the argument.",
+)
+
+MEDIAWIKI_BEHAVIOR_SWITCH = (
+    REFERENCE_WRONG,
+    "`__TOC__` is held RAW; pandoc leaks it into a paragraph as the literal string. "
+    "MEASURED against MediaWiki's own parser: the switch is CONSUMED -- `__TOC__\\n\\nSome "
+    "text.` renders as `<p>Some text.</p>` and the token appears nowhere. So pandoc's "
+    "`Str \"__TOC__\"` puts text in the document that no reader of the wiki would ever "
+    "see.\n\n"
+    "panduck emits `raw` with encoding='mediawiki' and source_type='behavior_switch'. Note "
+    "this is a CLASSIFICATION divergence, not a retention one: both representations keep "
+    "the token, and panduck declines to call it prose. An earlier draft of the design said "
+    "DROP it, which would have been retention loss, and the template ruling is what showed "
+    "that was wrong -- a behavior switch and a template are the same kind of thing, an "
+    "instruction that expands at render time and is unresolvable without the wiki.",
+)
+
 LATEX_LOOSE_LISTS = (
     REFERENCE_WRONG,
     "pandoc's LaTeX reader wraps every itemize/enumerate item's content in Para -- a "
@@ -317,6 +348,33 @@ CASES = [
         # fixture alone would never have found it.
         expect={},
         note="pandoc-generated Org: :PROPERTIES: drawers under every heading",
+    ),
+    Case(
+        "test/fixtures/handwritten.wiki",
+        "mediawiki",
+        "read_mediawiki_blocks",
+        expect={
+            "text": MEDIAWIKI_PREFORMATTED,
+            "skeleton": MEDIAWIKI_PREFORMATTED,
+            "marked": MEDIAWIKI_PREFORMATTED,
+        },
+        note="hand-written MediaWiki: leading-space preformatted and a behavior switch",
+    ),
+    Case(
+        "test/fixtures/pandoc.wiki",
+        "mediawiki",
+        "read_mediawiki_blocks",
+        # PANDOC'S OWN MEDIAWIKI WRITER emits `<span id="..."></span>` before every heading,
+        # which a person never types. That pair caught a real defect the moment it existed:
+        # the tags arrived as a PARAGRAPH whose text was the literal markup, which is the
+        # leaked-as-prose failure the Org drawers taught. The handwritten fixture alone would
+        # never have found it.
+        expect={
+            "text": MEDIAWIKI_PREFORMATTED,
+            "skeleton": MEDIAWIKI_PREFORMATTED,
+            "marked": MEDIAWIKI_PREFORMATTED,
+        },
+        note="pandoc-generated MediaWiki: <span id> anchors before every heading",
     ),
     Case(
         "test/fixtures/handwritten.tex",

@@ -106,6 +106,33 @@ appearing there is a real defect by construction.
 derived. Entries written from expectation rather than measurement are how a validator ends
 up encoding its own bugs — two harness bugs were caught exactly that way.
 
+## `make check-writeback` — the mapping back must stay total
+
+The other checks ask whether panduck READS correctly. This one asks whether what it
+produces can be written back out as pandoc JSON that a **real pandoc** accepts.
+
+It needs the real parser because this defect class is invisible from inside DuckDB. The
+first thing it caught was a `Table` whose `c` field held duck_block's own
+`{"headers":…,"rows":…}` projection where pandoc's grammar demands a six-element array.
+That is well-formed JSON, it round-trips through DuckDB perfectly, every in-process
+assertion about it passed — and pandoc rejected the entire document:
+
+```
+When parsing the constructor Table of type Text.Pandoc.Definition.Block
+expected Array but got Object
+```
+
+Every table from every native reader was unexportable, and the compatibility claim held
+only for tables that had come from pandoc to begin with.
+
+**It hid behind a coverage gap that looked like coverage.** The fixture sweep was green on
+17 documents. Org, RST, LaTeX and DOCX all have table paths and *not one fixture exercises
+them* — exactly one fixture in the tree contains a table at all. So the check now carries a
+**constructs arm** driving each reader's `*_blocks_string` entry point, and each case names
+the `element_type` it must produce and verifies it did *before* treating "pandoc accepted
+it" as evidence. Without that, a reader that silently dropped the construct would report
+`ok` forever: a check on the result that cannot see an error in the shape.
+
 ## In CI
 
 The roundtrip job does **not** rebuild panduck. The distribution matrix already produces

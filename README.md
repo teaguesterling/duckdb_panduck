@@ -15,7 +15,7 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-**Status:** eight native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb), a
+**Status:** nine native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb), a
 Pandoc AST reader that reaches **every format pandoc can read**, document metadata across
 all of them, full path dispatch, and a differential validator that checks panduck against
 real pandoc on every run. MediaWiki is declared but not implemented — and the registry
@@ -102,7 +102,7 @@ SELECT * FROM read_pandoc_blocks('doc.json');
 SELECT * FROM read_panduck_doc('doc.json', format := 'pandoc');
 ```
 
-This does **not** make pandoc a dependency: the eight native readers need no external
+This does **not** make pandoc a dependency: the nine native readers need no external
 binary. It adds a path for people who already have pandoc and want the other thirty-five
 formats. `.json` deliberately does **not** auto-route here — it is already a data format,
 and dispatch cannot tell an AST from any other JSON by its suffix.

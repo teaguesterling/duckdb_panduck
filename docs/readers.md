@@ -1,7 +1,8 @@
 # Readers
 
-panduck has eight native readers — RTF, DOCX, ODT, EPUB, LaTeX, Org, RST and ipynb — plus
-a reader for pandoc's own JSON AST that reaches every format pandoc can read. All were
+panduck has nine native readers — RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb and
+MediaWiki — plus a reader for pandoc's own JSON AST that reaches every format pandoc can
+read. All were
 written against **real writer output** rather than the format specification, and together
 they say something no one of them said alone.
 
@@ -12,10 +13,13 @@ The three plain-text formats each turned on a rule that could not be guessed:
 | **Org** | a leading `*` is a heading at column 0, a bullet when indented, emphasis mid-line — one character, three meanings |
 | **RST** | heading level is set by the **order of first appearance** of the adornment character, not by which character it is. A reader hardcoding `= → 1` passes every conventional document |
 | **ipynb** | a markdown cell is held **raw**: it is a document, not data, and parsing it here would violate the isolation that keeps `.toml` verbatim |
+| **MediaWiki** | a `\|` at line start is a table cell, a `\|` inside `{{…}}` is an argument separator — so the scanner cannot be line-local, and templates *nest*, making it brace balancing rather than matching |
 
-RST is also the only one of the eight with **no document metadata**: a `:Author:` field
-list is a definition list, which is what pandoc makes of it too. The opposite reading is
-the obvious one, and nothing in the vocabulary would object to a reader that got it wrong.
+RST and MediaWiki are the only two with **no document metadata**: a `:Author:` field
+list is a definition list, which is what pandoc makes of it too, and a `.wiki` file has no
+metadata anywhere — an article's title lives in the page name. The opposite reading is the
+obvious one in both cases, and nothing in the vocabulary would object to a reader that got
+it wrong.
 
 ## How a format marks a heading predicts how badly writers disagree
 
@@ -302,6 +306,43 @@ Notebook metadata **exceeds pandoc deliberately**: pandoc puts the whole thing i
 opaque `jupyter` MetaMap, so asking "who wrote this" means walking a blob. Each recovered
 field carries `attributes['source_type']` with its original path, keeping a format-derived
 field distinguishable from a pandoc-derived one.
+
+## `read_mediawiki_blocks(path)`
+
+The reason to read MediaWiki natively is not that pandoc reads it badly — it reads `.wiki`
+correctly. It is that pandoc **cannot infer the format** from the name that spells it out:
+
+| file | pandoc's inference |
+|---|---|
+| `.wiki` | mediawiki, correctly |
+| `.mediawiki`, `.mw`, `.wikitext` | "could not deduce" → **markdown**, warning on *stderr*, **exit 0** |
+
+Every heading becomes a paragraph and every `{{template}}` flattens into prose, while the
+exit code says success. panduck claims both `.wiki` and `.mediawiki`.
+
+**Templates are held raw, with the name surfaced.** `{{Infobox person | name = X}}` becomes
+`raw` with `attributes['template_name']='Infobox person'`, so "which articles carry an
+Infobox person" is a `WHERE` clause rather than a regex. They are **unresolvable by
+construction** — and MediaWiki's own parser agrees: given a template it does not have, it
+renders a red link and produces no content either. A reader without the template namespace
+has strictly less information than MediaWiki did, so expanding would be fabrication.
+
+The format name lives in `attributes['format']`, **not** in `encoding`. `encoding` is
+validated against a closed set that has no `mediawiki` in it, and the converter already
+reads `format` to build `RawBlock [<format>, …]` — so a template exports as
+`RawBlock ["mediawiki", "{{Infobox|a=1}}"]` and writes back to its original source.
+
+Two things diverge from pandoc, both settled against MediaWiki's own parser rather than by
+argument:
+
+| construct | MediaWiki renders | pandoc | panduck |
+|---|---|---|---|
+| leading space | `<pre>…</pre>` | a paragraph of inline `Code` joined by `LineBreak`, spaces swapped for U+00A0 | `code` block |
+| `__TOC__` | **consumed** — never reaches the reader | `Str "__TOC__"`, as if an author typed it as prose | `raw` + `source_type='behavior_switch'` |
+
+The first is the only *structural* divergence in the format. The tell that pandoc is
+approximating: its own writer never **produces** leading-space preformatted, emitting
+`<pre>` instead, so its reader and writer disagree about the construct.
 
 ## `read_pandoc_blocks(path)` — every format pandoc reads
 

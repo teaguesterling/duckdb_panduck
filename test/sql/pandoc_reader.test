@@ -288,3 +288,58 @@ SELECT count(*) FROM read_pandoc_blocks_string(
 WHERE element_type IN ('caption', 'image');
 ----
 2
+
+# ---------------------------------------------------------------------------
+# DEEP NESTING RAISES, IT DOES NOT CRASH.
+#
+# ExtractInlinesTextVal and ExtractInlinesTextValInto are MUTUALLY RECURSIVE, and the
+# recursion is driven by the shape of the input. A Pandoc AST is document-controlled --
+# anyone handing panduck a .json chooses its nesting -- so an unbounded cycle here is a
+# crash reachable from a file.
+#
+# The bound was lost when the flattener gained its Link/Image arms: that edit ADDED the
+# recursion most needing a limit and dropped the parameter carrying it, in one change.
+# Measured before the fix, on a term holding N nested Emph:
+#
+#     depth 10,000  ->  reads fine
+#     depth 50,000  ->  SIGSEGV, core dumped
+#
+# Found by duckeye statically, diffing this file against duck_block_utils' copy: their
+# CheckPandocDepth appears 8 times and ours appeared 7. NEITHER REPO'S SUITE COULD SEE IT
+# -- the defect existed only in the relationship between two copies that each passed their
+# own tests, and a fixture nesting 50,000 deep is not a fixture anyone writes.
+#
+# The AST is built with repeat() rather than written out, because the assertion needs a
+# depth no one would type and the shape is the whole point.
+statement error
+SELECT count(*) FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"DefinitionList","c":[[[' ||
+  repeat('{"t":"Emph","c":[', 200) || '{"t":"Str","c":"x"}' || repeat(']}', 200) ||
+  '],[[{"t":"Plain","c":[{"t":"Str","c":"d"}]}]]]]}]}');
+----
+exceeded the maximum nesting depth
+
+# ...and a document nested well within the limit still reads, so the guard bounds the
+# input rather than rejecting ordinary nesting.
+query I
+SELECT count(*) > 0 FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"DefinitionList","c":[[[' ||
+  repeat('{"t":"Emph","c":[', 8) || '{"t":"Str","c":"x"}' || repeat(']}', 8) ||
+  '],[[{"t":"Plain","c":[{"t":"Str","c":"d"}]}]]]]}]}');
+----
+true
+
+# THE DATA FIX THE GUARD MUST NOT HAVE UNDONE. Restoring the bound touched every arm of
+# the flattener, including the Link/Image arms that recovered formatted cell text -- the
+# regression risk runs in both directions. Before that fix this cell flattened to " and ",
+# losing both the link text and the bold text.
+#
+# The AST is pandoc's OWN output for `| [linktext](http://x) and **BoldCell** |`, not a
+# hand-written one. I wrote this tuple by hand twice and got it malformed both times, which
+# is its own small argument for generating fixtures rather than typing them.
+query I
+SELECT content FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Table","c":[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}],[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],[["",[],[]],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"a"}]}]],[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"b"}]}]]]]]],[[["",[],[]],0,[],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"linktext"}],["http://x",""]]},{"t":"Space"},{"t":"Str","c":"and"},{"t":"Space"},{"t":"Strong","c":[{"t":"Str","c":"BoldCell"}]}]}]],[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"plain"}]}]]]]]]],[["",[],[]],[]]]}]}')
+WHERE element_type = 'table';
+----
+{"headers":["a","b"],"rows":[["linktext and BoldCell","plain"]]}

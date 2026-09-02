@@ -155,9 +155,31 @@ static void StorePandocAttr(const PandocAttr &attr, map<string, string> &attrs) 
 	}
 }
 
-static void ExtractInlinesTextValInto(yyjson_val *node, string &out);
+static void ExtractInlinesTextValInto(yyjson_val *node, string &out, idx_t depth);
 
-static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
+//! `depth` IS LOAD-BEARING, and it went missing for a day.
+//!
+//! This function and ExtractInlinesTextValInto are MUTUALLY RECURSIVE, and the recursion is
+//! driven entirely by the shape of the input document. A Pandoc AST is
+//! document-controlled -- anyone handing panduck a .json can choose its nesting -- so an
+//! unbounded cycle here is a crash reachable from a file, not a theoretical concern.
+//!
+//! MEASURED, on a DefinitionList term holding N nested Emph:
+//!
+//!     depth 10,000  ->  reads fine
+//!     depth 50,000  ->  SIGSEGV, core dumped
+//!
+//! The guard was lost when this function gained its Link/Image arms. The fix that recovered
+//! formatted cell text ADDED the recursion that most needs a bound and dropped the
+//! parameter carrying it, in the same edit -- so the change was right about the data and
+//! wrong about the depth, and nothing in this repo's suite could see it because a fixture
+//! that nests 50,000 deep is not a fixture anyone writes.
+//!
+//! Found by duckeye, statically, by diffing this file against duck_block_utils' copy: their
+//! CheckPandocDepth appears 8 times and ours appeared 7. The defect existed only in the
+//! RELATIONSHIP between two copies that each passed their own suite.
+static string ExtractInlinesTextVal(yyjson_val *inlines_arr, idx_t depth = 0) {
+	CheckPandocDepth(depth);
 	if (!inlines_arr) {
 		return "";
 	}
@@ -202,7 +224,7 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 			// objects stops dead here. Taking c[1] explicitly is also what keeps the TARGET
 			// out: an Image cell keeps its alt text and not `pic.png`.
 			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
-				ExtractInlinesTextValInto(yyjson_arr_get(c_val, 1), result);
+				ExtractInlinesTextValInto(yyjson_arr_get(c_val, 1), result, depth + 1);
 			}
 		} else if (c_val) {
 			// SHAPE ONE: `c` IS the inline list -- Strong, Emph, Underline, Strikeout, Span,
@@ -217,7 +239,7 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 			//
 			// Reported by duck_block_utils, who implemented my description and then measured
 			// what it actually did rather than what it was supposed to do.
-			ExtractInlinesTextValInto(c_val, result);
+			ExtractInlinesTextValInto(c_val, result, depth + 1);
 		}
 	};
 
@@ -228,7 +250,7 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 			if (yyjson_is_arr(item)) {
 				// NESTED ARRAYS are entered, not skipped: a Link's inlines sit one array
 				// deeper than the walk used to reach.
-				ExtractInlinesTextValInto(item, result);
+				ExtractInlinesTextValInto(item, result, depth + 1);
 				continue;
 			}
 			process_item(item);
@@ -239,8 +261,8 @@ static string ExtractInlinesTextVal(yyjson_val *inlines_arr) {
 	return result;
 }
 
-static void ExtractInlinesTextValInto(yyjson_val *node, string &out) {
-	out += ExtractInlinesTextVal(node);
+static void ExtractInlinesTextValInto(yyjson_val *node, string &out, idx_t depth) {
+	out += ExtractInlinesTextVal(node, depth);
 }
 
 // Plain text of a Pandoc [Block] list -- used to project table cells, whose

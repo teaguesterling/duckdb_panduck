@@ -243,9 +243,18 @@ WHERE element_type = 'table';
 # gone, exit 0. pandoc 3.x wraps every standalone captioned image in a Figure, so that
 # silently loses a figure from every format routed through the converter.
 #
-# panduck's copy is not affected, and this pins that rather than trusting it: the whole
-# argument for relocating the converter here was that the bugs travel with it unless the
-# net is built first, and this is a bug that stayed behind.
+# panduck's copy is not affected, and this pins that rather than trusting it.
+#
+# WHAT THIS IS NOT EVIDENCE OF, corrected by duckeye 2026-09-02 after I got it wrong here.
+# I compared their SHIPPED v1.4.3 artifact against panduck's SOURCE and concluded panduck
+# was uniquely clean. Those are not comparable. duck_block_utils' own main maps
+# DefinitionList, LineBlock and Figure too -- so the loss is a property of a RELEASED
+# ARTIFACT, not of that codebase, and it is the shipped-versus-main distinction this family
+# keeps re-learning, made by me in the other direction this time.
+#
+# So this guard says panduck's copy is correct. It does not say panduck's copy is the only
+# correct one, and it says nothing at all about whether the two copies AGREE -- which is a
+# third fact nobody has measured, and the one that actually matters while both exist.
 #
 # Asserted on ELEMENT TYPES rather than on text. A reader that emitted the definition's
 # prose as a bare paragraph and dropped the list around it would satisfy any content check

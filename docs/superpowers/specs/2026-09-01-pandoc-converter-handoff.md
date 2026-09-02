@@ -135,9 +135,19 @@ drops `DefinitionList` and `Figure` at the read boundary. I measured that panduc
 does not, and recommended they switch: *"the fix you need is not a fix — it is a SWITCH,
 from the shipped `pandoc_ast_to_blocks` to panduck's `read_pandoc_blocks`."*
 
-Three messages later the same differential found that panduck's copy had **lost a recursion
+Three messages later the same differential found that panduck's copy had **no recursion
 depth guard**, and segfaults on a nested AST at depth 50,000 where the shipped artifact
 raises a clean error at 128.
+
+*Corrected after checking the history, because two accounts of this were wrong — mine
+("dropped a guard while adding recursion") and duckeye's ("replaced a guarded generic path
+with unguarded arms"). Neither holds. The file arrived here at step 2 already without the
+parameter, and upstream had none either until `442ac16c`, whose subject is the SAME
+flattener bug fixed independently on the same day. Both copies repaired one bug; upstream's
+repair also added the bound and mine did not. That is divergence by **parallel repair**, not
+by regression — and it is a stronger argument for the differential than a regression would
+have been, because there is no careless commit to point at and nothing either repo could
+have asserted about itself.*
 
 So the switch I recommended would have moved a consumer that reads untrusted documents from
 a reader that errors cleanly onto one that crashes — and the `DefinitionList`/`Figure` fix

@@ -169,15 +169,31 @@ static void ExtractInlinesTextValInto(yyjson_val *node, string &out, idx_t depth
 //!     depth 10,000  ->  reads fine
 //!     depth 50,000  ->  SIGSEGV, core dumped
 //!
-//! The guard was lost when this function gained its Link/Image arms. The fix that recovered
-//! formatted cell text ADDED the recursion that most needs a bound and dropped the
-//! parameter carrying it, in the same edit -- so the change was right about the data and
-//! wrong about the depth, and nothing in this repo's suite could see it because a fixture
-//! that nests 50,000 deep is not a fixture anyone writes.
+//! HOW IT CAME TO BE MISSING -- and the first two accounts of this, including mine, were
+//! both wrong. Checked against the history rather than reasoned about:
 //!
-//! Found by duckeye, statically, by diffing this file against duck_block_utils' copy: their
-//! CheckPandocDepth appears 8 times and ours appeared 7. The defect existed only in the
-//! RELATIONSHIP between two copies that each passed their own suite.
+//!   f07e76d  the file ARRIVES here at handoff step 2, already with no depth parameter
+//!   e01acaf  the Link/Image arms are added here -- still no depth parameter
+//!   a397d60  the bound is added (this commit)
+//!
+//! So I did not "drop a guard while adding recursion": there was no guard to drop. And it
+//! was not "a guarded generic path replaced by unguarded specific arms" either -- the
+//! generic path in this copy was equally unbounded.
+//!
+//! Upstream's history settles it. duck_block_utils added `depth` in 442ac16c, whose subject
+//! is "fix: the inline flattener dropped every formatted table cell" -- THE SAME BUG, fixed
+//! independently on the same day. Every upstream commit before it has no depth parameter
+//! either.
+//!
+//! THE ACTUAL LESSON, which is better than either wrong version: two copies fixed one bug
+//! independently, and fixed DIFFERENT AMOUNTS OF IT. Upstream's change added the bound the
+//! new recursion needed; mine did not. That is not a regression anyone introduced -- it is
+//! divergence created by parallel repair, and no assertion in either repo could see it
+//! because each copy was correct by its own lights.
+//!
+//! Found by duckeye, statically, by diffing this file against upstream's: their
+//! CheckPandocDepth call sites numbered 8 and ours 7. scripts/check_converter_divergence.py
+//! is that comparison, kept.
 static string ExtractInlinesTextVal(yyjson_val *inlines_arr, idx_t depth = 0) {
 	CheckPandocDepth(depth);
 	if (!inlines_arr) {

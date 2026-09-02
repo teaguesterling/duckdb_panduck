@@ -124,6 +124,53 @@ family. Two extensions registering one name both survive as ambiguous overloads,
 call then fails at bind time. That is why panduck registers `read_pandoc_blocks` rather
 than the upstream names.
 
+## The two-copy window is not safe in the way I said it was
+
+The paragraph above says the two-copy window is safe, and it is — for *name collisions*,
+which is the only thing it was measured against. It is not safe for **migration**, and I
+found that out by nearly causing it.
+
+**What happened, 2026-09-02.** duckeye measured that the shipped duck_block_utils artifact
+drops `DefinitionList` and `Figure` at the read boundary. I measured that panduck's copy
+does not, and recommended they switch: *"the fix you need is not a fix — it is a SWITCH,
+from the shipped `pandoc_ast_to_blocks` to panduck's `read_pandoc_blocks`."*
+
+Three messages later the same differential found that panduck's copy had **lost a recursion
+depth guard**, and segfaults on a nested AST at depth 50,000 where the shipped artifact
+raises a clean error at 128.
+
+So the switch I recommended would have moved a consumer that reads untrusted documents from
+a reader that errors cleanly onto one that crashes — and the `DefinitionList`/`Figure` fix
+would have arrived carrying a segfault. duckeye declined for an unrelated reason (their main
+fixes the read boundary too, so the switch bought nothing) and has been explicit that this
+was luck rather than foresight. What was not luck is that the differential ran *before*
+anything switched.
+
+**The rule this yields, which the sequencing above did not contain:**
+
+> Recommending a migration between two copies requires measuring the properties that make
+> the target SAFE, not only the property that motivates the move. I measured one behaviour
+> — the constructors survive — and advised a switch on it. Depth-bounding, error handling
+> and resource limits are not visible in the measurement that motivates a migration, and
+> they are exactly what a consumer inherits.
+
+This bears directly on step 4. That step ends with consumers moving from upstream's
+functions to panduck's, which is the same migration at a larger scale — every duck_block
+consumer at once, with no one in the loop to decline it for an unrelated reason. **A
+differential between the copies is a precondition for step 4, not an optional extra**, and
+the window for running it closes exactly when step 4 deletes the other copy.
+
+The differential need not be expensive, which was my other error here. I said it required a
+built sibling and was therefore work to be scheduled; it does not. Both copies are the same
+file under the same name, so `git show origin/main:src/pandoc_block_convert.cpp` diffs them
+with no clone and no build. duckeye's version compared handled-type coverage (clean) and
+`CheckPandocDepth` counts (8 upstream, 7 here) in about fifteen lines.
+
+**With one honest limit, theirs:** that check produces a *signal to investigate*, not a
+diagnosis. The counts flagged 7-versus-8 as worth looking at; what identified the cause was
+reading the diff hunks and noticing a parameter had disappeared. A scheduled check should
+promise the signal and not the diagnosis.
+
 ## What this does NOT do
 
 It does not make pandoc a dependency. panduck still reads eight formats with no external

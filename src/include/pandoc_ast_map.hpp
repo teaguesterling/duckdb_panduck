@@ -24,6 +24,17 @@ namespace pandoc_ast {
 //! rather than letting the mapping drift silently.
 static constexpr int API_VERSION_MAJOR = 1;
 static constexpr int API_VERSION_MINOR = 23;
+//! The third component, which only the EXPORT path needs: pandoc validates the full
+//! "pandoc-api-version" triple it is handed and refuses a mismatch outright --
+//!
+//!     Incompatible API versions: encoded with [1,20] but attempted to decode with [1,23,1]
+//!
+//! -- which is how duck_block_utils v1.4.3 came to produce exports no pandoc could read.
+//! It lives here beside the other two because the writer previously hardcoded the whole
+//! triple twice, in two different literal forms (a vector of ints and a string), neither
+//! of which was reachable from this header. Three copies of one fact is how the drift that
+//! caused [1,20] becomes possible; there is now one.
+static constexpr int API_VERSION_PATCH = 1;
 
 //! State of a constructor's correspondence with duck_block.
 //!  "mapped"  -- round-trip implemented in duck_block_utils today

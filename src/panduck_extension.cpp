@@ -7,6 +7,7 @@
 #include "latex_reader.hpp"
 #include "org_reader.hpp"
 #include "ipynb_reader.hpp"
+#include "pandoc_block_convert.hpp"
 #include "pandoc_reader.hpp"
 #include "rst_reader.hpp"
 #include "latex_tokenizer.hpp"
@@ -76,6 +77,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 	rst::RegisterRstReader(loader);
 	ipynb::RegisterIpynbReader(loader);
 	RegisterPandocReader(loader);
+	// The WRITE direction -- panduck_blocks_to_pandoc_ast and friends. Registered here
+	// rather than from RegisterPandocReader because the two are independent surfaces: the
+	// reader is a table function over a path, this is scalars over a block list. See the
+	// comment on PandocBlockConvert::Register for why these carry panduck_ names while
+	// duck_block_utils still owns the canonical ones.
+	PandocBlockConvert::Register(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

@@ -1,0 +1,209 @@
+# name: test/sql/pandoc_writer.test
+# description: the WRITE direction -- duck_blocks back out to a pandoc AST
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS AT ALL.
+#
+# panduck shipped read-only: read_pandoc_blocks and nothing going the other way. The
+# conversion code was here the whole time, unregistered, because Register() was neutered
+# during the converter handoff to avoid claiming names duck_block_utils still owns.
+#
+# The requirement that forced it: panduck's readers are allowed to be MORE faithful than
+# pandoc -- richer attributes, better block types -- but whatever they emit must still be
+# writable back to VALID pandoc JSON. Valid, not identical. duck_blocks is the richer
+# representation and the pandoc AST is a lossy export target; losing an attribute pandoc
+# has no field for is fine, emitting a shape pandoc cannot parse is not.
+#
+# That requirement is untestable without a writer, which is why this file exists before
+# the MediaWiki reader that prompted it.
+#
+# NAMES. Upstream still registers duck_blocks_to_pandoc_ast and write_pandoc_ast, and a
+# name is owned by exactly one extension in this family, so panduck takes panduck_-
+# prefixed names -- the same choice read_pandoc_blocks made rather than claiming
+# read_pandoc_ast. When upstream drops its copy after a released panduck, the canonical
+# names can be added as aliases.
+
+# ---------------------------------------------------------------------------
+# THE API VERSION IS A REGRESSION GUARD, NOT A TRIVIA CHECK.
+#
+# The installed duck_block_utils v1.4.3 emits [1,20], and pandoc 3.x refuses it outright:
+#
+#     Incompatible API versions: encoded with [1,20] but attempted to decode with [1,23,1]
+#
+# That is a total export failure with a clear error, which is the good case. It is pinned
+# here because the failure is invisible from inside DuckDB -- the STRUCT looks perfectly
+# well-formed, and only a real pandoc rejects it.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['pandoc-api-version']
+FROM read_org_blocks_string('Body text.');
+----
+[1, 23, 1]
+
+# ---------------------------------------------------------------------------
+# METADATA MUST SURVIVE THE WRITE.
+#
+# Every kind='value' row -- title, author, date, and the docx/odt/ipynb fields recovered
+# by going beyond what pandoc extracts -- has to reach the AST's `meta` object. A writer
+# that drops them turns "panduck recovers more metadata than pandoc" into a claim that is
+# true only until you export.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['meta'] != '{}'
+FROM read_org_blocks_string(E'#+TITLE: A Title\n#+AUTHOR: A. Writer\n\nBody text.');
+----
+true
+
+# The title itself has to be in there, not merely something non-empty.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['meta'] LIKE '%A Title%'
+FROM read_org_blocks_string(E'#+TITLE: A Title\n\nBody.');
+----
+true
+
+# ---------------------------------------------------------------------------
+# BLOCK TYPES THAT THE INSTALLED WRITER LOST.
+#
+# Round-tripping pandoc's own MediaWiki AST through duck_block_utils v1.4.3 collapsed
+# DefinitionList into BulletList and Figure into Para -- 18 blocks in, 21 out. panduck's
+# READ of the same input is correct, so the loss was the writer's.
+#
+# Whether panduck's newer copy shares those defects was untestable while it was
+# unregistered. These two assertions are what make it testable, and they are written
+# against the construct rather than the format: a definition list reaches this writer from
+# org, rst, epub, latex and mediawiki alike.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%DefinitionList%'
+FROM read_org_blocks_string('- term :: definition');
+----
+true
+
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%BulletList%'
+FROM read_org_blocks_string(E'- one\n- two');
+----
+true
+
+# ---------------------------------------------------------------------------
+# THE BLOCKS ARRAY IS REACHABLE ON ITS OWN, for a caller splicing panduck output into an
+# AST it already has rather than exporting a whole document.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)) LIKE '[%]'
+FROM read_org_blocks_string('Body.');
+----
+true
+
+# ---------------------------------------------------------------------------
+# NULL INPUT PRODUCES AN EMPTY DOCUMENT, NOT AN ERROR OR A NULL.
+#
+# An empty document is a real answer -- a file with no readable blocks exports as a valid
+# pandoc AST with no blocks. Returning NULL here would make the caller's own write fail
+# somewhere further downstream, where the cause is no longer visible.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(NULL))['blocks'];
+----
+[]
+
+# ---------------------------------------------------------------------------
+# THE FILE WRITER MUST NOT DROP METADATA EITHER.
+#
+# panduck_blocks_to_pandoc_ast composes `meta` with BuildMetaJson. WritePandocAstFun --
+# the same conversion, one function further down the file -- wrote a HARDCODED "meta":{}
+# instead, so every kind='value' row vanished on the way to disk.
+#
+# Two functions, one rule, and only one of them implemented it. That is the two-copies-of-
+# one-rule shape: the divergence is invisible in review because each body reads correctly
+# on its own, and nothing compares them.
+statement ok
+SELECT panduck_write_pandoc_ast('__TEST_DIR__/written_ast.json', list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order))
+FROM read_org_blocks_string(E'#+TITLE: A Title\n#+AUTHOR: A. Writer\n\nBody.');
+
+query I
+SELECT content LIKE '%A Title%' AND content LIKE '%A. Writer%'
+FROM read_text('__TEST_DIR__/written_ast.json');
+----
+true
+
+# And the blocks are still there beside the metadata -- a writer that emitted metadata by
+# dropping content would satisfy the assertion above.
+query I
+SELECT content LIKE '%Body.%'
+FROM read_text('__TEST_DIR__/written_ast.json');
+----
+true
+
+# ---------------------------------------------------------------------------
+# NATIVE TABLES MUST BE CONVERTED, NOT PASSED THROUGH.
+#
+# A table carrying attributes['pandoc_ast'] round-trips through that preserved tuple. A
+# table WITHOUT one -- which is every table any native reader produces -- fell through to a
+# branch that dumped duck_block's own {"headers":…,"rows":…} straight into the pandoc `c`
+# field. pandoc rejects it outright:
+#
+#     When parsing the constructor Table of type Text.Pandoc.Definition.Block
+#     expected Array but got Object
+#
+# So every native reader's tables were unexportable, and the compatibility claim held only
+# for tables that came from pandoc to begin with. It stayed invisible because nothing wrote
+# fixtures back out until the write direction was registered, and because exactly ONE
+# fixture in the tree contains a table at all.
+#
+# The duck_block key names are the tell: if `headers` appears anywhere in a pandoc AST,
+# the native projection leaked instead of being converted.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%"headers"%'
+FROM read_panduck_doc('test/fixtures/spine_order.epub');
+----
+false
+
+# The table must still be THERE after conversion -- emitting nothing would satisfy the
+# assertion above just as well as converting correctly.
+#
+# ColWidthDefault is the marker to look for, and it is one I got wrong first: I asserted
+# "TableHead", which reads like the obvious tag and appears NOWHERE in pandoc's wire
+# format -- the head is an untagged [attr, [rows]] pair. ColWidthDefault is a real tagged
+# constructor, emitted once per column by the colspec builder, so it appears if and only
+# if a table was actually converted.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%ColWidthDefault%'
+FROM read_panduck_doc('test/fixtures/spine_order.epub');
+----
+true
+
+# And a cell's text has to survive into the converted structure.
+query I
+SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order)))['blocks'] LIKE '%cell one%'
+FROM read_panduck_doc('test/fixtures/spine_order.epub');
+----
+true

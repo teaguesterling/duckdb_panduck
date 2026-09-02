@@ -1,5 +1,8 @@
 #include "pandoc_block_convert.hpp"
 #include "block_normalize.hpp"
+// For the pandoc-api-version triple, which both export paths in this file derive rather
+// than spell out -- see API_VERSION_PATCH's comment for why that matters.
+#include "pandoc_ast_map.hpp"
 
 #include <set>
 #include "pandoc_convert_util.hpp"
@@ -1548,6 +1551,175 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 	return root_obj;
 }
 
+//! Build pandoc's `Attr` -- ["", [], []] -- which every table part below needs one of.
+static yyjson_mut_val *EmptyAttr(yyjson_mut_doc *doc) {
+	yyjson_mut_val *attr = yyjson_mut_arr(doc);
+	yyjson_mut_arr_add_str(doc, attr, "");
+	yyjson_mut_arr_add_val(attr, yyjson_mut_arr(doc));
+	yyjson_mut_arr_add_val(attr, yyjson_mut_arr(doc));
+	return attr;
+}
+
+//! One pandoc table Cell: [attr, alignment, rowspan, colspan, [blocks]].
+static yyjson_mut_val *TableCellVal(yyjson_mut_doc *doc, const char *text) {
+	yyjson_mut_val *cell = yyjson_mut_arr(doc);
+	yyjson_mut_arr_add_val(cell, EmptyAttr(doc));
+	yyjson_mut_val *align = yyjson_mut_obj(doc);
+	yyjson_mut_obj_add_str(doc, align, "t", "AlignDefault");
+	yyjson_mut_arr_add_val(cell, align);
+	yyjson_mut_arr_add_int(doc, cell, 1); // rowspan
+	yyjson_mut_arr_add_int(doc, cell, 1); // colspan
+
+	yyjson_mut_val *cell_blocks = yyjson_mut_arr(doc);
+	if (text && text[0] != '\0') {
+		yyjson_mut_val *para = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, para, "t", "Para");
+		yyjson_mut_val *inl = yyjson_mut_arr(doc);
+		yyjson_mut_val *s = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, s, "t", "Str");
+		yyjson_mut_obj_add_strcpy(doc, s, "c", text);
+		yyjson_mut_arr_add_val(inl, s);
+		yyjson_mut_obj_add_val(doc, para, "c", inl);
+		yyjson_mut_arr_add_val(cell_blocks, para);
+	}
+	yyjson_mut_arr_add_val(cell, cell_blocks);
+	return cell;
+}
+
+//! One pandoc table Row: [attr, [cells]], built from a JSON array of cell strings.
+static yyjson_mut_val *TableRowVal(yyjson_mut_doc *doc, yyjson_val *cells_arr) {
+	yyjson_mut_val *row = yyjson_mut_arr(doc);
+	yyjson_mut_arr_add_val(row, EmptyAttr(doc));
+	yyjson_mut_val *cells = yyjson_mut_arr(doc);
+	if (cells_arr && yyjson_is_arr(cells_arr)) {
+		size_t ci, cmax;
+		yyjson_val *cv;
+		yyjson_arr_foreach(cells_arr, ci, cmax, cv) {
+			yyjson_mut_arr_add_val(cells, TableCellVal(doc, yyjson_is_str(cv) ? yyjson_get_str(cv) : ""));
+		}
+	}
+	yyjson_mut_arr_add_val(row, cells);
+	return row;
+}
+
+//! CONVERT duck_block's NATIVE table projection into pandoc's Table constructor.
+//!
+//! The native form is spec 5.0's `{"headers": [...], "rows": [[...]]}` -- a shape chosen so
+//! a table is queryable from SQL without walking an AST. Pandoc's Table is a six-element
+//! ARRAY: [attr, caption, colspecs, head, [bodies], foot].
+//!
+//! Before this existed, the fallback branch dumped the native OBJECT straight into `c`, and
+//! pandoc refused the entire document:
+//!
+//!     When parsing the constructor Table of type Text.Pandoc.Definition.Block
+//!     expected Array but got Object
+//!
+//! That made every table from every NATIVE reader unexportable -- only tables carrying a
+//! preserved attributes['pandoc_ast'] tuple, which is to say tables that came from pandoc
+//! in the first place, could survive the trip out. It went unnoticed because nothing wrote
+//! blocks back out until the write direction was registered, and because exactly one
+//! fixture in the tree contains a table at all.
+//!
+//! Cell text becomes a single `Str` inside a `Para`, matching what the definition-list arm
+//! already does. Pandoc's own reader splits runs into Str/Space/Str; one Str is valid
+//! pandoc JSON and renders identically, and matching the existing convention beats
+//! introducing a second one here.
+static yyjson_mut_val *NativeTableToPandocVal(yyjson_mut_doc *doc, const string &content) {
+	yyjson_mut_val *c = yyjson_mut_arr(doc);
+	yyjson_doc *src = content.empty() ? nullptr : yyjson_read(content.c_str(), content.size(), 0);
+	yyjson_val *root = src ? yyjson_doc_get_root(src) : nullptr;
+
+	// THE DISCRIMINATION LIVES HERE, not at the call sites, because there are two of them --
+	// a top-level table and a table nested in a div, blockquote or figure -- and the pair
+	// had already drifted once: the nested arm's comment asserts "these store their whole
+	// Pandoc tuple as JSON", which is true only of tables that CAME from pandoc.
+	//
+	// The two forms are distinguishable by shape alone and cannot be confused: a pandoc
+	// Table tuple is an ARRAY, duck_block's native projection is an OBJECT. Splice the
+	// former, convert the latter.
+	if (root && yyjson_is_arr(root)) {
+		yyjson_mut_val *copy = yyjson_val_mut_copy(doc, root);
+		yyjson_doc_free(src);
+		return copy;
+	}
+
+	yyjson_val *headers = root ? yyjson_obj_get(root, "headers") : nullptr;
+	yyjson_val *rows = root ? yyjson_obj_get(root, "rows") : nullptr;
+
+	// Column count comes from the header row when there is one, widened by the longest body
+	// row. Pandoc wants one ColSpec per column, and a count that disagrees with the widest
+	// row renders wrong rather than failing.
+	size_t ncols = (headers && yyjson_is_arr(headers)) ? yyjson_arr_size(headers) : 0;
+	if (rows && yyjson_is_arr(rows)) {
+		size_t ri, rmax;
+		yyjson_val *rv;
+		yyjson_arr_foreach(rows, ri, rmax, rv) {
+			if (yyjson_is_arr(rv) && yyjson_arr_size(rv) > ncols) {
+				ncols = yyjson_arr_size(rv);
+			}
+		}
+	}
+
+	yyjson_mut_arr_add_val(c, EmptyAttr(doc)); // attr
+
+	yyjson_mut_val *caption = yyjson_mut_arr(doc); // caption: [null, []]
+	yyjson_mut_arr_add_null(doc, caption);
+	yyjson_mut_arr_add_val(caption, yyjson_mut_arr(doc));
+	yyjson_mut_arr_add_val(c, caption);
+
+	yyjson_mut_val *colspecs = yyjson_mut_arr(doc);
+	for (size_t i = 0; i < ncols; i++) {
+		yyjson_mut_val *spec = yyjson_mut_arr(doc);
+		yyjson_mut_val *al = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, al, "t", "AlignDefault");
+		yyjson_mut_arr_add_val(spec, al);
+		yyjson_mut_val *w = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, w, "t", "ColWidthDefault");
+		yyjson_mut_arr_add_val(spec, w);
+		yyjson_mut_arr_add_val(colspecs, spec);
+	}
+	yyjson_mut_arr_add_val(c, colspecs);
+
+	// TableHead: [attr, [rows]]. An EMPTY headers array yields a head with no rows, which is
+	// how pandoc spells a headerless table -- not an absent head, which is invalid.
+	yyjson_mut_val *head = yyjson_mut_arr(doc);
+	yyjson_mut_arr_add_val(head, EmptyAttr(doc));
+	yyjson_mut_val *head_rows = yyjson_mut_arr(doc);
+	if (headers && yyjson_is_arr(headers) && yyjson_arr_size(headers) > 0) {
+		yyjson_mut_arr_add_val(head_rows, TableRowVal(doc, headers));
+	}
+	yyjson_mut_arr_add_val(head, head_rows);
+	yyjson_mut_arr_add_val(c, head);
+
+	// TableBody list: [[attr, rowHeadColumns, [intermediate head], [rows]]]
+	yyjson_mut_val *bodies = yyjson_mut_arr(doc);
+	yyjson_mut_val *body = yyjson_mut_arr(doc);
+	yyjson_mut_arr_add_val(body, EmptyAttr(doc));
+	yyjson_mut_arr_add_int(doc, body, 0);
+	yyjson_mut_arr_add_val(body, yyjson_mut_arr(doc));
+	yyjson_mut_val *body_rows = yyjson_mut_arr(doc);
+	if (rows && yyjson_is_arr(rows)) {
+		size_t ri, rmax;
+		yyjson_val *rv;
+		yyjson_arr_foreach(rows, ri, rmax, rv) {
+			yyjson_mut_arr_add_val(body_rows, TableRowVal(doc, rv));
+		}
+	}
+	yyjson_mut_arr_add_val(body, body_rows);
+	yyjson_mut_arr_add_val(bodies, body);
+	yyjson_mut_arr_add_val(c, bodies);
+
+	yyjson_mut_val *foot = yyjson_mut_arr(doc); // TableFoot: [attr, []]
+	yyjson_mut_arr_add_val(foot, EmptyAttr(doc));
+	yyjson_mut_arr_add_val(foot, yyjson_mut_arr(doc));
+	yyjson_mut_arr_add_val(c, foot);
+
+	if (src) {
+		yyjson_doc_free(src);
+	}
+	return c;
+}
+
 static yyjson_mut_val *ConvertFigureToPandocVal(yyjson_mut_doc *doc, const vector<Value> &blocks_list, idx_t &start_idx,
                                                 int32_t fig_level, idx_t depth);
 
@@ -1759,18 +1931,28 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 			} else if ((child_type == DuckBlockTypes::TYPE_TABLE || child_type == DuckBlockTypes::TYPE_DEFLIST) &&
 			           GetElementStringField(child, DuckBlockTypes::ENCODING_IDX) == DuckBlockTypes::ENCODING_JSON &&
 			           !content.empty()) {
-				// These store their whole Pandoc tuple as JSON, so splice it back exactly
-				// as the top-level branches do. Without this a table or definition list
-				// inside a div, blockquote or figure vanished.
+				// Without this arm, a table or definition list inside a div, blockquote or
+				// figure vanished entirely.
+				//
+				// THE OLD COMMENT HERE SAID "these store their whole Pandoc tuple as JSON",
+				// and that is true only of blocks that came FROM pandoc. A native reader's
+				// table stores duck_block's {"headers":…,"rows":…} projection instead, and
+				// splicing that in produced an object where pandoc's grammar demands an
+				// array -- which made pandoc reject the whole document. Tables therefore go
+				// through the shared converter, which tells the two forms apart by shape.
 				yyjson_mut_val *obj = yyjson_mut_obj(doc);
-				yyjson_mut_obj_add_str(doc, obj, "t",
-				                       child_type == DuckBlockTypes::TYPE_TABLE ? "Table" : "DefinitionList");
-				yyjson_doc *sub_doc = yyjson_read(content.c_str(), content.size(), 0);
-				if (sub_doc) {
-					yyjson_mut_obj_add_val(doc, obj, "c", yyjson_val_mut_copy(doc, yyjson_doc_get_root(sub_doc)));
-					yyjson_doc_free(sub_doc);
+				if (child_type == DuckBlockTypes::TYPE_TABLE) {
+					yyjson_mut_obj_add_str(doc, obj, "t", "Table");
+					yyjson_mut_obj_add_val(doc, obj, "c", NativeTableToPandocVal(doc, content));
 				} else {
-					yyjson_mut_obj_add_val(doc, obj, "c", yyjson_mut_arr(doc));
+					yyjson_mut_obj_add_str(doc, obj, "t", "DefinitionList");
+					yyjson_doc *sub_doc = yyjson_read(content.c_str(), content.size(), 0);
+					if (sub_doc) {
+						yyjson_mut_obj_add_val(doc, obj, "c", yyjson_val_mut_copy(doc, yyjson_doc_get_root(sub_doc)));
+						yyjson_doc_free(sub_doc);
+					} else {
+						yyjson_mut_obj_add_val(doc, obj, "c", yyjson_mut_arr(doc));
+					}
 				}
 				yyjson_mut_arr_add_val(child_blocks_arr, obj);
 				j++;
@@ -2200,20 +2382,16 @@ static string BuildBlocksJson(const vector<Value> &blocks_list) {
 			yyjson_mut_arr_add_val(blocks_arr, tbl_obj);
 			block_idx++;
 		} else if (element_type == DuckBlockTypes::TYPE_TABLE) {
+			// A table with NO preserved pandoc_ast tuple -- which is every table any native
+			// reader produces. It must be CONVERTED from duck_block's native
+			// {"headers":…,"rows":…} projection into pandoc's Table constructor.
+			//
+			// This branch previously imported `content` verbatim as `c`, handing pandoc an
+			// object where its grammar requires a six-element array, and pandoc rejected the
+			// whole document rather than that one block.
 			yyjson_mut_val *tbl_obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, tbl_obj, "t", "Table");
-			if (!content.empty()) {
-				yyjson_doc *sub_doc = yyjson_read(content.c_str(), content.size(), 0);
-				if (sub_doc) {
-					yyjson_mut_val *imported = yyjson_val_mut_copy(doc, yyjson_doc_get_root(sub_doc));
-					yyjson_mut_obj_add_val(doc, tbl_obj, "c", imported);
-					yyjson_doc_free(sub_doc);
-				} else {
-					yyjson_mut_obj_add_val(doc, tbl_obj, "c", yyjson_mut_arr(doc));
-				}
-			} else {
-				yyjson_mut_obj_add_val(doc, tbl_obj, "c", yyjson_mut_arr(doc));
-			}
+			yyjson_mut_obj_add_val(doc, tbl_obj, "c", NativeTableToPandocVal(doc, content));
 			yyjson_mut_arr_add_val(blocks_arr, tbl_obj);
 			block_idx++;
 		} else if (element_type == DuckBlockTypes::TYPE_IMAGE) {
@@ -2572,8 +2750,11 @@ static void DuckBlocksToPandocAstFun(DataChunk &args, ExpressionState &state, Ve
 		auto blocks_val = blocks_vec.GetValue(i);
 
 		// pandoc 3.x rejects anything below [1,23] outright; [1,20] made every export
-		// unreadable by the installed pandoc.
-		vector<Value> api_version_vals = {Value::INTEGER(1), Value::INTEGER(23), Value::INTEGER(1)};
+		// unreadable by the installed pandoc. Taken from pandoc_ast_map.hpp rather than
+		// written here, so this and the file writer below cannot drift apart.
+		vector<Value> api_version_vals = {Value::INTEGER(pandoc_ast::API_VERSION_MAJOR),
+		                                  Value::INTEGER(pandoc_ast::API_VERSION_MINOR),
+		                                  Value::INTEGER(pandoc_ast::API_VERSION_PATCH)};
 		Value api_version = Value::LIST(LogicalType::INTEGER, api_version_vals);
 		Value meta = Value("{}");
 
@@ -2803,7 +2984,10 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 	auto &blocks_vec = args.data[1];
 	auto count = args.size();
 
-	string api_version = "[1,23,1]";
+	// Derived, not written out, so this cannot drift from DuckBlocksToPandocAstFun above.
+	const string api_version = "[" + to_string(pandoc_ast::API_VERSION_MAJOR) + "," +
+	                           to_string(pandoc_ast::API_VERSION_MINOR) + "," +
+	                           to_string(pandoc_ast::API_VERSION_PATCH) + "]";
 
 	for (idx_t i = 0; i < count; i++) {
 		auto path_val = path_vec.GetValue(i);
@@ -2830,14 +3014,27 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		auto &blocks_list = ListValue::GetChildren(blocks_val);
 		string blocks_json = BuildBlocksJson(blocks_list);
 
-		file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":{},\"blocks\":" << blocks_json << "}";
+		// METADATA GOES TO DISK TOO. This wrote a hardcoded "meta":{} while
+		// DuckBlocksToPandocAstFun, the same conversion one function up, composed it with
+		// BuildMetaJson -- so every kind='value' row survived the in-memory export and
+		// vanished from the written file.
+		//
+		// Two copies of one rule, and only one of them implemented it. Neither body looks
+		// wrong on its own, which is exactly why the divergence lasted: nothing compared
+		// them. It matters here because panduck deliberately recovers metadata pandoc does
+		// not extract at all -- dcterms:created, dc:language, ipynb's authors -- and that
+		// claim was true right up until you wrote the file.
+		string meta_json = BuildMetaJson(blocks_list);
+
+		file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":" << meta_json << ",\"blocks\":" << blocks_json
+		     << "}";
 		file.close();
 		result.SetValue(i, Value(true));
 	}
 }
 
 void PandocBlockConvert::Register(ExtensionLoader &loader) {
-	// DELIBERATELY REGISTERS NOTHING IN PANDUCK.
+	// REGISTERS THE WRITE DIRECTION ONLY, UNDER PANDUCK-OWNED NAMES.
 	//
 	// Every name this body registered upstream -- pandoc_ast_to_blocks, read_pandoc_ast,
 	// duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is still registered by
@@ -2849,13 +3046,49 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	// never wrote. It does not degrade, it breaks, and it would break duckeye's thirteen
 	// formats for anyone with both extensions loaded.
 	//
-	// panduck's surface is read_pandoc_blocks / read_pandoc_blocks_string, registered in
-	// pandoc_reader.cpp under names nobody else owns. The conversion functions above are
-	// reached through ConvertPandocAstToBlocks() rather than through SQL names.
+	// So the names below are panduck_-prefixed, which is the same choice the read side
+	// made in taking read_pandoc_blocks rather than upstream's read_pandoc_ast. When
+	// upstream drops its copy after a RELEASED panduck (converter handoff, step 4), the
+	// canonical names can be added here as aliases. Not before: the two-copy window is
+	// safe and the zero-copy window is not.
 	//
-	// Kept as an empty body rather than deleted so that wiring it up by mistake does
-	// nothing, instead of reintroducing the collision.
-	(void)loader;
+	// THE READ SIDE IS STILL NOT REGISTERED HERE. pandoc_ast_to_blocks and read_pandoc_ast
+	// remain upstream's; panduck's read surface is read_pandoc_blocks /
+	// read_pandoc_blocks_string in pandoc_reader.cpp, and the conversion is reached
+	// through ConvertPandocAstToBlocks() rather than through those SQL names.
+	//
+	// WHY THE WRITE DIRECTION IS REGISTERED AT ALL. panduck's readers are deliberately
+	// more faithful than pandoc in places -- richer attributes, better block types, and
+	// metadata pandoc does not extract. The standing rule is that being richer is allowed
+	// so long as the result is still writable back to VALID pandoc JSON. That rule was
+	// unenforceable while nothing could write, so it was an aspiration rather than a
+	// constraint. test/sql/pandoc_writer.test is what turns it into a test.
+	auto ast_type = LogicalType::STRUCT({{"pandoc-api-version", LogicalType::LIST(LogicalType::INTEGER)},
+	                                     {"meta", LogicalType::VARCHAR},
+	                                     {"blocks", LogicalType::VARCHAR}});
+	auto blocks_type = DuckBlockTypes::DuckBlockListType();
+
+	// SPECIAL_HANDLING, because both bodies contain a deliberate NULL branch that builds an
+	// EMPTY DOCUMENT -- a valid AST with no blocks -- and under DuckDB's default null
+	// handling that branch CANNOT EXECUTE: the engine propagates NULL before the function
+	// is ever called. The code was written as though it ran, which makes it the
+	// check-that-cannot-fire shape rather than a policy anyone chose.
+	//
+	// Making it reachable is the right resolution rather than deleting it. A document with
+	// no readable blocks exporting as a valid empty AST is a usable answer; a NULL makes
+	// the caller's own write fail further downstream, where the cause is no longer visible.
+	// Now is the moment to settle it -- these names have no callers yet.
+	auto to_ast = ScalarFunction("panduck_blocks_to_pandoc_ast", {blocks_type}, ast_type, DuckBlocksToPandocAstFun);
+	to_ast.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	loader.RegisterFunction(to_ast);
+
+	loader.RegisterFunction(ScalarFunction("panduck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
+	                                       PandocBlockConvert::DuckBlocksToPandocBlocksFun));
+
+	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
+	                                LogicalType::BOOLEAN, WritePandocAstFun);
+	write_ast.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	loader.RegisterFunction(write_ast);
 }
 
 } // namespace duckdb

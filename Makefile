@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-writeback test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -75,6 +75,19 @@ check-converter:
 .PHONY: check-conformance
 check-conformance:
 	python3 scripts/check_duck_block_conformance.py
+
+# THE WRITE DIRECTION: every fixture's blocks must come back out as pandoc JSON that a
+# REAL pandoc accepts. panduck's readers are deliberately more faithful than pandoc in
+# places, and this is the check that keeps "more faithful" from becoming "incompatible":
+# diverge freely, discard nothing, but the mapping back must stay total.
+#
+# It needs a real pandoc because the defect class is invisible from inside DuckDB. The
+# first one it caught -- a Table holding duck_block's own {"headers":...,"rows":...}
+# projection where pandoc's grammar demands a six-element array -- is well-formed JSON
+# that every in-process assertion accepted and pandoc refused outright.
+.PHONY: check-writeback
+check-writeback:
+	python3 scripts/check_pandoc_writeback.py
 
 # Verify panduck's Pandoc AST mapping against a real pandoc binary. Skips cleanly (exit
 # 0) when pandoc is not installed, so it is safe to chain onto other targets.

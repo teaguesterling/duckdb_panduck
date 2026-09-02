@@ -5,10 +5,13 @@
 require panduck
 
 # ---------------------------------------------------------------------------
-# THE POINT OF THIS READER: `json` is pandoc's own AST, so this makes all 42 of pandoc's
+# THE POINT OF THIS READER: `json` is pandoc's own AST, so this makes all 43 of pandoc's
 # input formats reachable with no per-format code, for anyone who has pandoc installed.
-# It is not an eighth format alongside the seven -- it is the thing that makes the format
+# It is not a tenth format alongside the nine -- it is the thing that makes the format
 # list finite.
+#
+# (43, measured with `pandoc --list-input-formats | wc -l`. This comment said 42 for a
+# while, as did three peer sessions, because I said it first and nobody counted.)
 #
 # A TABLE FUNCTION, like every other panduck reader, so a filter pushes down into it. The
 # upstream surface is a SCALAR returning LIST(duck_block), which plants a blocking
@@ -227,3 +230,52 @@ SELECT content FROM read_pandoc_blocks('test/fixtures/table_image.pandoc.json')
 WHERE element_type = 'table';
 ----
 {"headers":["H"],"rows":[["alt text"]]}
+
+# ---------------------------------------------------------------------------
+# DefinitionList AND Figure MUST SURVIVE THE READ.
+#
+# Reported by duckeye 2026-09-02, measured on the shipped duck_block_utils v1.4.3:
+#
+#   pandoc -f rst -t json        ->  ['Header', 'DefinitionList', 'Figure']
+#   shipped pandoc_ast_to_blocks ->  heading
+#
+# Both constructors DROPPED OUTRIGHT at the read boundary -- not degraded, not flattened,
+# gone, exit 0. pandoc 3.x wraps every standalone captioned image in a Figure, so that
+# silently loses a figure from every format routed through the converter.
+#
+# panduck's copy is not affected, and this pins that rather than trusting it: the whole
+# argument for relocating the converter here was that the bugs travel with it unless the
+# net is built first, and this is a bug that stayed behind.
+#
+# Asserted on ELEMENT TYPES rather than on text. A reader that emitted the definition's
+# prose as a bare paragraph and dropped the list around it would satisfy any content check
+# while losing exactly what is being guarded -- the structure.
+query I
+SELECT count(*) FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"DefinitionList","c":[[[{"t":"Str","c":"Term"}],[[{"t":"Plain","c":[{"t":"Str","c":"Def"}]}]]]]}]}')
+WHERE element_type = 'list' AND attributes['list_type'] = 'definition';
+----
+1
+
+query II
+SELECT element_type, attributes['role'] FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"DefinitionList","c":[[[{"t":"Str","c":"Term"}],[[{"t":"Plain","c":[{"t":"Str","c":"Def"}]}]]]]}]}')
+WHERE element_type = 'list_item' ORDER BY element_order;
+----
+list_item	term
+list_item	definition
+
+query I
+SELECT count(*) FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Str","c":"Cap"}]}]],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[],["p.png","Cap"]]}]}]]}]}')
+WHERE element_type = 'figure';
+----
+1
+
+# The caption and the image both have to come through, not just the figure wrapper.
+query I
+SELECT count(*) FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Str","c":"Cap"}]}]],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[],["p.png","Cap"]]}]}]]}]}')
+WHERE element_type IN ('caption', 'image');
+----
+2

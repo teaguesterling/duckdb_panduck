@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-writeback test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -75,6 +75,21 @@ check-converter:
 .PHONY: check-conformance
 check-conformance:
 	python3 scripts/check_duck_block_conformance.py
+
+# COMPARE panduck's copy of the converter against duck_block_utils' copy. The same file
+# lives in both repos until handoff step 4 deletes theirs, and each repo tests its own copy
+# against its own expectations -- which is NOT the same as the copies agreeing.
+#
+# That gap is not hypothetical: a hand-run version of this found a recursion bound panduck
+# had lost, where a nested AST segfaulted here and raised a clean error upstream. Neither
+# suite could see it, because the defect existed only in the relationship.
+#
+# It reports a SIGNAL TO INVESTIGATE, not a diagnosis, and it EXPIRES when step 4 removes
+# the second copy. Skips cleanly when upstream is unreachable; --require makes that a
+# failure.
+.PHONY: check-divergence
+check-divergence:
+	python3 scripts/check_converter_divergence.py
 
 # THE WRITE DIRECTION: every fixture's blocks must come back out as pandoc JSON that a
 # REAL pandoc accepts. panduck's readers are deliberately more faithful than pandoc in

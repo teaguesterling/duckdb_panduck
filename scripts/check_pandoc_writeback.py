@@ -49,15 +49,43 @@ SELECT panduck_write_pandoc_ast('{out}', list(struct_pack(
     kind := kind, element_type := element_type, content := content, level := level,
     encoding := encoding, attributes := attributes, element_order := element_order)
   ORDER BY element_order))
-FROM read_panduck_doc('{src}');
+FROM {source};
 """
 
+# CONSTRUCTS THE FIXTURES DO NOT REACH.
+#
+# The fixture sweep above is a coverage claim that has to be checked rather than assumed:
+# org, rst, latex and docx all have table paths, and NOT ONE FIXTURE in the tree exercises
+# them. Exactly one fixture -- spine_order.epub -- contains a table at all, which is how
+# the native-table export defect survived: the sweep was green on 16 documents that never
+# built a table.
+#
+# So these go through the reader's *_blocks_string entry point instead. Each names the
+# element_type it is supposed to produce, and the check VERIFIES THAT IT DID before
+# treating "pandoc accepted it" as meaningful. Without that, a reader that silently
+# dropped the construct would report `ok` here forever -- a check on the result that
+# cannot see an error in the shape.
+CONSTRUCTS = [
+    ("org table", r"read_org_blocks_string(E'| a | b |\n|---+---|\n| 1 | 2 |')", "table"),
+    ("rst grid table",
+     r"read_rst_blocks_string(E'+---+---+\n| a | b |\n+===+===+\n| 1 | 2 |\n+---+---+')", "table"),
+    ("rst simple table",
+     r"read_rst_blocks_string(E'===  ===\n a    b\n===  ===\n 1    2\n===  ===')", "table"),
+    ("latex tabular",
+     r"read_latex_blocks_string(E'\\begin{tabular}{ll}\na & b \\\\\n1 & 2 \\\\\n\\end{tabular}')", "table"),
+    ("org definition list", r"read_org_blocks_string('- term :: definition')", "list"),
+    ("rst field list", r"read_rst_blocks_string(E':Author: A. Writer')", "list"),
+    ("org metadata", r"read_org_blocks_string(E'#+TITLE: T\n\nBody.')", "inlines"),
+]
 
-def duckdb_write(src: Path, out: Path) -> str | None:
-    """Write src's blocks to out as a pandoc AST. Returns an error string, or None."""
+COUNT_SQL = "SELECT count(*) FROM {source} WHERE element_type = '{element_type}';"
+
+
+def duckdb_write(source: str, out: Path) -> str | None:
+    """Write a source expression's blocks to out as a pandoc AST. Error string, or None."""
     proc = subprocess.run(
         [str(DUCKDB), "-unsigned", "-c", f"LOAD '{EXT}';", "-c",
-         WRITE_SQL.format(out=out, src=src)],
+         WRITE_SQL.format(out=out, source=source)],
         capture_output=True, text=True,
     )
     if proc.returncode != 0:
@@ -65,6 +93,21 @@ def duckdb_write(src: Path, out: Path) -> str | None:
     if not out.exists():
         return "panduck_write_pandoc_ast produced no file"
     return None
+
+
+def element_count(source: str, element_type: str) -> int:
+    """How many blocks of element_type the source produced. -1 if the query failed."""
+    proc = subprocess.run(
+        [str(DUCKDB), "-unsigned", "-noheader", "-list", "-c", f"LOAD '{EXT}';", "-c",
+         COUNT_SQL.format(source=source, element_type=element_type)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return -1
+    try:
+        return int(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return -1
 
 
 def pandoc_accepts(path: Path) -> str | None:
@@ -158,7 +201,7 @@ def main() -> int:
             out = tmp / "ast.json"
             if out.exists():
                 out.unlink()
-            err = duckdb_write(src, out) or pandoc_accepts(out)
+            err = duckdb_write(f"read_panduck_doc('{src}')", out) or pandoc_accepts(out)
             if err:
                 bad += 1
                 print(f"  REJECTED  {src.name}: {err}")
@@ -166,10 +209,32 @@ def main() -> int:
                 print(f"  ok        {src.name}")
 
         print()
+        for name, source, element_type in CONSTRUCTS:
+            out = tmp / "ast.json"
+            if out.exists():
+                out.unlink()
+            n = element_count(source, element_type)
+            if n <= 0:
+                # The construct did not survive the READ, so writing it back proves nothing.
+                # This arm exists precisely to stop a silent drop from reading as success.
+                bad += 1
+                print(f"  NOT PRODUCED  {name}: reader emitted no '{element_type}' block "
+                      f"({'query failed' if n < 0 else 'count 0'})")
+                continue
+            err = duckdb_write(source, out) or pandoc_accepts(out)
+            if err:
+                bad += 1
+                print(f"  REJECTED      {name}: {err}")
+            else:
+                print(f"  ok            {name} ({n} {element_type})")
+
+        print()
+        total = len(fixtures) + len(CONSTRUCTS)
         if bad:
-            print(f"FAILED: {bad} of {len(fixtures)} fixtures do not write back as valid pandoc JSON.")
+            print(f"FAILED: {bad} of {total} cases do not write back as valid pandoc JSON.")
             return 1
-        print(f"All {len(fixtures)} fixtures write back as pandoc JSON a real pandoc accepts.")
+        print(f"All {len(fixtures)} fixtures and {len(CONSTRUCTS)} constructs write back as "
+              f"pandoc JSON a real pandoc accepts.")
         return 0
 
 

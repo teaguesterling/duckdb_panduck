@@ -164,6 +164,22 @@ which is not in the file. This is the same situation as a LaTeX `\newcommand` us
 its definition, which panduck's LaTeX reader reads as an unclaimed name rather than
 expanding.
 
+**MediaWiki itself confirms the unresolvability, measured 2026-09-02.** Given a template it
+does not have, its own parser produces no content — only a red link saying the template
+does not exist:
+
+```
+$ printf '{{convert|5|km}}\n' | php maintenance/parse.php
+<p><a href="...action=edit&redlink=1" class="new"
+      title="Template:Convert (page does not exist)">Template:Convert</a>
+</p>
+```
+
+That is the strongest available argument for holding the call verbatim. A reader with no
+template namespace has strictly less information than MediaWiki did, and MediaWiki produced
+nothing; inventing an expansion would be fabrication, and dropping the call would discard
+the one thing the file actually says.
+
 Three measured facts shape the implementation:
 
 1. **Position decides block or inline.** A template alone in a paragraph becomes a
@@ -201,12 +217,21 @@ construct is evidence the reader is approximating, and substituting non-breaking
 the signature of code preserving indentation visually because it has no block-level
 representation to put it in.
 
-**The premise that makes this a defect rather than a difference is NOT verified.** The
-claim is that MediaWiki renders a leading space as `<pre>`. That is asserted from knowledge
-of the format, not measured: there is no wikitext parser or MediaWiki renderer on the
-development machine, and pandoc's HTML writer emitting `<p><code>…</code></p>` is pandoc
-agreeing with itself, not independent evidence. **This is the first thing to re-check
-against a real MediaWiki render, and the ledger row says so.**
+**VERIFIED against MediaWiki itself, 2026-09-02.** An earlier draft of this spec shipped
+this premise flagged as unverified — asserted from knowledge of the format, with no
+wikitext renderer on the machine to check it against. It has since been checked against
+MediaWiki's own parser (see *Verifying against the real parser* below):
+
+```
+$ printf ' line one\n line two\n' | php maintenance/parse.php
+<pre>line one
+line two
+</pre>
+```
+
+Leading space **is** `<pre>`. So pandoc's `Para[Code, LineBreak, Code]` misrepresents block
+structure, panduck's `code` is the faithful reading, and this row is a declared divergence
+on measured grounds rather than an argument from pandoc's internal asymmetry.
 
 This is the only *structural* divergence in the design — it changes a block's type, which
 is the expensive kind. Writing back yields `CodeBlock`, which is valid pandoc JSON.
@@ -219,7 +244,18 @@ is the expensive kind. Writing back yields `CodeBlock`, which is valid pandoc JS
 | panduck | `raw`, `encoding='mediawiki'`, `attributes['source_type']='behavior_switch'` |
 
 `__TOC__`, `__NOTOC__` and `__FORCETOC__` are instructions that expand to content at render
-time. No renderer shows the token to a reader.
+time. **Measured against MediaWiki's own parser, 2026-09-02** — the token is CONSUMED and
+never reaches the reader:
+
+```
+$ printf '__TOC__\n\nSome text.\n' | php maintenance/parse.php
+<p>Some text.
+</p>
+```
+
+So pandoc emitting `Str "__TOC__"` into a paragraph is not a representational choice with a
+defensible reading behind it; it puts a string in the document that MediaWiki guarantees no
+reader ever sees.
 
 **An earlier draft of this design said "dropped", and that was wrong.** It is the same kind
 of thing as a template — a render-time instruction, unresolvable without the wiki — and
@@ -247,9 +283,35 @@ pandoc's `Note` has nowhere to put it. That is the export target being lossy, wh
 global constraint explicitly permits.
 
 **The divergence ledger for this format therefore has exactly two rows**: preformatted
-(structural, premise flagged as unverified) and behavior switches (classification only).
-Org shipped with an empty ledger; saying plainly that this one does not is better than
-letting it look like an oversight.
+(structural) and behavior switches (classification only). Both are now backed by
+MediaWiki's own parser rather than by argument. Org shipped with an empty ledger; saying
+plainly that this one does not is better than letting it look like an oversight.
+
+## Verifying against the real parser
+
+Everything above was measured against pandoc. The three rulings that turn on *what
+MediaWiki means* — not what pandoc does with it — were checked against MediaWiki's own
+parser, and the recipe is recorded here because the alternative is trusting this document:
+
+```bash
+sudo apt-get install -y mediawiki php-sqlite3      # php-sqlite3 is NOT pulled in by mediawiki
+php /usr/share/mediawiki/maintenance/install.php \
+    --dbtype=sqlite --dbpath=/tmp/wiki --confpath=/tmp/wiki \
+    --scriptpath="" --lang=en --pass=<pw> ProbeWiki Admin
+
+# parse.php writes a localisation cache; without these it dies on /var/cache permissions
+cat >> /tmp/wiki/LocalSettings.php <<'EOF'
+$wgCacheDirectory = "/tmp/wiki/cache";
+$wgLocalisationCacheConf['storeDirectory'] = "/tmp/wiki/cache";
+EOF
+
+printf ' leading space\n' | php /usr/share/mediawiki/maintenance/parse.php --conf /tmp/wiki/LocalSettings.php
+```
+
+This is a throwaway wiki with a SQLite backend and no web server; it exists only to reach
+`Parser`. Nothing else in the repo depends on it, and it is not part of `make check` — the
+questions it answers are about the *format*, which does not change between runs, so the
+answers belong in this document rather than in a job that reinstalls MediaWiki forever.
 
 Both rows are `pandoc_compat` candidates. With these two the ledger across all formats is
 large enough that the mode is worth designing rather than speculating about — but that is a

@@ -42,13 +42,13 @@ enum class LineKind {
 //! never re-parses the prefix.
 struct Line {
 	LineKind kind = LineKind::TEXT;
-	std::string text;    //!< content after the marker; for TEMPLATE, the whole raw call
-	std::string name;    //!< TEMPLATE: the template's name. BEHAVIOR: the switch, e.g. __TOC__.
-	                     //!< HTML_BLOCK: the tag name, lowercased.
-	std::string attrs;   //!< HTML_BLOCK: the raw attribute text inside the opening tag
-	std::string markers; //!< LIST_ITEM: the raw marker run (`#*`), so each depth knows its type
+	std::string text;      //!< content after the marker; for TEMPLATE, the whole raw call
+	std::string name;      //!< TEMPLATE: the template's name. BEHAVIOR: the switch, e.g. __TOC__.
+	                       //!< HTML_BLOCK: the tag name, lowercased.
+	std::string attrs;     //!< HTML_BLOCK: the raw attribute text inside the opening tag
+	std::string markers;   //!< LIST_ITEM: the raw marker run (`#*`), so each depth knows its type
 	bool verbatim = false; //!< HTML_BLOCK: `text` is the COMPLETE raw markup, emit it as-is
-	int level = 0;       //!< HEADING: `=` count, capped at 6. LIST_ITEM: marker run length.
+	int level = 0;         //!< HEADING: `=` count, capped at 6. LIST_ITEM: marker run length.
 };
 
 //! Classify every line of a MediaWiki document. Never fails: an unrecognised line is TEXT,

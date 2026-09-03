@@ -18,8 +18,8 @@ struct IpynbInline {
 };
 
 struct IpynbBlock {
-	std::string kind;        //!< empty = block; `value` for notebook metadata
-	std::string key;         //!< `value` only: pandoc's key name
+	std::string kind; //!< empty = block; `value` for notebook metadata
+	std::string key;  //!< `value` only: pandoc's key name
 	std::string element_type;
 	std::string content;
 	std::string encoding;    //!< `raw`: the EMBEDDED format's name

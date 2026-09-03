@@ -268,18 +268,18 @@ private:
 					if (runs.size() == 1 && runs[0].element_type == DuckBlockTypes::INLINE_TEXT) {
 						b.content = runs[0].content;
 					} else {
-					// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
-					// inline children beside it (duck_block ruling d003d32).
-					//
-					// Flattening alone loses formatting irreversibly -- `**Bold** title` and
-					// `Bold title` become byte-identical, so a round trip rewrites the first as
-					// the second. Children alone break every consumer that reads a title from
-					// `content`, which doc_toc does.
-					//
-					// The structure marks itself and needs no new vocabulary: a lone text child
-					// lives in `content` and produces NO children, so children alongside
-					// non-empty content can only mean the content is a DERIVED flattening.
-					// CHILDREN ARE AUTHORITATIVE when both are present.
+						// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
+						// inline children beside it (duck_block ruling d003d32).
+						//
+						// Flattening alone loses formatting irreversibly -- `**Bold** title` and
+						// `Bold title` become byte-identical, so a round trip rewrites the first as
+						// the second. Children alone break every consumer that reads a title from
+						// `content`, which doc_toc does.
+						//
+						// The structure marks itself and needs no new vocabulary: a lone text child
+						// lives in `content` and produces NO children, so children alongside
+						// non-empty content can only mean the content is a DERIVED flattening.
+						// CHILDREN ARE AUTHORITATIVE when both are present.
 						std::string all;
 						for (auto &r : runs) {
 							all += r.content;
@@ -318,8 +318,7 @@ private:
 				// which is why it is asserted rather than assumed.
 				while (j < to && lines_[j].kind == LineKind::FIELD) {
 					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].name, depth + 1, DuckBlockTypes::ROLE_TERM);
-					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].text, depth + 1,
-					     DuckBlockTypes::ROLE_DEFINITION);
+					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].text, depth + 1, DuckBlockTypes::ROLE_DEFINITION);
 					j++;
 				}
 				i = j - 1;
@@ -541,8 +540,8 @@ struct RstGlobalState : public GlobalTableFunctionState {
 };
 
 void RstColumns(vector<LogicalType> &types, vector<string> &names) {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
-	         LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }
@@ -607,8 +606,8 @@ void BuildRows(const std::string &src, std::vector<RstRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> RstFileBind(ClientContext &, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+unique_ptr<FunctionData> RstFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+                                     vector<string> &names) {
 	RstColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);

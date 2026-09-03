@@ -15,7 +15,7 @@ enum class TokenKind { TEXT, CONTROL_WORD, CONTROL_SYMBOL, BEGIN_GROUP, END_GROU
 
 struct Token {
 	TokenKind kind;
-	std::string text;         //!< the word for CONTROL_WORD, the char for CONTROL_SYMBOL, the run for TEXT
+	std::string text;          //!< the word for CONTROL_WORD, the char for CONTROL_SYMBOL, the run for TEXT
 	bool display_math = false; //!< MATH_SHIFT only: $$..$$ and \[..\] rather than $..$
 	//! TEXT only, and only when a ligature rewrote the run: the SOURCE SPELLING of `text`.
 	//! Empty means the run already is its own source.

@@ -563,7 +563,8 @@ static void ProcessPandocBlockVal(yyjson_val *block_val, int32_t &order, vector<
 		// shape the builders already produce and the exporter already understands.
 		const bool is_ordered = (strcmp(pandoc_type, "OrderedList") == 0);
 		block_type = DuckBlockTypes::TYPE_LIST;
-		attrs[DuckBlockTypes::ATTR_LIST_TYPE] = is_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
+		attrs[DuckBlockTypes::ATTR_LIST_TYPE] =
+		    is_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
 		// `ordered` is the attribute spec v1.0 documents for this; `list_type` arrived
 		// later with this reader and nothing ever said which was canonical. Emitting
 		// only list_type meant a consumer written against the PUBLISHED v1 spec read
@@ -650,8 +651,8 @@ static void ProcessPandocBlockVal(yyjson_val *block_val, int32_t &order, vector<
 				                                Value(effective_level + 1)));
 				// The term is a bare inline run, so its block-level home is `plain`.
 				map<string, string> no_attrs;
-				result.push_back(CreateDocBlock(DuckBlockTypes::TYPE_PLAIN, ExtractInlinesTextVal(term_inlines), no_attrs,
-				                                order++, "text", Value(effective_level + 2)));
+				result.push_back(CreateDocBlock(DuckBlockTypes::TYPE_PLAIN, ExtractInlinesTextVal(term_inlines),
+				                                no_attrs, order++, "text", Value(effective_level + 2)));
 
 				if (definitions && yyjson_is_arr(definitions)) {
 					size_t didx, dmax;
@@ -968,7 +969,8 @@ static void ProcessPandocMetaVal(const string &key, yyjson_val *val, int32_t &or
 		result.push_back(CreateDocValue(DuckBlockTypes::VALUE_STRING, s, attrs, order++, Value(level)));
 	} else if (strcmp(mt, "MetaBool") == 0) {
 		const bool b = c_val && yyjson_is_true(c_val);
-		result.push_back(CreateDocValue(DuckBlockTypes::VALUE_BOOL, b ? "true" : "false", attrs, order++, Value(level)));
+		result.push_back(
+		    CreateDocValue(DuckBlockTypes::VALUE_BOOL, b ? "true" : "false", attrs, order++, Value(level)));
 	} else if (strcmp(mt, "MetaInlines") == 0) {
 		result.push_back(CreateDocValue(DuckBlockTypes::VALUE_INLINES, "", attrs, order++, Value(level)));
 		if (c_val) {
@@ -1006,7 +1008,8 @@ static void ProcessPandocMetaVal(const string &key, yyjson_val *val, int32_t &or
 		// Same no-silent-drops rule as blocks and inlines: an unrecognised MetaValue is
 		// preserved verbatim rather than discarded.
 		attrs[DuckBlockTypes::ATTR_SOURCE_TYPE] = string(mt);
-		result.push_back(CreateDocValue(DuckBlockTypes::TYPE_GENERIC, ValToJsonString(val), attrs, order++, Value(level)));
+		result.push_back(
+		    CreateDocValue(DuckBlockTypes::TYPE_GENERIC, ValToJsonString(val), attrs, order++, Value(level)));
 	}
 }
 
@@ -2595,7 +2598,8 @@ static string BuildBlocksJson(const vector<Value> &blocks_list) {
 					one_line.clear();
 				};
 				for (auto &inl : inline_children) {
-					if (GetElementStringField(inl, DuckBlockTypes::ELEMENT_TYPE_IDX) == DuckBlockTypes::INLINE_LINEBREAK &&
+					if (GetElementStringField(inl, DuckBlockTypes::ELEMENT_TYPE_IDX) ==
+					        DuckBlockTypes::INLINE_LINEBREAK &&
 					    GetElementLevel(inl) == GetElementLevel(block) + 1) {
 						flush_line();
 						continue;
@@ -2656,7 +2660,8 @@ static string BuildBlocksJson(const vector<Value> &blocks_list) {
 				yyjson_mut_obj_add_str(doc, gen_obj, "t", "Div");
 				yyjson_mut_val *gc_arr = yyjson_mut_arr(doc);
 				yyjson_mut_arr_add_val(
-				    gc_arr, CreatePandocAttrVal(doc, block, GetElementAttribute(block, DuckBlockTypes::ATTR_SOURCE_TYPE)));
+				    gc_arr,
+				    CreatePandocAttrVal(doc, block, GetElementAttribute(block, DuckBlockTypes::ATTR_SOURCE_TYPE)));
 				yyjson_mut_arr_add_val(gc_arr, yyjson_mut_arr(doc));
 				yyjson_mut_obj_add_val(doc, gen_obj, "c", gc_arr);
 				yyjson_mut_arr_add_val(blocks_arr, gen_obj);
@@ -2811,7 +2816,8 @@ static string BuildMetaJson(const vector<Value> &blocks_list) {
 			i++;
 			continue;
 		}
-		if (GetElementStringField(el, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_VALUE || GetElementLevel(el) != 1) {
+		if (GetElementStringField(el, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_VALUE ||
+		    GetElementLevel(el) != 1) {
 			i++;
 			continue;
 		}

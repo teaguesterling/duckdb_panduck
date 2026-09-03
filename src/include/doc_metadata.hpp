@@ -54,9 +54,9 @@ struct MetadataField {
 //! for it in any format, and minting one is what the spec tells producers not to do.
 //! cp:revision and cp:lastModifiedBy are absent for the same reason.
 static constexpr MetadataField DOCX_CORE_FIELDS[] = {
-    {"dc:title", "title"},         {"dc:creator", "author"},
-    {"dc:subject", "subject"},     {"dc:description", "description"},
-    {"dc:language", "language"},   {"dcterms:created", "date"},
+    {"dc:title", "title"},       {"dc:creator", "author"},
+    {"dc:subject", "subject"},   {"dc:description", "description"},
+    {"dc:language", "language"}, {"dcterms:created", "date"},
 };
 
 //! ODT `meta.xml`. `dc:date` is preferred over `meta:creation-date` when both are present
@@ -64,9 +64,9 @@ static constexpr MetadataField DOCX_CORE_FIELDS[] = {
 //! is how the two drift apart. meta:editing-duration and meta:user-defined have no pandoc
 //! key and are left as a recorded gap rather than given an invented one.
 static constexpr MetadataField ODT_META_FIELDS[] = {
-    {"dc:title", "title"},       {"dc:creator", "author"},
-    {"dc:subject", "subject"},   {"dc:description", "description"},
-    {"dc:language", "language"}, {"dc:date", "date"},
+    {"dc:title", "title"},           {"dc:creator", "author"},
+    {"dc:subject", "subject"},       {"dc:description", "description"},
+    {"dc:language", "language"},     {"dc:date", "date"},
     {"meta:generator", "generator"},
 };
 

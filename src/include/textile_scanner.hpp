@@ -35,14 +35,14 @@ enum class LineKind {
 //! never re-parses the prefix.
 struct Line {
 	LineKind kind = LineKind::TEXT;
-	std::string text;       //!< content after the marker
-	std::string markers;    //!< LIST_ITEM: the raw marker run (`##`), so depth knows its type
-	std::string style;      //!< block attributes from `{...}`
-	std::string css_class;  //!< block attributes from `(...)`, the class part
-	std::string id;         //!< block attributes from `(...)`, the `#id` part
-	std::string term;       //!< LIST_ITEM: the part before ` := `, when there is one
+	std::string text;        //!< content after the marker
+	std::string markers;     //!< LIST_ITEM: the raw marker run (`##`), so depth knows its type
+	std::string style;       //!< block attributes from `{...}`
+	std::string css_class;   //!< block attributes from `(...)`, the class part
+	std::string id;          //!< block attributes from `(...)`, the `#id` part
+	std::string term;        //!< LIST_ITEM: the part before ` := `, when there is one
 	bool definition = false; //!< LIST_ITEM: had a ` := `, so `term` is populated
-	int level = 0;          //!< HEADING: 1-6. LIST_ITEM: marker run length.
+	int level = 0;           //!< HEADING: 1-6. LIST_ITEM: marker run length.
 };
 
 //! Classify every line of a Textile document. Never fails: an unrecognised line is TEXT.

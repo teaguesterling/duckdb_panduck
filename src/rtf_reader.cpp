@@ -94,11 +94,11 @@ struct CharFormat {
 
 struct GroupState {
 	CharFormat fmt;
-	int uc = 1;         //!< how many fallback chars follow a \uN
-	bool skip = false;  //!< inside an ignored destination
-	bool style = false; //!< inside {\stylesheet}
-	bool in_info = false;   //!< inside {\info}, where a few children ARE wanted
-	std::string meta_key;   //!< non-empty: text goes to metadata under this pandoc key
+	int uc = 1;           //!< how many fallback chars follow a \uN
+	bool skip = false;    //!< inside an ignored destination
+	bool style = false;   //!< inside {\stylesheet}
+	bool in_info = false; //!< inside {\info}, where a few children ARE wanted
+	std::string meta_key; //!< non-empty: text goes to metadata under this pandoc key
 };
 
 class RtfParser {

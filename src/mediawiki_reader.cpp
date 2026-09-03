@@ -667,7 +667,9 @@ private:
 		// identity is compared on a NORMALISED marker -- otherwise `; term` / `: definition`
 		// closes a list and opens another, and the pair that defines a definition list ends
 		// up in two sibling lists that share nothing.
-		auto norm = [](char c) { return c == ':' ? ';' : c; };
+		auto norm = [](char c) {
+			return c == ':' ? ';' : c;
+		};
 		size_t common = 0;
 		while (common < m.size() && common < open_.size() && norm(m[common]) == open_[common]) {
 			common++;
@@ -679,9 +681,9 @@ private:
 			MwBlock b;
 			b.element_type = DuckBlockTypes::TYPE_LIST;
 			b.level = static_cast<int>(2 * k + 1);
-			const char *lt = m[k] == '#'   ? DuckBlockTypes::LIST_TYPE_ORDERED
+			const char *lt = m[k] == '#'                    ? DuckBlockTypes::LIST_TYPE_ORDERED
 			                 : (m[k] == ';' || m[k] == ':') ? DuckBlockTypes::LIST_TYPE_DEFINITION
-			                                               : DuckBlockTypes::LIST_TYPE_BULLET;
+			                                                : DuckBlockTypes::LIST_TYPE_BULLET;
 			b.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = lt;
 			b.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    lt == std::string(DuckBlockTypes::LIST_TYPE_ORDERED) ? "true" : "false";
@@ -784,8 +786,8 @@ struct MwGlobalState : public GlobalTableFunctionState {
 };
 
 void MwColumns(vector<LogicalType> &types, vector<string> &names) {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
-	         LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }

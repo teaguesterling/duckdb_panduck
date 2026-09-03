@@ -23,8 +23,8 @@ struct PandocGlobalState : public GlobalTableFunctionState {
 };
 
 void PandocColumns(vector<LogicalType> &types, vector<string> &names) {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
-	         LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }

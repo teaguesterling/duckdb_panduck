@@ -27,9 +27,9 @@ struct InlineMarker {
 	const char *element_type;
 };
 const InlineMarker MARKERS[] = {
-    {'*', DuckBlockTypes::INLINE_BOLD},   {'/', DuckBlockTypes::INLINE_ITALIC},
+    {'*', DuckBlockTypes::INLINE_BOLD},      {'/', DuckBlockTypes::INLINE_ITALIC},
     {'_', DuckBlockTypes::INLINE_UNDERLINE}, {'=', DuckBlockTypes::INLINE_CODE},
-    {'~', DuckBlockTypes::INLINE_CODE},   {'+', DuckBlockTypes::INLINE_STRIKETHROUGH},
+    {'~', DuckBlockTypes::INLINE_CODE},      {'+', DuckBlockTypes::INLINE_STRIKETHROUGH},
 };
 
 const char *MarkerType(char c) {
@@ -93,8 +93,7 @@ void ParseInlines(const std::string &s, int level, std::vector<OrgInline> &out) 
 			auto close = s.find(s[i], i + 1);
 			// A closing marker must not be preceded by a space, or `* a *` in prose would
 			// close a run the author never opened.
-			while (close != std::string::npos && close > i + 1 &&
-			       isspace(static_cast<unsigned char>(s[close - 1]))) {
+			while (close != std::string::npos && close > i + 1 && isspace(static_cast<unsigned char>(s[close - 1]))) {
 				close = s.find(s[i], close + 1);
 			}
 			if (close != std::string::npos && close > i + 1) {
@@ -190,8 +189,7 @@ public:
 				// than eating the rest of the document -- the same runaway the LaTeX
 				// reader's tabular walker had, avoided here by bounding the scan.
 				size_t j = i + 1;
-				while (j < lines.size() && lines[j].kind != LineKind::DRAWER_END &&
-				       lines[j].kind != LineKind::BLANK) {
+				while (j < lines.size() && lines[j].kind != LineKind::DRAWER_END && lines[j].kind != LineKind::BLANK) {
 					j++;
 				}
 				i = j;
@@ -244,8 +242,7 @@ private:
 		// Inside a list, a continuation line belongs to the item that is already open, so
 		// it is appended there rather than becoming a sibling paragraph.
 		auto &item = blocks_.back();
-		if (item.element_type == DuckBlockTypes::TYPE_LIST_ITEM && item.inlines.empty() &&
-		    item.content.empty()) {
+		if (item.element_type == DuckBlockTypes::TYPE_LIST_ITEM && item.inlines.empty() && item.content.empty()) {
 			item.content = text;
 			return;
 		}
@@ -282,18 +279,18 @@ private:
 		if (runs.size() == 1 && runs[0].element_type == DuckBlockTypes::INLINE_TEXT) {
 			b.content = runs[0].content;
 		} else {
-				// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
-				// inline children beside it (duck_block ruling d003d32).
-				//
-				// Flattening alone loses formatting irreversibly -- `**Bold** title` and
-				// `Bold title` become byte-identical, so a round trip rewrites the first as
-				// the second. Children alone break every consumer that reads a title from
-				// `content`, which doc_toc does.
-				//
-				// The structure marks itself and needs no new vocabulary: a lone text child
-				// lives in `content` and produces NO children, so children alongside
-				// non-empty content can only mean the content is a DERIVED flattening.
-				// CHILDREN ARE AUTHORITATIVE when both are present.
+			// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
+			// inline children beside it (duck_block ruling d003d32).
+			//
+			// Flattening alone loses formatting irreversibly -- `**Bold** title` and
+			// `Bold title` become byte-identical, so a round trip rewrites the first as
+			// the second. Children alone break every consumer that reads a title from
+			// `content`, which doc_toc does.
+			//
+			// The structure marks itself and needs no new vocabulary: a lone text child
+			// lives in `content` and produces NO children, so children alongside
+			// non-empty content can only mean the content is a DERIVED flattening.
+			// CHILDREN ARE AUTHORITATIVE when both are present.
 			std::string all;
 			for (auto &r : runs) {
 				all += r.content;
@@ -312,9 +309,9 @@ private:
 
 	void Item(const Line &line) {
 		CloseLists(line.level);
-		const char *want = line.definition        ? DuckBlockTypes::LIST_TYPE_DEFINITION
-		                   : line.ordered         ? DuckBlockTypes::LIST_TYPE_ORDERED
-		                                          : DuckBlockTypes::LIST_TYPE_BULLET;
+		const char *want = line.definition ? DuckBlockTypes::LIST_TYPE_DEFINITION
+		                   : line.ordered  ? DuckBlockTypes::LIST_TYPE_ORDERED
+		                                   : DuckBlockTypes::LIST_TYPE_BULLET;
 		if (lists_.empty() || lists_.back().first < line.level) {
 			OrgBlock list;
 			list.element_type = DuckBlockTypes::TYPE_LIST;
@@ -487,8 +484,8 @@ struct OrgGlobalState : public GlobalTableFunctionState {
 };
 
 void OrgColumns(vector<LogicalType> &types, vector<string> &names) {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
-	         LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }
@@ -550,8 +547,8 @@ void BuildRows(const std::string &src, std::vector<OrgRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> OrgFileBind(ClientContext &, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+unique_ptr<FunctionData> OrgFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+                                     vector<string> &names) {
 	OrgColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);

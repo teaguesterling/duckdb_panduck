@@ -41,9 +41,11 @@ static string InlineValuesToText(const vector<Value> &inlines) {
 			continue;
 		}
 		auto &ch = StructValue::GetChildren(el);
-		string element_type =
-		    ch[DuckBlockTypes::ELEMENT_TYPE_IDX].IsNull() ? "" : ch[DuckBlockTypes::ELEMENT_TYPE_IDX].GetValue<string>();
-		string content = ch[DuckBlockTypes::CONTENT_IDX].IsNull() ? "" : ch[DuckBlockTypes::CONTENT_IDX].GetValue<string>();
+		string element_type = ch[DuckBlockTypes::ELEMENT_TYPE_IDX].IsNull()
+		                          ? ""
+		                          : ch[DuckBlockTypes::ELEMENT_TYPE_IDX].GetValue<string>();
+		string content =
+		    ch[DuckBlockTypes::CONTENT_IDX].IsNull() ? "" : ch[DuckBlockTypes::CONTENT_IDX].GetValue<string>();
 		if (element_type == DuckBlockTypes::INLINE_SPACE || element_type == DuckBlockTypes::INLINE_SOFTBREAK) {
 			out += " ";
 		} else if (element_type == DuckBlockTypes::INLINE_LINEBREAK) {
@@ -321,8 +323,9 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 		auto children = StructValue::GetChildren(inline_val);
 
 		string inline_type = children[DuckBlockTypes::ELEMENT_TYPE_IDX].GetValue<string>();
-		string content =
-		    children[DuckBlockTypes::CONTENT_IDX].IsNull() ? "" : children[DuckBlockTypes::CONTENT_IDX].GetValue<string>();
+		string content = children[DuckBlockTypes::CONTENT_IDX].IsNull()
+		                     ? ""
+		                     : children[DuckBlockTypes::CONTENT_IDX].GetValue<string>();
 		int32_t level =
 		    children[DuckBlockTypes::LEVEL_IDX].IsNull() ? 1 : children[DuckBlockTypes::LEVEL_IDX].GetValue<int32_t>();
 
@@ -352,7 +355,8 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_obj_add_str(doc, obj, "t", "LineBreak");
 			yyjson_mut_arr_add_val(arr, obj);
 		} else if (inline_type == DuckBlockTypes::INLINE_BOLD || inline_type == DuckBlockTypes::INLINE_ITALIC ||
-		           inline_type == DuckBlockTypes::INLINE_STRIKETHROUGH || inline_type == DuckBlockTypes::INLINE_SUPERSCRIPT ||
+		           inline_type == DuckBlockTypes::INLINE_STRIKETHROUGH ||
+		           inline_type == DuckBlockTypes::INLINE_SUPERSCRIPT ||
 		           inline_type == DuckBlockTypes::INLINE_SUBSCRIPT || inline_type == DuckBlockTypes::INLINE_SMALLCAPS ||
 		           inline_type == DuckBlockTypes::INLINE_UNDERLINE) {
 			const char *p_type = "Strong";
@@ -572,7 +576,8 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 						continue;
 					}
 					auto &kv = StructValue::GetChildren(entry);
-					if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == DuckBlockTypes::ATTR_SOURCE_TYPE) {
+					if (kv.size() >= 2 && !kv[0].IsNull() &&
+					    kv[0].GetValue<string>() == DuckBlockTypes::ATTR_SOURCE_TYPE) {
 						if (!kv[1].IsNull()) {
 							source_type = kv[1].GetValue<string>();
 						}
@@ -616,8 +621,9 @@ string PandocInlineConvert::ConvertInlinesToPandocJson(const vector<Value> &inli
 	}
 	auto &first = inlines[0];
 	auto first_children = StructValue::GetChildren(first);
-	int32_t target_level =
-	    first_children[DuckBlockTypes::LEVEL_IDX].IsNull() ? 1 : first_children[DuckBlockTypes::LEVEL_IDX].GetValue<int32_t>();
+	int32_t target_level = first_children[DuckBlockTypes::LEVEL_IDX].IsNull()
+	                           ? 1
+	                           : first_children[DuckBlockTypes::LEVEL_IDX].GetValue<int32_t>();
 
 	idx_t end_idx = 0;
 	yyjson_mut_doc *doc = yyjson_mut_doc_new(nullptr);

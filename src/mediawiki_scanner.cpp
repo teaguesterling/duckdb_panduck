@@ -90,8 +90,8 @@ Line Make(LineKind kind, std::string text = {}) {
 //! Block-level HTML wikitext allows. Deliberately a CLOSED LIST rather than "anything in
 //! angle brackets": `<` is common in prose, and treating every tag-looking line as a block
 //! would swallow text. Anything not here stays in the paragraph and reaches the inline pass.
-const char *const kHtmlBlocks[] = {"blockquote", "syntaxhighlight", "source", "pre",
-                                   "references", "div",            "center", "poem", nullptr};
+const char *const kHtmlBlocks[] = {"blockquote", "syntaxhighlight", "source", "pre",  "references",
+                                   "div",        "center",          "poem",   nullptr};
 
 //! `__TOC__` and friends: a run of A-Z and _ bracketed by double underscores.
 bool IsBehaviorSwitch(const std::string &t) {
@@ -231,7 +231,9 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 		}
 
 		if (IsBehaviorSwitch(t)) {
-			Line bh = Make(LineKind::BEHAVIOR, t); bh.name = t; out.push_back(bh);
+			Line bh = Make(LineKind::BEHAVIOR, t);
+			bh.name = t;
+			out.push_back(bh);
 			continue;
 		}
 

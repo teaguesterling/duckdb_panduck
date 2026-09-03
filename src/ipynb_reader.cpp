@@ -154,8 +154,7 @@ private:
 			auto *cm = yyjson_obj_get(cell, "metadata");
 			auto fmt = StrField(cm, "format");
 			if (!source.empty()) {
-				Push(DuckBlockTypes::TYPE_RAW, source, 2,
-				     fmt.empty() ? DuckBlockTypes::ENCODING_TEXT : fmt);
+				Push(DuckBlockTypes::TYPE_RAW, source, 2, fmt.empty() ? DuckBlockTypes::ENCODING_TEXT : fmt);
 			}
 		}
 	}
@@ -255,8 +254,6 @@ std::vector<IpynbBlock> ParseIpynbString(const std::string &src) {
 	return builder.Build(src);
 }
 
-
-
 namespace {
 
 struct IpynbRow {
@@ -280,8 +277,8 @@ struct IpynbGlobalState : public GlobalTableFunctionState {
 };
 
 void IpynbColumns(vector<LogicalType> &types, vector<string> &names) {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::INTEGER,
-	         LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
+	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }
@@ -334,7 +331,7 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 }
 
 unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, vector<string> &names) {
 	IpynbColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -348,7 +345,7 @@ unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &
 }
 
 unique_ptr<FunctionData> IpynbStringBind(ClientContext &, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, vector<string> &names) {
 	IpynbColumns(return_types, names);
 	auto result = make_uniq<IpynbBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);
@@ -377,7 +374,8 @@ void IpynbScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterIpynbReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_ipynb_blocks", {LogicalType::VARCHAR}, IpynbScan, IpynbFileBind, IpynbGlobalState::Init);
+	TableFunction file_fn("read_ipynb_blocks", {LogicalType::VARCHAR}, IpynbScan, IpynbFileBind,
+	                      IpynbGlobalState::Init);
 	loader.RegisterFunction(file_fn);
 
 	// The string form, as the LaTeX reader has: asserting a two-line snippet is how the

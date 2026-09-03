@@ -1026,8 +1026,7 @@ void Parser::EmitTabular(std::vector<Token> &toks, size_t &i, const std::string 
 			// the table.
 		}
 		if (tok.kind == TokenKind::CONTROL_WORD &&
-		    (tok.text == "hline" || tok.text == "toprule" || tok.text == "midrule" ||
-		     tok.text == "bottomrule")) {
+		    (tok.text == "hline" || tok.text == "toprule" || tok.text == "midrule" || tok.text == "bottomrule")) {
 			// A RULE IS THE ONLY HEADER SIGNAL LaTeX HAS. tabular has no thead: pandoc makes
 			// the first row a header exactly when the table opens with a rule AND the first
 			// row is followed by one. Measured against pandoc 3.1.3 -- without the rules it

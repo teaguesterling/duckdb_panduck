@@ -45,8 +45,8 @@ std::vector<std::string> SplitLines(const std::string &src) {
 //! not a fixed-prefix format, which is why the marker is parsed rather than matched.
 //!
 //! Returns false when the line does not open with a marker. `body_start` is then untouched.
-bool ParseMarker(const std::string &t, std::string &name, std::string &style, std::string &css_class,
-                 std::string &id, size_t &body_start) {
+bool ParseMarker(const std::string &t, std::string &name, std::string &style, std::string &css_class, std::string &id,
+                 size_t &body_start) {
 	size_t i = 0;
 	while (i < t.size() && (std::isalnum(static_cast<unsigned char>(t[i])))) {
 		i++;
@@ -205,8 +205,7 @@ std::vector<Line> ScanTextile(const std::string &src) {
 			for (size_t k = 1; k < np; k++) {
 				tag += static_cast<char>(std::tolower(static_cast<unsigned char>(t[k])));
 			}
-			static const char *const kBlocks[] = {"dl", "table", "div", "ul", "ol", "blockquote",
-			                                      "pre", "p",     nullptr};
+			static const char *const kBlocks[] = {"dl", "table", "div", "ul", "ol", "blockquote", "pre", "p", nullptr};
 			bool known = false;
 			for (const char *const *b = kBlocks; *b && !known; b++) {
 				known = (tag == *b);

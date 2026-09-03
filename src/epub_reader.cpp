@@ -252,8 +252,7 @@ const std::set<std::string> TRANSPARENT = {"body", "figure", "hgroup", "ul", "ol
 //! -div bug they sat beside: a wrong-but-visible element can be corrected downstream or
 //! caught by a lint, while an element that emits nothing is indistinguishable from a
 //! document that never had one. Mislabelled information is recoverable; absent is not.
-const std::set<std::string> SECTIONING = {"section", "article", "aside", "nav",
-                                          "header",  "footer",  "main"};
+const std::set<std::string> SECTIONING = {"section", "article", "aside", "nav", "header", "footer", "main"};
 
 //! Not read. `table` is skipped in every panduck reader alike -- modelling tables needs
 //! table/row/cell blocks, and doing it in one reader only would make the vocabulary mean
@@ -273,8 +272,8 @@ const std::set<std::string> SECTIONING = {"section", "article", "aside", "nav",
 const std::set<std::string> SKIPPED = {"head", "script", "style", "template", "svg", "math"};
 
 bool IsBlockTag(const std::string &tag) {
-	return BLOCK_LEAF.count(tag) || TRANSPARENT.count(tag) || SECTIONING.count(tag) || SKIPPED.count(tag) || tag == "div" ||
-	       tag == "blockquote" || tag == "hr";
+	return BLOCK_LEAF.count(tag) || TRANSPARENT.count(tag) || SECTIONING.count(tag) || SKIPPED.count(tag) ||
+	       tag == "div" || tag == "blockquote" || tag == "hr";
 }
 
 struct Run {
@@ -529,13 +528,13 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 		} else if (tag == "hr") {
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_HR;
-				block.level = depth;
+			block.level = depth;
 			block.container = true;
 			out.push_back(std::move(block));
 		} else if (tag == "pre") {
 			EpubBlock block;
 			block.element_type = DuckBlockTypes::TYPE_CODE;
-				block.level = depth;
+			block.level = depth;
 			// A <pre> means its whitespace is the content, so it is taken raw rather than
 			// through the run collector, which folds runs of spaces.
 			std::string text = child.text().get();
@@ -799,7 +798,7 @@ void CollectMetadata(const pugi::xml_node &package, std::vector<EpubBlock> &out)
 	// panduck ahead of the reference in a direction nobody has asked for, and the gap is
 	// recorded rather than silently filled.
 	static const std::pair<const char *, const char *> DC_TO_PANDOC[] = {
-	    {"dc:creator", "author"},   {"dc:date", "date"},   {"dc:identifier", "identifier"},
+	    {"dc:creator", "author"},    {"dc:date", "date"},   {"dc:identifier", "identifier"},
 	    {"dc:language", "language"}, {"dc:title", "title"},
 	};
 	auto meta = package.child("metadata");

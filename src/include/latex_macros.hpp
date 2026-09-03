@@ -27,11 +27,11 @@ struct MacroEntry {
 	const char *element_type; //!< duck_block element_type for SEMANTIC, else nullptr
 	int args;                 //!< number of brace-delimited arguments the macro consumes
 	int content_arg;          //!< 0-based index of the argument to descend into
-	                           //!< (TRANSPARENT only), or -1
+	                          //!< (TRANSPARENT only), or -1
 	const char *expansion;    //!< literal replacement text for TEXT; for environments
-	                           //!< this field instead carries the list type
-	                           //!< ("bullet"/"ordered"/"definition"; use DuckBlockTypes::LIST_TYPE_*) -- see the environment table
-	                           //!< below for why that reuse is intentional
+	                          //!< this field instead carries the list type
+	                          //!< ("bullet"/"ordered"/"definition"; use DuckBlockTypes::LIST_TYPE_*) -- see the
+	                          //!< environment table below for why that reuse is intentional
 };
 
 //! Look up a control word (without the leading backslash). Returns nullptr when the

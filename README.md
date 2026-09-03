@@ -15,11 +15,12 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 ```
 
-**Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb), a
-Pandoc AST reader that reaches **every format pandoc can read**, document metadata across
-all of them, full path dispatch, and a differential validator that checks panduck against
-real pandoc on every run. MediaWiki is declared but not implemented — and the registry
-knows the difference, so nothing routes to a reader that doesn't exist.
+**Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki,
+Textile), a Pandoc AST reader that reaches **every format pandoc can read**, document
+metadata across all of them, a write direction that emits pandoc-compatible JSON, full
+path dispatch, and a differential validator that checks panduck against real pandoc on
+every run. The registry's `planned` list is empty — and it still knows the difference, so
+nothing can route to a reader that doesn't exist.
 
 ## Why not just call pandoc?
 
@@ -70,6 +71,33 @@ SELECT doc_render('report.docx', 'md');
 These load `duck_block_utils` on demand, exactly as reading `.md` loads `duckdb_markdown`.
 panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 
+## Writing Pandoc JSON
+
+Panduck reads documents no pandoc reader would give you the same shape for, then hands
+them back in a form pandoc accepts.
+
+| Function | Returns |
+|---|---|
+| `panduck_blocks_to_pandoc_ast(blocks)` | `STRUCT("pandoc-api-version", meta, blocks)` |
+| `panduck_blocks_to_pandoc_blocks(blocks)` | the blocks array alone, for splicing |
+| `panduck_write_pandoc_ast(path, blocks)` | writes the JSON, returns `BOOLEAN` |
+
+```sql
+-- Read an ODT, write a Pandoc AST a real pandoc can convert onward
+SELECT panduck_write_pandoc_ast('doc.json',
+    (SELECT list(b) FROM read_odt_blocks('doc.odt') b));
+```
+
+```console
+$ pandoc -f json -t markdown doc.json
+```
+
+The governing rule is that panduck may be **more faithful than pandoc** — richer
+attributes, better block types, metadata pandoc does not extract — so long as the mapping
+back to *valid* pandoc JSON stays total. Diverge where the source justifies it, discard
+nothing, and never emit JSON pandoc rejects. `make check-writeback` enforces the last
+clause by feeding every fixture and a set of hand-built constructs to a real pandoc.
+
 ## Formats
 
 | Format | Extensions | Status |
@@ -83,7 +111,8 @@ panduck's core never needs it. See [The doc_ namespace](docs/doc_namespace.md).
 | `rst` | `.rst` | **implemented** — `read_rst_blocks` |
 | `ipynb` | `.ipynb` | **implemented** — `read_ipynb_blocks` |
 | `pandoc` | *(none — by `format :=` only)* | **implemented** — `read_pandoc_blocks` |
-| `mediawiki` | `.wiki` `.mediawiki` | declared, not implemented |
+| `mediawiki` | `.wiki` `.mediawiki` | **implemented** — `read_mediawiki_blocks` |
+| `textile` | `.textile` | **implemented** — `read_textile_blocks` |
 | `markdown` `html` `pdf` | `.md` `.html` `.pdf` | routed to `duckdb_markdown`, `duckdb_webbed`, `pdf` |
 | `zim_article` | `zim://…` | one article, via `zim` + `webbed` |
 | `zim` | `.zim` | refused — an archive is a corpus, not a document |
@@ -167,8 +196,22 @@ make check          # every guard below, all of them, then fails if any failed
 | `check-vocabulary` | the vendored `duck_block` header against upstream, by name and value |
 | `check-conformance` | every fixture through every reader, against upstream's pure-SQL macros |
 | `check-converter` | every block type through the export and render paths |
+| `check-divergence` | panduck's copy of the Pandoc converter against upstream's |
+| `check-writeback` | every fixture and construct written back out, through a real pandoc |
 | `test_pandoc_alignment` | the AST mapping against a real pandoc |
 | `test_roundtrip` | differential validation against a real pandoc, per fixture |
+
+CI also runs a **formatting** gate and a **wasm** gate, neither of which `make check`
+covers:
+
+```sh
+make format-check   # clang-format + cmake-format + black, the three CI runs
+make format-fix     # apply them
+```
+
+`format-check` is the whole gate. Running `clang-format` alone reports clean while CI
+fails on the other two — the C++ is only one of the three things it checks. See
+[Validation](docs/validation.md) for the wasm gate and what each guard has caught.
 
 `make check` runs **all** of them and fails at the end rather than stopping at the first —
 a red run that skips the rest reads as an ordinary failure rather than as "and three things

@@ -133,6 +133,28 @@ the `element_type` it must produce and verifies it did *before* treating "pandoc
 it" as evidence. Without that, a reader that silently dropped the construct would report
 `ok` forever: a check on the result that cannot see an error in the shape.
 
+## The other four checks
+
+`make check` runs seven things. The three above are the ones with prose; these four are
+each a narrow guard that earned its place by catching something.
+
+| Target | What it compares | What it caught |
+|---|---|---|
+| `check-vocabulary` | the vendored `duck_block_types.hpp` against upstream, by name **and value** | a constant that matched by name while its value had moved |
+| `check-conformance` | every fixture's output against upstream's own conformance macros | element types outside the closed vocabulary — twice, `encoding='mediawiki'` and `encoding='org'` |
+| `check-converter` | the relocated Pandoc converter against its own regression sweep | that moving a file between repos silently drops the tests that lived beside it |
+| `check-divergence` | panduck's copy of the converter against upstream's, at a resolved SHA | a missing recursion bound that **segfaulted** on a deeply nested AST |
+
+`check-divergence` reports a *signal*, not a diagnosis. Its `EXPECTED` list records the
+divergences that are deliberate — a different Link/Image strategy, and helper names that
+differ because the same bug was fixed independently in both repos. A new divergence means
+*look*, not *fix*: the two copies drifting apart is sometimes upstream moving.
+
+`check-conformance` covers 31 fixtures; `check-writeback` covers 29 plus 16 constructs.
+The two numbers differ on purpose — the deliberately malformed fixtures in
+`test/fixtures/malformed/` must be *read* without crashing, but there is nothing valid to
+write back.
+
 ## In CI
 
 The roundtrip job does **not** rebuild panduck. The distribution matrix already produces
@@ -143,6 +165,20 @@ It passes `--require`, which turns a missing prerequisite into a failure. Withou
 check skips when pandoc or the artifact is absent, and **a job that silently skips reports
 coverage it is not providing.**
 
+### The wasm symbol check
+
+The loadable `.wasm` is linked by a **separate** `emcc -sSIDE_MODULE=2` step that reads
+only `DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS`. `target_link_libraries()` is ignored there,
+so a dependency missing from that list is left as an unresolved import: the module builds,
+uploads, and goes green, then throws on the first call in the user's browser.
+
+**CI builds the wasm but never instantiates it**, so nothing else in the pipeline can see
+the difference. `wasm-symbol-check` downloads the artifact and statically parses it —
+no duckdb-wasm runtime, no version match — so a failure is unambiguously the link bug
+rather than an ABI mismatch. See `test/wasm/README.md`.
+
+Three sibling extensions shipped this exact bug before panduck nearly did.
+
 ## A note on writing assertions
 
 Three failure modes surfaced building this, each one passing while the property it named
@@ -152,6 +188,9 @@ was violated:
 - a check on **result** cannot see an error in **shape**
 - a **negative** check cannot see **absence** — `EXCEPT` returning 0 is satisfied by two
   readers that both return nothing
+- a check on **symbols** cannot see the **artifact** — a debug archive resolves every
+  symbol exactly as well as a release one, so the wasm check is blind to which of the two
+  got linked. The only thing that can see it is the resolved path printed to the log.
 
 All three were found by *watching the guard fail*, not by watching it pass. A guard only
 ever observed passing is indistinguishable from one that cannot fail.

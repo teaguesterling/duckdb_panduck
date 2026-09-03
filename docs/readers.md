@@ -66,8 +66,14 @@ decodes `\uNNNN` and `\'hh` escapes; skips destinations (`{\fonttbl}`, `{\colort
     trimming decoded bytes splits the sequence and produces invalid UTF-8. A `\'hh` counts
     as **one character** against the skip.
 
-**Not yet read:** lists (both writers emit `\bullet` plus a negative indent, which is
-heuristic), tables, footnotes, and nested inline formatting (the `duck_block` inline
+**Reads:** lists and tables. Lists come from `\ls`/`\ilvl` resolved against the
+`{\*\listtable}`, whose `\levelnfc` gives the per-level type (23 bullet, 255 none,
+anything else ordered) — not from the `\bullet`-plus-negative-indent heuristic an earlier
+note here described. `{\listtext}` is presentation and is suppressed, so no glyph or
+numeral reaches an item's text. Tables come from `\cell`/`\row`, with `\trhdr` marking a
+header row.
+
+**Not yet read:** footnotes, and nested inline formatting (the `duck_block` inline
 vocabulary is flat, so bold+italic reports as bold).
 
 ## `read_docx_blocks(path)`
@@ -87,7 +93,14 @@ still resolves.
     Unicode, all of which were already correct. It took comparing against an independent
     reader of the same bytes. See [Validation](validation.md).
 
-**Not yet read:** tables, lists, images, footnotes.
+**Reads:** tables (`w:tbl`, header rows from `w:tblHeader`), lists (`w:numPr`, with the
+type resolved through `numbering.xml` — `numId` 0 means *no* numbering, not "list zero"),
+images (`a:blip r:embed` resolved through the relationships part), footnotes, and
+blockquotes. Tables were not flattened before they were read — they were **dropped**: the
+reader walked only the paragraph elements, and a table is their sibling.
+
+**Not yet read:** nothing structural outstanding. Footnote bodies are emitted; their
+reference position within the paragraph is not.
 
 ## `read_odt_blocks(path)`
 
@@ -109,7 +122,12 @@ except the styles that matter are generated per document and live in `content.xm
     Losing structure is a gap; losing text is a bug. Only the differential validator's
     *text* level distinguishes them, and it is what caught this.
 
-**Not yet read:** list structure, tables, images, footnotes.
+**Reads:** list structure (`text:list` nesting, with orderedness resolved **per level**
+from the list style — an ODT list can be ordered at one level and bulleted at the next),
+tables (`table:table`), images (`draw:frame`/`draw:image`), footnotes (the note *body*,
+not the citation mark), and blockquotes via the style parent chain.
+
+**Not yet read:** nothing structural outstanding.
 
 ## `read_epub_blocks(path)`
 
@@ -176,7 +194,13 @@ carries a `#fragment` that resolution would drop.
     outright: `No entry on path: OEBPS/pkg/../text/ch1.xhtml`. This is why
     `spine_order.epub` is a panduck-only unit fixture rather than a differential one.
 
-**Not yet read:** tables, footnotes, nested list depth, `toc.ncx` / `nav.xhtml` metadata.
+**Reads:** tables, images, and lists including nested depth (a nested list lands two
+levels below its parent, matching the DOCX, ODT and RTF readers on the same logical
+document).
+
+**Not yet read:** footnotes *as a distinct element* — the body text survives as ordinary
+blocks, so nothing is lost, but there is no `note` element marking it. `toc.ncx` /
+`nav.xhtml` metadata is also not read.
 
 ## `read_latex_blocks(path)`
 
@@ -234,8 +258,15 @@ wrong does not.
     together with math and verbatim — because they cannot be added to the matched
     handwritten/pandoc pair without breaking the equivalence assertion.
 
-**Not yet read:** tables, `\newcommand` expansion (a user macro is read as an unclaimed
-name — dropped, its argument left as text — never expanded against its definition).
+**Reads:** tables and figures. Both were absent for longer than the tests showed: neither
+LaTeX fixture had a table, and `longtable` — which pandoc's LaTeX *writer* emits for
+**every** table — was missing from the environment table entirely, so every pandoc-written
+LaTeX table was silently dropped. `figure` and `table` were `DROPPED` whole, discarding
+the `\includegraphics` and the wrapped `tabular` inside them. A test had *pinned* the
+second defect by asserting that `figure*` produces zero blocks.
+
+**Not yet read:** `\newcommand` expansion (a user macro is read as an unclaimed name —
+dropped, its argument left as text — never expanded against its definition).
 
 ## `read_org_blocks(path)`
 

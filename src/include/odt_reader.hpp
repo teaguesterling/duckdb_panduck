@@ -53,6 +53,10 @@ struct OdtBlock {
 	std::string list_type;
 	//! `table` only: 'json'.
 	std::string encoding;
+	//! Anything that is not one of the fields above -- currently a definition-list item's
+	//! `role`. Merged into the emitted attributes map after the derived entries, so a
+	//! reader-specific key cannot silently overwrite `list_type` or `heading_level`.
+	std::map<std::string, std::string> attributes;
 	std::vector<OdtInline> inlines;
 };
 

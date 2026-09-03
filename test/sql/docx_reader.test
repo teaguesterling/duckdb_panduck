@@ -356,10 +356,19 @@ inline	link	link	https://example.com
 
 # The surrounding sentence must be intact on BOTH sides of the link -- the failure removed
 # text, so asserting only that the link exists would miss a fix that ate its neighbours.
+#
+# Bounded by the HEADINGS around the paragraph rather than by element_order literals. The
+# first version of this test pinned `BETWEEN 4 AND 12` and broke the moment inline code
+# became its own element -- the sentence was identical, the indices were not. A test that
+# has to be renumbered every time the reader gets better is measuring the wrong thing.
 query I
 SELECT string_agg(content, '' ORDER BY element_order)
 FROM read_docx_blocks('test/fixtures/constructs.docx')
-WHERE kind = 'inline' AND element_order BETWEEN 4 AND 12;
+WHERE kind = 'inline'
+  AND element_order > (SELECT element_order FROM read_docx_blocks('test/fixtures/constructs.docx')
+                       WHERE element_type = 'heading' AND content = 'Heading One')
+  AND element_order < (SELECT element_order FROM read_docx_blocks('test/fixtures/constructs.docx')
+                       WHERE element_type = 'heading' AND content = 'Heading Two');
 ----
 Paragraph with bold, italic, inline code, struck, and a link.
 
@@ -370,3 +379,43 @@ SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
 WHERE kind = 'inline' AND element_type = 'link' AND content = '';
 ----
 0
+
+# ---------------------------------------------------------------------------
+# CONSTRUCTS THE AUDIT FOUND FLATTENED. Each was present in the document, survived as
+# TEXT, and lost the property that made it that construct -- so a count of blocks or a
+# check for missing words could not have seen any of them.
+
+# INLINE CODE is a character STYLE (w:rStyle VerbatimChar), not a toggle like bold.
+query II
+SELECT element_type, content FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type = 'code' AND kind = 'inline';
+----
+code	inline code
+
+# SUB/SUPERSCRIPT. `H~2~O` flattening to "H2O" is not wrong so much as no longer chemistry.
+query II
+SELECT element_type, content FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type IN ('subscript', 'superscript') ORDER BY element_order;
+----
+subscript	2
+superscript	2
+
+# A CODE BLOCK is one listing even though the writer splits it across paragraphs, one per
+# line. Emitting a block per paragraph would report several listings where there is one.
+# The INDENTATION is content: trimming each line would turn "    return 1" into "return 1".
+query II
+SELECT element_type, contains(content, chr(10) || '    return 1')
+FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type = 'code' AND kind = 'block';
+----
+code	true
+
+# A DEFINITION LIST pairs a term with its body. Both read back as plain paragraphs before:
+# the words were all there and nothing said which was the term.
+query III
+SELECT element_type, content, attributes['role']
+FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE attributes['role'] IS NOT NULL ORDER BY element_order;
+----
+list_item	Term	term
+list_item	The definition of the term.	definition

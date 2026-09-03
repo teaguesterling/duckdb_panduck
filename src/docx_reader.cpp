@@ -64,13 +64,26 @@ int HeadingLevelFromName(const std::string &raw) {
 
 struct RunFormat {
 	bool bold = false, italic = false, underline = false, strike = false;
+	bool code = false, superscript = false, subscript = false;
 
 	bool Plain() const {
-		return !bold && !italic && !underline && !strike;
+		return !bold && !italic && !underline && !strike && !code && !superscript && !subscript;
 	}
 	//! duck_block's inline vocabulary is flat, so a run carrying several attributes is
 	//! reported by its strongest. Documented limitation, matching the RTF reader.
 	std::string ElementType() const {
+		// Code outranks the toggles: pandoc marks a verbatim run with the VerbatimChar
+		// character style, and the theme behind it may also set a face. The verbatim-ness
+		// is the property that carries meaning.
+		if (code) {
+			return DuckBlockTypes::INLINE_CODE;
+		}
+		if (superscript) {
+			return DuckBlockTypes::INLINE_SUPERSCRIPT;
+		}
+		if (subscript) {
+			return DuckBlockTypes::INLINE_SUBSCRIPT;
+		}
 		if (bold) {
 			return DuckBlockTypes::INLINE_BOLD;
 		}
@@ -425,6 +438,12 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		// "and a [link](https://example.com)." read back as "and a ." -- the anchor text gone
 		// from the output entirely, not merely unmarked. That is DATA LOSS, which is a
 		// different failure from ODT's, where the text survives and only the href is dropped.
+		// pandoc marks a code listing with the SourceCode paragraph style. Captured before
+		// the run walk because <w:br/> inside such a paragraph is a real newline rather
+		// than the space it means in prose -- flattening it would run the listing's lines
+		// together.
+		bool is_code_para = pstyle_name == "SourceCode" || pstyle_name == "PreformattedText";
+
 		auto process_run = [&](pugi::xml_node run, const std::string &link_href) {
 			RunFormat fmt;
 			auto rpr = run.child("w:rPr");
@@ -433,6 +452,16 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				fmt.italic = ToggleOn(rpr, "w:i");
 				fmt.underline = static_cast<bool>(rpr.child("w:u"));
 				fmt.strike = ToggleOn(rpr, "w:strike");
+				// INLINE CODE is a character STYLE, not a toggle: pandoc writes
+				// <w:rStyle w:val="VerbatimChar"/>. Without this a `verbatim` run read back
+				// as ordinary text, indistinguishable from the prose around it.
+				std::string rstyle = rpr.child("w:rStyle").attribute("w:val").value();
+				fmt.code = rstyle == "VerbatimChar" || rstyle == "SourceText" || rstyle == "Code";
+				// SUB/SUPERSCRIPT is a vertical alignment. H~2~O flattened to "H2O", which
+				// is not wrong so much as no longer chemistry.
+				std::string valign = rpr.child("w:vertAlign").attribute("w:val").value();
+				fmt.superscript = valign == "superscript";
+				fmt.subscript = valign == "subscript";
 			}
 			std::string text;
 			for (auto child : run.children()) {
@@ -442,7 +471,7 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				} else if (tag == "w:tab") {
 					text += "\t";
 				} else if (tag == "w:br" || tag == "w:cr") {
-					text += " ";
+					text += is_code_para ? "\n" : " ";
 				}
 			}
 
@@ -577,6 +606,45 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			open_ordered.push_back(list_ordered);
 		}
 
+		// A CODE BLOCK. Consecutive SourceCode paragraphs are one listing: pandoc's DOCX
+		// writer splits a fenced block across paragraphs, so emitting one block each would
+		// report several listings where the document has one. `all` rather than `trimmed`,
+		// because the leading spaces are the indentation.
+		if (is_code_para && list_depth == 0) {
+			if (!blocks.empty() && blocks.back().element_type == DuckBlockTypes::TYPE_CODE) {
+				blocks.back().content += "\n" + all;
+			} else {
+				DocxBlock code;
+				code.element_type = DuckBlockTypes::TYPE_CODE;
+				code.content = all;
+				blocks.push_back(std::move(code));
+			}
+			continue;
+		}
+
+		// A DEFINITION LIST. pandoc writes DefinitionTerm / Definition paragraph styles,
+		// which read back as two unrelated paragraphs -- the words survived, the pairing
+		// did not. Emitted in the list/list_item + `role` shape the other readers use.
+		bool is_def_term = pstyle_name == "DefinitionTerm";
+		bool is_def_body = pstyle_name == "Definition";
+		if ((is_def_term || is_def_body) && list_depth == 0 && level == 0) {
+			bool open = !blocks.empty() && blocks.back().element_type == DuckBlockTypes::TYPE_LIST_ITEM &&
+			            blocks.back().attributes.count("role") > 0;
+			if (!open) {
+				DocxBlock l;
+				l.element_type = DuckBlockTypes::TYPE_LIST;
+				l.level = 1;
+				blocks.push_back(std::move(l));
+			}
+			DocxBlock item;
+			item.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			item.level = 2;
+			item.content = trimmed;
+			item.attributes["role"] = is_def_term ? "term" : "definition";
+			blocks.push_back(std::move(item));
+			continue;
+		}
+
 		DocxBlock block;
 		if (level > 0) {
 			block.element_type = DuckBlockTypes::TYPE_HEADING;
@@ -672,6 +740,11 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
+		}
+		// Reader-specific keys LAST, and only where absent, so one cannot displace a
+		// derived entry.
+		for (auto &kv : block.attributes) {
+			row.attributes.emplace(kv.first, kv.second);
 		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
 		// of its block, so it is one deeper. This reader emits no containers, so every

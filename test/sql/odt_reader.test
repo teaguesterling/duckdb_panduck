@@ -217,3 +217,52 @@ statement error
 SELECT count(*) FROM read_odt_blocks('test/fixtures/malformed/notzip.odt');
 ----
 not a readable ZIP archive
+
+# ---------------------------------------------------------------------------
+# CONSTRUCTS THE AUDIT FOUND FLATTENED. Each was present in the document, survived as
+# TEXT, and lost the property that made it that construct -- so a count of blocks or a
+# check for missing words could not have seen any of them.
+
+# INLINE CODE is a character STYLE (Source_Text, defined in styles.xml), not a toggle like bold.
+query II
+SELECT element_type, content FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type = 'code' AND kind = 'inline';
+----
+code	inline code
+
+# SUB/SUPERSCRIPT. `H~2~O` flattening to "H2O" is not wrong so much as no longer chemistry.
+query II
+SELECT element_type, content FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type IN ('subscript', 'superscript') ORDER BY element_order;
+----
+subscript	2
+superscript	2
+
+# A CODE BLOCK is one listing even though the writer splits it across paragraphs, one per
+# line. Emitting a block per paragraph would report several listings where there is one.
+# The INDENTATION is content: trimming each line would turn "    return 1" into "return 1".
+query II
+SELECT element_type, contains(content, chr(10) || '    return 1')
+FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type = 'code' AND kind = 'block';
+----
+code	true
+
+# A DEFINITION LIST pairs a term with its body. Both read back as plain paragraphs before:
+# the words were all there and nothing said which was the term.
+query III
+SELECT element_type, content, attributes['role']
+FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE attributes['role'] IS NOT NULL ORDER BY element_order;
+----
+list_item	Term	term
+list_item	The definition of the term.	definition
+
+# A LINK carries its href. In ODT the anchor TEXT always survived and only the URL was
+# dropped -- a declared deferral, unlike the DOCX bug that removed the words themselves.
+query III
+SELECT element_type, content, attributes['href']
+FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type = 'link';
+----
+link	link	https://example.com

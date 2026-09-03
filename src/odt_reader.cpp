@@ -20,13 +20,26 @@ namespace {
 
 struct RunFormat {
 	bool bold = false, italic = false, underline = false, strike = false;
+	bool code = false, superscript = false, subscript = false;
 
 	bool Plain() const {
-		return !bold && !italic && !underline && !strike;
+		return !bold && !italic && !underline && !strike && !code && !superscript && !subscript;
 	}
 	//! duck_block's inline vocabulary is flat, so a run carrying several attributes is
 	//! reported by its strongest. Same documented limitation as the RTF and DOCX readers.
 	std::string ElementType() const {
+		// Code outranks the character toggles: pandoc's ODT writer gives a verbatim run a
+		// monospace FONT, and some themes make that font italic. Reporting such a run as
+		// italic would lose the one property that actually carries meaning.
+		if (code) {
+			return DuckBlockTypes::INLINE_CODE;
+		}
+		if (superscript) {
+			return DuckBlockTypes::INLINE_SUPERSCRIPT;
+		}
+		if (subscript) {
+			return DuckBlockTypes::INLINE_SUBSCRIPT;
+		}
 		if (bold) {
 			return DuckBlockTypes::INLINE_BOLD;
 		}
@@ -67,6 +80,11 @@ std::map<std::string, RunFormat> ParseAutomaticStyles(const pugi::xml_node &root
 		fmt.strike = !strike_style.empty() && strike_style != "none";
 		std::string underline_style = props.attribute("style:text-underline-style").value();
 		fmt.underline = !underline_style.empty() && underline_style != "none";
+		// SUB/SUPERSCRIPT is a POSITION in ODF, written as `super 58%` or `sub 58%` -- a
+		// keyword and a size, so the keyword is matched by prefix rather than by equality.
+		std::string position = props.attribute("style:text-position").value();
+		fmt.superscript = position.rfind("super", 0) == 0;
+		fmt.subscript = position.rfind("sub", 0) == 0;
 		styles[name] = fmt;
 	}
 	return styles;
@@ -91,7 +109,12 @@ void CollectRuns(const pugi::xml_node &node, const RunFormat &inherited, const s
 			if (text.empty()) {
 				continue;
 			}
-			if (!runs.empty() && runs.back().fmt.ElementType() == inherited.ElementType()) {
+			// The special_type guard matters as soon as a run carries its own element_type:
+			// without it the text FOLLOWING a link merges into the anchor, because a link
+			// run's `fmt` is default-constructed and so compares equal to plain text. The
+			// sentence "... and a [link](url)." read back with the anchor as "link.".
+			if (!runs.empty() && runs.back().special_type.empty() &&
+			    runs.back().fmt.ElementType() == inherited.ElementType()) {
 				runs.back().text += text;
 			} else {
 				runs.push_back(Run {inherited, text});
@@ -103,14 +126,37 @@ void CollectRuns(const pugi::xml_node &node, const RunFormat &inherited, const s
 			auto it = styles.find(child.attribute("text:style-name").value());
 			CollectRuns(child, it != styles.end() ? it->second : inherited, styles, runs);
 		} else if (tag == "text:a") {
-			// A link's own text still belongs to the sentence; the href is not modelled
-			// yet, so the anchor text is collected with the surrounding formatting.
-			CollectRuns(child, inherited, styles, runs);
+			// A LINK. The anchor's own children are collected first -- it can hold spans,
+			// so its text is not simply child.text() -- and then flattened into one link
+			// run carrying the href. The text was never lost here (unlike DOCX, where the
+			// wrapped runs were skipped outright); what was missing was the URL.
+			std::vector<Run> anchor;
+			CollectRuns(child, inherited, styles, anchor);
+			std::string text;
+			for (auto &r : anchor) {
+				text += r.text;
+			}
+			std::string href = child.attribute("xlink:href").value();
+			if (!text.empty() && !href.empty()) {
+				Run link;
+				link.special_type = DuckBlockTypes::INLINE_LINK;
+				link.attrs["href"] = href;
+				link.text = text;
+				runs.push_back(std::move(link));
+			} else {
+				// No href to record: keep the words rather than inventing a link.
+				for (auto &r : anchor) {
+					runs.push_back(std::move(r));
+				}
+			}
 		} else if (tag == "text:s") {
 			// <text:s text:c="3"/> is a run of spaces; ODF collapses literal ones.
 			int count = child.attribute("text:c").as_int(1);
 			std::string spaces(count < 1 ? 1 : count, ' ');
-			if (!runs.empty() && runs.back().fmt.ElementType() == inherited.ElementType()) {
+			// Same guard as the text branch above: spaces after a link belong to the
+			// sentence, not to the anchor.
+			if (!runs.empty() && runs.back().special_type.empty() &&
+			    runs.back().fmt.ElementType() == inherited.ElementType()) {
 				runs.back().text += spaces;
 			} else {
 				runs.push_back(Run {inherited, spaces});
@@ -276,18 +322,20 @@ std::map<std::string, std::map<int, bool>> ParseListStyles(const pugi::xml_node 
 	return out;
 }
 
-//! Paragraph style names that mean BLOCKQUOTE, resolved through parent-style-name.
+//! Paragraph style names reachable from `seeds` through parent-style-name.
 //!
-//! LibreOffice writes `Block_20_Text` (display name "Block Text"); pandoc's own ODT writer
-//! uses `Quotations`. A document may also use an automatic style whose parent is one of
-//! them, so the chain is followed rather than the name matched.
-std::set<std::string> ParseBlockquoteStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
-	std::set<std::string> quote {"Block_20_Text", "Quotations"};
+//! A document rarely names a semantic style directly. pandoc's ODT writer emits automatic
+//! styles -- `P8`, `P10` -- whose parent is the meaningful one (`Quotations`,
+//! `Preformatted_20_Text`), so matching the name on the paragraph finds nothing and the
+//! chain has to be followed. Used for blockquotes and for code blocks, which differ only
+//! in their seed names.
+std::set<std::string> ParseStyleClosure(const pugi::xml_node &content_root, const pugi::xml_node &styles_root,
+                                        std::set<std::string> quote, const char *family = "paragraph") {
 	std::map<std::string, std::string> parent;
 	std::function<void(const pugi::xml_node &)> walk = [&](const pugi::xml_node &node) {
 		for (auto child : node.children()) {
 			if (std::string(child.name()) == "style:style" &&
-			    std::string(child.attribute("style:family").value()) == "paragraph") {
+			    std::string(child.attribute("style:family").value()) == family) {
 				std::string name = child.attribute("style:name").value();
 				std::string par = child.attribute("style:parent-style-name").value();
 				if (!name.empty() && !par.empty()) {
@@ -315,6 +363,42 @@ std::set<std::string> ParseBlockquoteStyles(const pugi::xml_node &content_root, 
 		}
 	}
 	return quote;
+}
+
+//! BLOCKQUOTE styles. LibreOffice writes `Block_20_Text` (display name "Block Text");
+//! pandoc's own ODT writer uses `Quotations`.
+std::set<std::string> ParseBlockquoteStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	return ParseStyleClosure(content_root, styles_root, {"Block_20_Text", "Quotations"});
+}
+
+//! CODE-BLOCK styles. Measured on a pandoc-written ODT: a fenced block and an indented
+//! block both become paragraphs whose style parent is `Preformatted_20_Text`. Without
+//! this they read as ordinary paragraphs -- the text survived, but a code listing was
+//! indistinguishable from prose, and its line breaks had already been flattened to spaces.
+std::set<std::string> ParseCodeStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	return ParseStyleClosure(content_root, styles_root, {"Preformatted_20_Text", "Source_20_Code", "Source_20_Text"});
+}
+
+//! INLINE-CODE text styles. pandoc names the run's style `Source_Text` and defines it in
+//! styles.xml -- NOT in content.xml's automatic styles -- so ParseAutomaticStyles never
+//! sees it and a verbatim run read back as ordinary text. Matched by name through the text
+//! style chain rather than by sniffing for a monospace font: the font list would be a
+//! guess, and these names are what the two writers that matter actually emit.
+std::set<std::string> ParseCodeTextStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	return ParseStyleClosure(content_root, styles_root,
+	                         {"Source_Text", "Source_20_Text", "Teletype", "Preformatted_20_Text"}, "text");
+}
+
+//! DEFINITION-LIST styles. pandoc writes `Definition_20_Term` / `Definition_20_Definition`
+//! (with a `_20_Tight` variant for a compact list), which read back as two unrelated
+//! paragraphs -- the words survived, the pairing did not.
+std::set<std::string> ParseDefTermStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	return ParseStyleClosure(content_root, styles_root, {"Definition_20_Term", "Definition_20_Term_20_Tight"});
+}
+
+std::set<std::string> ParseDefBodyStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	return ParseStyleClosure(content_root, styles_root,
+	                         {"Definition_20_Definition", "Definition_20_Definition_20_Tight"});
 }
 
 std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
@@ -352,6 +436,16 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		list_styles[kv.first] = kv.second;
 	}
 	auto quote_styles = ParseBlockquoteStyles(root, styles_root);
+	auto code_styles = ParseCodeStyles(root, styles_root);
+	auto def_term_styles = ParseDefTermStyles(root, styles_root);
+	auto def_body_styles = ParseDefBodyStyles(root, styles_root);
+	// A verbatim run names a style defined in styles.xml, which ParseAutomaticStyles (which
+	// reads content.xml's automatic styles) cannot see. Rather than thread another set
+	// through CollectRuns, mark those names in the style map the collector already
+	// consults -- the lookup is by name, so the two sources merge cleanly.
+	for (auto &name : ParseCodeTextStyles(root, styles_root)) {
+		styles[name].code = true;
+	}
 
 	// ODF nests list content: text:list > text:list-item > text:p, and this reader used to
 	// FLATTEN it -- every list paragraph came out as a top-level paragraph, so the words
@@ -507,7 +601,51 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		}
 
 		std::string style_name = node.attribute("text:style-name").value();
-		bool is_quote = !is_heading && entry.depth == 0 && quote_styles.count(style_name) > 0;
+		bool top = !is_heading && entry.depth == 0;
+		bool is_quote = top && quote_styles.count(style_name) > 0;
+		bool is_code = top && code_styles.count(style_name) > 0;
+		bool is_def_term = top && def_term_styles.count(style_name) > 0;
+		bool is_def_body = top && def_body_styles.count(style_name) > 0;
+
+		// A CODE BLOCK IS WRITTEN AS ONE PARAGRAPH PER LINE. pandoc's ODT writer splits
+		// `def hello():\n    return 1` across two <text:p>, so emitting a block each would
+		// give two code listings where the document has one. Consecutive code paragraphs
+		// join with the newline that separated them.
+		//
+		// `all` is used rather than `trimmed`: the leading spaces ARE the indentation, and
+		// trimming them turns "    return 1" into "return 1".
+		if (is_code) {
+			if (!blocks.empty() && blocks.back().element_type == DuckBlockTypes::TYPE_CODE) {
+				blocks.back().content += "\n" + all;
+			} else {
+				OdtBlock code;
+				code.element_type = DuckBlockTypes::TYPE_CODE;
+				code.content = all;
+				blocks.push_back(std::move(code));
+			}
+			continue;
+		}
+
+		// A DEFINITION LIST is a term paragraph followed by a body paragraph. Emitted as
+		// the list/list_item shape with a `role`, which is what the org, rst, epub,
+		// mediawiki and textile readers already produce for the same construct.
+		if (is_def_term || is_def_body) {
+			bool open = !blocks.empty() && blocks.back().element_type == DuckBlockTypes::TYPE_LIST_ITEM &&
+			            blocks.back().attributes.count("role") > 0;
+			if (!open) {
+				OdtBlock l;
+				l.element_type = DuckBlockTypes::TYPE_LIST;
+				l.level = 1;
+				blocks.push_back(std::move(l));
+			}
+			OdtBlock item;
+			item.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			item.level = 2;
+			item.content = trimmed;
+			item.attributes["role"] = is_def_term ? "term" : "definition";
+			blocks.push_back(std::move(item));
+			continue;
+		}
 
 		OdtBlock block;
 		if (is_heading) {
@@ -603,6 +741,11 @@ unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input,
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
+		}
+		// Reader-specific keys LAST, and only where they do not already exist, so a stray
+		// key cannot displace a derived one.
+		for (auto &kv : block.attributes) {
+			row.attributes.emplace(kv.first, kv.second);
 		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD of
 		// its block, so it is one deeper. This reader emits CONTAINERS now -- lists and

@@ -55,6 +55,9 @@ struct DocxBlock {
 	std::string list_type;
 	//! `table` only: 'json', for the spec 5.0 native schema.
 	std::string encoding;
+	//! Anything not covered by the fields above -- currently a definition-list item's
+	//! `role`. Merged after the derived entries so it cannot displace one.
+	std::map<std::string, std::string> attributes;
 	std::vector<DocxInline> inlines;
 };
 

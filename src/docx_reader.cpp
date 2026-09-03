@@ -353,6 +353,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	// alone silently swallows the second into the first -- measured on a generated fixture,
 	// where `- plain bullet` after `1. 2. 3.` became a fourth ordered item.
 	std::vector<bool> open_ordered;
+	//! Body paragraphs styled as document metadata: {index in `blocks`, its text}.
+	std::vector<std::pair<size_t, std::string>> meta_styled;
 
 	// <w:sdt> IS A CONTENT CONTROL, and it WRAPS block content in <w:sdtContent>. Word
 	// emits them for form fields, citations, tables of contents and any structured region,
@@ -644,6 +646,24 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			open_ordered.push_back(list_ordered);
 		}
 
+		// TITLE / AUTHOR / DATE ARE DOCUMENT METADATA, NOT PROSE. Both writers style them
+		// as ordinary paragraphs at the top of the body, and this reader emitted them
+		// TWICE: once as body text and again as `value` metadata read from the properties
+		// part. pandoc's body for the same file starts at the first real heading.
+		//
+		// Duplication is invisible to every check here -- the conformance and write-back
+		// checks see a valid paragraph, and the word-loss check only looks for ABSENCE.
+		// It took comparing one logical document across nine readers to see it.
+		//
+		// The index is recorded rather than the block dropped outright: a Title-styled
+		// paragraph in a document whose properties part carries no title is the only copy
+		// of that text, and dropping it unconditionally would trade a duplicate for a
+		// deletion. The match is confirmed against the metadata below.
+		if ((pstyle_name == "Title" || pstyle_name == "Author" || pstyle_name == "Subtitle" || pstyle_name == "Date") &&
+		    list_depth == 0 && level == 0 && !trimmed.empty()) {
+			meta_styled.push_back({blocks.size(), trimmed});
+		}
+
 		// A CODE BLOCK. Consecutive SourceCode paragraphs are one listing: pandoc's DOCX
 		// writer splits a fenced block across paragraphs, so emitting one block each would
 		// report several listings where the document has one. `all` rather than `trimmed`,
@@ -716,6 +736,7 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	}
 	// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract.
 	CollectDocxMetadata(core_xml, blocks);
+	DropDuplicatedMetadataParagraphs(blocks, meta_styled);
 	return blocks;
 }
 

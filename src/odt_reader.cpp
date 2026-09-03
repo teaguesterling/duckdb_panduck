@@ -512,6 +512,8 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	// after an ordered one at the same depth must close and reopen, or the second is
 	// swallowed into the first.
 	std::vector<bool> open_ordered;
+	//! Body paragraphs styled as document metadata: {index in `blocks`, its text}.
+	std::vector<std::pair<size_t, std::string>> meta_styled;
 	for (auto &entry : entries) {
 		auto node = entry.node;
 		if (entry.is_table) {
@@ -629,6 +631,15 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		bool is_def_term = top && def_term_styles.count(style_name) > 0;
 		bool is_def_body = top && def_body_styles.count(style_name) > 0;
 
+		// TITLE / AUTHOR / DATE ARE DOCUMENT METADATA, NOT PROSE -- see
+		// DropDuplicatedMetadataParagraphs for why this records a candidate instead of
+		// dropping the paragraph outright.
+		if (top &&
+		    (style_name == "Title" || style_name == "Author" || style_name == "Subtitle" || style_name == "Date") &&
+		    !trimmed.empty()) {
+			meta_styled.push_back({blocks.size(), trimmed});
+		}
+
 		// A CODE BLOCK IS WRITTEN AS ONE PARAGRAPH PER LINE. pandoc's ODT writer splits
 		// `def hello():\n    return 1` across two <text:p>, so emitting a block each would
 		// give two code listings where the document has one. Consecutive code paragraphs
@@ -702,6 +713,7 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	}
 	// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract.
 	CollectOdtMetadata(meta_xml, blocks);
+	DropDuplicatedMetadataParagraphs(blocks, meta_styled);
 	return blocks;
 }
 

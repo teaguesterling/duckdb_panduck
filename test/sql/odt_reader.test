@@ -302,3 +302,29 @@ SELECT content FROM read_odt_blocks('test/fixtures/wrappers.odt')
 WHERE content LIKE 'note%';
 ----
 note  tail
+
+# ---------------------------------------------------------------------------
+# TITLE AND AUTHOR ARE METADATA, NOT PROSE.
+#
+# Both writers style them as ordinary paragraphs at the top of the body AND record them in
+# a metadata part, so this reader emitted each of them TWICE -- once as body text, once as
+# a `value`. pandoc's body for the same file starts at the first real heading.
+#
+# DUPLICATION IS INVISIBLE TO EVERY OTHER CHECK HERE. check-conformance and
+# check-writeback see a perfectly valid paragraph; check-wordloss looks only for ABSENCE.
+# It took rendering one logical document into nine formats and comparing the block
+# sequences to see that docx and odt began `paragraph paragraph heading` where every other
+# reader began `heading`.
+query I
+SELECT string_agg(element_type, ' ' ORDER BY element_order)
+FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE kind = 'block' AND element_order < 4;
+----
+heading paragraph
+
+# The title survives -- as metadata, exactly once.
+query I
+SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE content = 'Audit Document';
+----
+1

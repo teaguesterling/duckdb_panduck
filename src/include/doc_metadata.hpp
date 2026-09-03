@@ -1,5 +1,9 @@
 #pragma once
 
+#include "duck_block_types.hpp"
+#include <vector>
+#include <set>
+
 #include <string>
 #include <utility>
 
@@ -69,5 +73,48 @@ static constexpr MetadataField ODT_META_FIELDS[] = {
     {"dc:language", "language"},     {"dc:date", "date"},
     {"meta:generator", "generator"},
 };
+
+//! Drop body paragraphs that merely restate the document's metadata.
+//!
+//! DOCX and ODT both style the title, author and date as ordinary paragraphs at the top of
+//! the body, AND record them in a metadata part. A reader that walks the body and reads the
+//! metadata therefore emits each of them twice -- once as prose, once as a `value`. pandoc's
+//! body for the same file starts at the first real heading.
+//!
+//! Duplication is invisible to every other check in this repo: the conformance and
+//! write-back checks see a perfectly valid paragraph, and the word-loss check looks only for
+//! ABSENCE. It took comparing one logical document across nine readers to see it.
+//!
+//! A candidate is dropped ONLY when its text actually appears in the metadata. A
+//! Title-styled paragraph in a document whose metadata part carries no title is the only
+//! copy of that text, and dropping it unconditionally would trade a duplicate for a
+//! deletion -- the strictly worse failure.
+//!
+//! `Block` must expose `kind`, `content` and `inlines[].content`; both readers' block types
+//! do, which is why this is a template rather than two copies.
+template <typename Block>
+void DropDuplicatedMetadataParagraphs(std::vector<Block> &blocks,
+                                      const std::vector<std::pair<size_t, std::string>> &candidates) {
+	if (candidates.empty()) {
+		return;
+	}
+	std::set<std::string> meta_text;
+	for (auto &b : blocks) {
+		if (b.kind != DuckBlockTypes::KIND_VALUE) {
+			continue;
+		}
+		for (auto &run : b.inlines) {
+			if (!run.content.empty()) {
+				meta_text.insert(run.content);
+			}
+		}
+	}
+	// Highest index first: erasing from the front would invalidate the later ones.
+	for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+		if (it->first < blocks.size() && meta_text.count(it->second)) {
+			blocks.erase(blocks.begin() + static_cast<long>(it->first));
+		}
+	}
+}
 
 } // namespace duckdb

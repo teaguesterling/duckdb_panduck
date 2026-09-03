@@ -456,3 +456,41 @@ SELECT content FROM read_docx_blocks('test/fixtures/wrappers.docx')
 WHERE content LIKE 'kept%';
 ----
 kept tail
+
+# ---------------------------------------------------------------------------
+# TITLE AND AUTHOR ARE METADATA, NOT PROSE.
+#
+# Both writers style them as ordinary paragraphs at the top of the body AND record them in
+# a metadata part, so this reader emitted each of them TWICE -- once as body text, once as
+# a `value`. pandoc's body for the same file starts at the first real heading.
+#
+# DUPLICATION IS INVISIBLE TO EVERY OTHER CHECK HERE. check-conformance and
+# check-writeback see a perfectly valid paragraph; check-wordloss looks only for ABSENCE.
+# It took rendering one logical document into nine formats and comparing the block
+# sequences to see that docx and odt began `paragraph paragraph heading` where every other
+# reader began `heading`.
+query I
+SELECT string_agg(element_type, ' ' ORDER BY element_order)
+FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE kind = 'block' AND element_order < 4;
+----
+heading paragraph
+
+# The title survives -- as metadata, exactly once.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE content = 'Audit Document';
+----
+1
+
+# THE DE-DUPLICATION IS LOSSLESS. A Title-styled paragraph in a document whose metadata
+# part is ABSENT is the only copy of that text, and dropping it unconditionally would
+# trade a duplicate for a deletion -- the strictly worse failure. This fixture is
+# constructs.docx with docProps/core.xml removed: no metadata rows, and the paragraph is
+# kept. Without this the fix would be indistinguishable from "always drop the title".
+query II
+SELECT count(*) FILTER (WHERE kind = 'value'),
+       count(*) FILTER (WHERE content = 'Audit Document')
+FROM read_docx_blocks('test/fixtures/title_no_metadata.docx');
+----
+0	1

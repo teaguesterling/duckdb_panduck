@@ -159,6 +159,9 @@ std::vector<Line> ScanOrg(const std::string &src) {
 				line.kind = LineKind::KEYWORD;
 				line.key = Upper(TrimBoth(body.substr(0, colon)));
 				line.text = TrimBoth(body.substr(colon + 1));
+				// The line VERBATIM, because an unrecognised keyword is held as `raw` and raw
+				// content that has been case-folded is not verbatim.
+				line.raw = TrimRight(raw);
 				out.push_back(std::move(line));
 				continue;
 			}

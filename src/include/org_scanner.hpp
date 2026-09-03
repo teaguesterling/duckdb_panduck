@@ -33,6 +33,8 @@ struct Line {
 	LineKind kind = LineKind::TEXT;
 	std::string text;        //!< content after the marker
 	std::string key;         //!< KEYWORD: the key, upper-cased. BLOCK_*: the block name.
+	std::string raw;         //!< KEYWORD: the line VERBATIM. `raw` content must not be
+	                         //!< reconstructed from an upper-cased key.
 	std::string term;        //!< LIST_ITEM: the part before ` :: `, when there is one
 	int level = 0;           //!< HEADING: star count. LIST_ITEM: indent columns.
 	bool ordered = false;    //!< LIST_ITEM: `1.` / `1)` rather than `-` / `+`

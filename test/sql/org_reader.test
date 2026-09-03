@@ -226,3 +226,47 @@ query III
 SELECT kind, element_type, content FROM read_org_blocks_string('* Plain title');
 ----
 block	heading	Plain title
+
+# ---------------------------------------------------------------------------
+# AN UNRECOGNISED #+KEYWORD IS HELD RAW, not dropped.
+#
+# This reader returned early on anything that was not TITLE/AUTHOR/DATE, with the comment
+# "every other #+KEY: is an option, not document metadata". That is true and it was the
+# wrong conclusion: NOT BEING METADATA DOES NOT MAKE IT NOT CONTENT. #+CAPTION:,
+# #+ATTR_HTML: and every custom keyword a document carries were silently discarded.
+#
+# MEASURED: pandoc emits RawBlock ["org", "#+notarealkeyword: X"], so an unrecognised
+# keyword occupies a block position.
+#
+# Found by duck_block_utils, who TESTED a claim I had made -- that org keywords are never
+# in the block flow, unlike a YAML fence a reader lifts out. The claim was wrong, and this
+# defect was hiding behind it.
+query IIII
+SELECT kind, element_type, content, attributes['format'] FROM read_org_blocks_string(
+  E'#+title: T\n#+notarealkeyword: X\n\nBody.') WHERE element_type = 'raw';
+----
+block	raw	#+notarealkeyword: X	org
+
+# VERBATIM, not reconstructed. The scanner upper-cases `key`, so a raw block rebuilt from
+# it reports #+NOTAREALKEYWORD for a source that wrote #+notarealkeyword -- and content
+# that has been case-folded is not raw.
+query I
+SELECT content FROM read_org_blocks_string(E'#+MiXeDcAsE: v') WHERE element_type = 'raw';
+----
+#+MiXeDcAsE: v
+
+# THE FORMAT NAME IS AN ATTRIBUTE, NOT AN `encoding`. duck_block validates encoding
+# against a closed set with no `org` in it, so encoding='org' fails check-conformance --
+# the same trap the mediawiki reader hit. attributes['format'] is what the converter
+# already reads to build RawBlock [<format>, ...].
+query I
+SELECT encoding FROM read_org_blocks_string(E'#+notarealkeyword: X') WHERE element_type = 'raw';
+----
+text
+
+# The recognised three still become metadata rather than raw blocks.
+query I
+SELECT count(*) FROM read_org_blocks_string(E'#+title: T\n#+author: A\n#+date: D')
+WHERE element_type = 'raw';
+----
+0

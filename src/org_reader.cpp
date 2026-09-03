@@ -416,7 +416,32 @@ private:
 
 	void Keyword(const Line &line) {
 		if (line.key != "TITLE" && line.key != "AUTHOR" && line.key != "DATE") {
-			return; // every other #+KEY: is an option, not document metadata
+			// EVERY OTHER #+KEY: IS HELD RAW, not dropped.
+			//
+			// This returned early -- "every other #+KEY: is an option, not document metadata"
+			// -- which is true and was the wrong conclusion. Not being metadata does not make
+			// it not content. MEASURED: pandoc emits RawBlock ["org", "#+notarealkeyword: X"]
+			// for an unrecognised keyword, so it occupies a block position, and panduck was
+			// silently discarding #+CAPTION:, #+ATTR_HTML: and every custom keyword a
+			// document carries.
+			//
+			// Found by duck_block_utils, who tested a claim I made about org keywords never
+			// being in the block flow. The claim was wrong and this was hiding behind it.
+			OrgBlock b;
+			b.element_type = DuckBlockTypes::TYPE_RAW;
+			b.level = 1;
+			// VERBATIM, not reconstructed: the scanner upper-cases `key`, and a `raw` block
+			// rebuilt from it would report #+NOTAREALKEYWORD for a source that wrote
+			// #+notarealkeyword.
+			b.content = line.raw.empty() ? "#+" + line.key + ": " + line.text : line.raw;
+			// THE FORMAT NAME IS AN ATTRIBUTE, NOT AN `encoding`. duck_block validates
+			// encoding against a closed set -- text, json, yaml, html, xml, latex, markdown,
+			// toml -- with no `org` in it, so encoding='org' is not conformant. The converter
+			// already reads attributes['format'] to build RawBlock [<format>, ...], which is
+			// the same lesson the mediawiki reader learned.
+			b.attributes["format"] = "org";
+			blocks_.push_back(std::move(b));
+			return;
 		}
 		std::string key = line.key == "TITLE" ? "title" : line.key == "AUTHOR" ? "author" : "date";
 		auto it = meta_.find(key);
@@ -501,6 +526,9 @@ void BuildRows(const std::string &src, std::vector<OrgRow> &rows) {
 			row.encoding = block.encoding;
 		}
 		row.element_order = order++;
+		for (auto &kv : block.attributes) {
+			row.attributes[kv.first] = kv.second;
+		}
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}

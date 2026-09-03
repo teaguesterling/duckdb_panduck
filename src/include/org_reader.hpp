@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,9 @@ struct OrgBlock {
 	std::string language;  //!< code only
 	std::string encoding;  //!< table only: 'json'
 	std::string list_start, number_style, number_delim;
+	//! Free-form attributes -- `format` for a raw block, and whatever a later construct
+	//! needs. The named fields above predate this and are left alone.
+	std::map<std::string, std::string> attributes;
 	int heading_level = 0;
 	int level = 1;
 	std::vector<OrgInline> inlines;

@@ -30,7 +30,9 @@
 // later added ~88 lines of guidance without moving one name or value. A text diff screams
 // at that, gets muted, and then catches nothing on the day it matters.
 //
-// Copied from duck_block_utils main @ a91d00a, SPEC_VERSION 4.0. Being behind by commits
+// Copied from duck_block_utils main @ b3b1e26, SPEC_VERSION 6.3 (publicly, the
+// duck_blocks v1.1 spec -- the two are DELIBERATELY separate axes and
+// duck_block_spec_version() still reports the 6.x number). Being behind by commits
 // is not the same as being wrong -- what makes the copy correct is that check-vocabulary
 // reports it in sync, not that the sha is the newest.
 //

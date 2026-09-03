@@ -317,3 +317,21 @@ query I
 SELECT count(*) FROM read_docx_blocks('test/fixtures/rich.docx') WHERE element_type = 'note';
 ----
 1
+
+# ---------------------------------------------------------------------------
+# MALFORMED INPUT FAILS HONESTLY. Every other fixture is a well-formed document from a real
+# writer, so none of them exercised the error paths at all.
+#
+# A truncated file is not a ZIP, and the message names the READER -- a bare "not a zip"
+# from deep inside miniz tells a caller nothing about which of their files was bad.
+statement error
+SELECT count(*) FROM read_docx_blocks('test/fixtures/malformed/truncated.docx');
+----
+not a readable ZIP archive
+
+# A valid ZIP whose XML is broken is a DIFFERENT failure and says so, naming the part.
+# Reporting it as a ZIP problem would send someone looking in the wrong place.
+statement error
+SELECT count(*) FROM read_docx_blocks('test/fixtures/malformed/badxml.docx');
+----
+word/document.xml is not well-formed XML

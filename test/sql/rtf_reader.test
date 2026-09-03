@@ -199,3 +199,55 @@ SELECT count(*) FROM read_rtf_blocks('test/fixtures/rich.rtf')
 WHERE content SIMILAR TO '%[0-9a-f]{40}%';
 ----
 0
+
+# ---------------------------------------------------------------------------
+# MALFORMED INPUT DEGRADES RATHER THAN THROWING, which is this reader's documented
+# contract: "never throws on malformed input -- unbalanced groups and unknown control
+# words are tolerated". RTF is not a container, so a damaged file can still be partially
+# honest, and returning the text that WAS readable beats refusing the document.
+#
+# The other three office fixtures raise instead, because a broken ZIP cannot be partially
+# read. That difference is a property of the formats, not an inconsistency.
+query I
+SELECT count(*) > 0 FROM read_rtf_blocks('test/fixtures/malformed/unbalanced.rtf');
+----
+true
+
+# ---------------------------------------------------------------------------
+# ORDERED LISTS, resolved from {\*\listtable} through {\*\listoverridetable}.
+#
+# \levelnfc is the number format: 23 is a bullet, 255 is "no number", anything else numbers
+# the items. A {\list} group states its levels FIRST and its \listid LAST, so the scan
+# accumulates forward -- searching backward from the id associates the wrong levels.
+#
+# The scan reads the RAW SOURCE rather than walking the group tree, because both tables are
+# ignorable destinations this reader skips wholesale -- correctly, they are not content --
+# and threading definitions back out of a skipped group would mean un-skipping them.
+#
+# ordered_list.rtf is hand-written: pandoc's RTF writer emits NO list control words at all,
+# so this fixture cannot be generated the way the docx and odt ones are.
+query III
+SELECT element_type, level, attributes['list_type'] FROM read_rtf_blocks('test/fixtures/ordered_list.rtf')
+WHERE element_type = 'list' ORDER BY element_order;
+----
+list	1	ordered
+list	1	bullet
+
+# A bullet list following an ordered one at the SAME depth is a different list. Comparing
+# depth alone swallowed the second into the first -- the identical defect the generated
+# docx and odt fixtures found, and RTF had it too.
+query III
+SELECT element_type, level, content FROM read_rtf_blocks('test/fixtures/ordered_list.rtf')
+WHERE element_type = 'list_item' ORDER BY element_order;
+----
+list_item	2	first item
+list_item	2	second item
+list_item	2	a bullet
+
+# The LibreOffice fixture's list is genuinely bullet -- its \levelnfc is 23 -- so resolving
+# orderedness must not have flipped it.
+query I
+SELECT attributes['list_type'] FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
+WHERE element_type = 'list';
+----
+bullet

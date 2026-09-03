@@ -210,3 +210,10 @@ SELECT kind, element_type, content FROM read_odt_blocks('test/fixtures/rich.odt'
 WHERE element_type = 'note';
 ----
 inline	note	The footnote body.
+
+# ---------------------------------------------------------------------------
+# MALFORMED INPUT. A file that is not a ZIP at all fails with the reader's name in it.
+statement error
+SELECT count(*) FROM read_odt_blocks('test/fixtures/malformed/notzip.odt');
+----
+not a readable ZIP archive

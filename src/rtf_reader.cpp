@@ -105,6 +105,7 @@ struct GroupState {
 class RtfParser {
 public:
 	explicit RtfParser(const std::string &src) : src_(src) {
+		ScanListTable();
 	}
 
 	std::vector<RtfBlock> Parse() {
@@ -487,6 +488,76 @@ private:
 		return 0;
 	}
 
+	//! Resolve \lsN -> per-level orderedness from {\*\listtable} and {\*\listoverridetable}.
+	//!
+	//! A SCAN OF THE RAW SOURCE rather than a walk of the group tree, deliberately. Both are
+	//! ignorable destinations that this reader skips wholesale -- correctly, they are not
+	//! content -- and threading list definitions back out of a skipped group would mean
+	//! un-skipping them everywhere. The tables are self-delimiting and appear before the
+	//! body, so a targeted scan reads them without disturbing that.
+	//!
+	//! \levelnfc is the number format: 23 is a bullet, 255 is "no number", anything else is
+	//! a numbering scheme. So the test is against those two rather than for a list of
+	//! ordered spellings that would need extending.
+	void ScanListTable() {
+		// Walk the source once, tracking the levels seen since the last \listid. In RTF a
+		// {\list ...} group states its \levelnfc for each level FIRST and its \listid LAST,
+		// so a level belongs to the next \listid that appears -- which is why this
+		// accumulates forward rather than searching backward from the id.
+		std::vector<bool> pending_levels;
+		int pending_ls = -1;
+		bool in_override = false;
+
+		for (size_t i = 0; i + 1 < src_.size(); i++) {
+			if (src_[i] != '\\') {
+				continue;
+			}
+			size_t j = i + 1;
+			std::string word;
+			while (j < src_.size() && isalpha(static_cast<unsigned char>(src_[j]))) {
+				word += src_[j];
+				j++;
+			}
+			if (word.empty()) {
+				continue;
+			}
+			bool neg = j < src_.size() && src_[j] == '-';
+			if (neg) {
+				j++;
+			}
+			int value = 0;
+			bool has_value = false;
+			while (j < src_.size() && isdigit(static_cast<unsigned char>(src_[j]))) {
+				value = value * 10 + (src_[j] - '0');
+				j++;
+				has_value = true;
+			}
+			if (neg) {
+				value = -value;
+			}
+
+			if (word == "listoverridetable") {
+				in_override = true;
+			} else if (word == "levelnfc" && has_value && !in_override) {
+				// 23 is a bullet and 255 is "no number"; anything else numbers the items.
+				pending_levels.push_back(value != 23 && value != 255);
+			} else if (word == "listid" && has_value) {
+				if (in_override) {
+					pending_ls = value; // remembered until this override's \ls arrives
+				} else {
+					for (size_t lv = 0; lv < pending_levels.size(); lv++) {
+						list_ordered_[value][static_cast<int>(lv) + 1] = pending_levels[lv];
+					}
+					pending_levels.clear();
+				}
+			} else if (word == "ls" && has_value && in_override && pending_ls >= 0) {
+				ls_to_listid_[value] = pending_ls;
+				pending_ls = -1;
+			}
+			i = j - 1;
+		}
+	}
+
 	//! The accumulated runs as flat text, trimmed. Shared by the cell and paragraph paths so
 	//! a cell and a paragraph cannot disagree about what their text is.
 	std::string CurrentText() {
@@ -548,22 +619,33 @@ private:
 		int list_depth = (level > 0 || list_id_ == 0) ? 0 : list_level_ + 1;
 
 		// Open and close `list` containers around the run of items, matching every other
-		// reader's shape.
-		while (open_lists_ > list_depth) {
-			open_lists_--;
+		// reader's shape -- and closing on a TYPE change, not only a depth change.
+		bool want_ordered = false;
+		auto lit = ls_to_listid_.find(list_id_);
+		if (lit != ls_to_listid_.end()) {
+			auto tit = list_ordered_.find(lit->second);
+			if (tit != list_ordered_.end()) {
+				auto vit = tit->second.find(list_level_ + 1);
+				want_ordered = vit != tit->second.end() && vit->second;
+			}
 		}
-		while (open_lists_ < list_depth) {
+		if (list_depth > 0 && open_ordered_.size() == static_cast<size_t>(list_depth) &&
+		    open_ordered_.back() != want_ordered) {
+			open_ordered_.pop_back();
+		}
+		while (open_ordered_.size() > static_cast<size_t>(list_depth)) {
+			open_ordered_.pop_back();
+		}
+		while (open_ordered_.size() < static_cast<size_t>(list_depth)) {
 			RtfBlock l;
 			l.element_type = DuckBlockTypes::TYPE_LIST;
-			l.level = 2 * open_lists_ + 1;
-			// RTF's orderedness lives in the \listtable's level definitions, which this
-			// reader does not parse. BULLET is the safe default and the measured one: pandoc
-			// reports BulletList for the only fixture here that has a list, and a wrong
-			// `ordered=true` would be a claim the document does not support. Recorded as a
-			// gap rather than guessed.
-			l.list_type = DuckBlockTypes::LIST_TYPE_BULLET;
+			l.level = 2 * static_cast<int>(open_ordered_.size()) + 1;
+			// Orderedness comes from the \listtable, resolved through \listoverride. A list
+			// whose definition is absent stays BULLET rather than guessing -- a wrong
+			// `ordered=true` is a claim the document does not support.
+			l.list_type = want_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
 			blocks_.push_back(std::move(l));
-			open_lists_++;
+			open_ordered_.push_back(want_ordered);
 		}
 
 		if (level > 0) {
@@ -632,9 +714,14 @@ private:
 	std::vector<std::string> table_headers_;
 	std::vector<std::vector<std::string>> table_rows_;
 
+	std::map<int, std::map<int, bool>> list_ordered_; //!< listid -> level -> ordered
+	std::map<int, int> ls_to_listid_;                 //!< \lsN -> listid
+
 	int list_id_ = 0;    //!< \lsN -- 0 means this paragraph is not in a list
 	int list_level_ = 0; //!< \ilvlN -- depth within that list
-	int open_lists_ = 0; //!< how many `list` containers are currently open
+	//! The TYPE of each open list, not just how many. A bullet list after an ordered one
+	//! at the same depth is a different list; comparing depth alone swallows it.
+	std::vector<bool> open_ordered_;
 
 	std::map<int, std::string> styles_;
 	bool style_entry_open_ = false;

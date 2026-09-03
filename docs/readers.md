@@ -198,6 +198,10 @@ carries a `#fragment` that resolution would drop.
 levels below its parent, matching the DOCX, ODT and RTF readers on the same logical
 document).
 
+**Open, from the cross-reader audit:** emits a `plain` element that no other reader
+produces. Not yet established whether that is the EPUB source genuinely carrying something
+the others do not, or a mapping that should be `paragraph`.
+
 **Not yet read:** footnotes *as a distinct element* — the body text survives as ordinary
 blocks, so nothing is lost, but there is no `note` element marking it. `toc.ncx` /
 `nav.xhtml` metadata is also not read.
@@ -264,6 +268,10 @@ LaTeX fixture had a table, and `longtable` — which pandoc's LaTeX *writer* emi
 LaTeX table was silently dropped. `figure` and `table` were `DROPPED` whole, discarding
 the `\includegraphics` and the wrapped `tabular` inside them. A test had *pinned* the
 second defect by asserting that `figure*` produces zero blocks.
+
+**Open, from the cross-reader audit:** list items are interleaved with `paragraph` blocks
+where every other reader emits `list_item` directly. The text is all present and in order;
+the shape differs from the other nine readers on the same logical document.
 
 **Not yet read:** `\newcommand` expansion (a user macro is read as an unclaimed name —
 dropped, its argument left as text — never expanded against its definition).
@@ -404,6 +412,10 @@ rather than a statement about the format.
 
 **A leading space is not preformatted** — worth stating because MediaWiki's *is*, and these
 two readers sit next to each other.
+
+**Open, from the cross-reader audit:** no `blockquote` is produced for the same logical
+document that yields one in every other reader — `bq.` content arrives as `raw` instead.
+The words are present; the construct is not.
 
 ## `read_pandoc_blocks(path)` — every format pandoc reads
 

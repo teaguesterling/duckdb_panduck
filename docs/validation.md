@@ -179,6 +179,32 @@ rather than an ABI mismatch. See `test/wasm/README.md`.
 
 Three sibling extensions shipped this exact bug before panduck nearly did.
 
+## The audit, and why each round needed a different question
+
+The checks above guard what they were written to guard. They cannot tell you about a
+construct nobody thought to check. Five audit rounds each asked a question the previous
+one could not answer, and each found something:
+
+| Round | Question | Found |
+|---|---|---|
+| 1 | Does a construct the format plainly has come back **at all**? | LaTeX dropped every pandoc-written table (`longtable` unmapped) and every figure |
+| 2 | Same, for RTF | Nothing — but a coverage gap recorded as *unclosable* turned out not to be |
+| 3 | Same, for DOCX/ODT | `<w:hyperlink>` text deleted outright; then **seven more wrappers** with the same shape |
+| 4 | Which **words** does pandoc see that panduck does not? | RST table cells sliced at drifting offsets; textile `bc.` blocks truncated |
+| 5 | Do all readers agree on **one logical document**? | DOCX and ODT emitted the title and author **twice** |
+
+The progression is the point. Round 4's question is format-agnostic, so it scales where
+round 1's does not — but it detects only **absence**, and was structurally blind to round
+5's duplication. Round 5 needs no reference at all: render one document into nine formats,
+compare the block sequences, and where readers disagree at least one is wrong.
+
+Round 4 is automated as `make check-wordloss`. Round 5 is not yet: it needs a judgement
+about which divergences are the format genuinely differing.
+
+**Still open from round 5**, recorded rather than quietly dropped — see
+[Readers](readers.md): LaTeX interleaves `paragraph` between list items; textile produces
+no `blockquote`; EPUB emits a `plain` element no other reader does.
+
 ## A note on writing assertions
 
 Three failure modes surfaced building this, each one passing while the property it named

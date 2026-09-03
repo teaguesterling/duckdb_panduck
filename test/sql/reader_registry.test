@@ -166,11 +166,19 @@ heading	Heading Two
 
 # The dispatcher's schema is the canonical duck_block schema, so a row casts to duck_block
 # and `SELECT *` pass-through in the flat branches is safe.
-query I
-SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL;
+#
+# REPORTS THE OFFENDING ROWS RATHER THAN COUNTING THEM. This assertion was `count(*) = 0`,
+# and when it went red on one platform the failure said only "the count is not zero" -- not
+# which row, which kind, or which encoding. A count cannot describe what it rejected, so a
+# red result carried no diagnosis and could not be acted on without another CI round-trip.
+# Selecting the offending values costs nothing when the set is empty, which is the case
+# every check here is asserting.
+query III
+SELECT DISTINCT kind, element_type, coalesce(encoding, '<NULL>')
+FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL
+ORDER BY 1, 2, 3;
 ----
-0
 
 # An explicit format overrides extension sniffing.
 query I

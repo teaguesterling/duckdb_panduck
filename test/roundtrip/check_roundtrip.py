@@ -168,8 +168,8 @@ OFFICE_META = (
 EPUB_SECTION_DIV = (
     REFERENCE_WRONG,
     "panduck maps <section> to the `section` element_type; pandoc emits a generic Div. "
-    "MEASURED, and pandoc's own output settles it: for <section id=\"heading-one\" "
-    "class=\"level1\"> it emits Div with classes [\"section\", \"level1\"] -- it SAYS "
+    'MEASURED, and pandoc\'s own output settles it: for <section id="heading-one" '
+    'class="level1"> it emits Div with classes ["section", "level1"] -- it SAYS '
     "section, in a CSS class on a container, rather than in a type. duck_block declares "
     "`section` as an element_type with the HTML5 sectioning set as its role vocabulary "
     "exactly so a consumer does not have to parse class lists to find structure. Same "
@@ -181,7 +181,7 @@ EPUB_LO_CSS = (
     REFERENCE_WRONG,
     "panduck reports the run formatting; pandoc reports none. LibreOffice's EPUB export "
     "emits NO semantic markup -- no <h1>, no <ul>, no <strong> -- only "
-    "<p class=\"paraN\"><span class=\"spanN\"> with the meaning in a CSS file. pandoc does not "
+    '<p class="paraN"><span class="spanN"> with the meaning in a CSS file. pandoc does not '
     "resolve those classes, so its output is bare Spans and 'bold' comes back unmarked. "
     "panduck resolves .span2 { font-weight: bold } and reports bold, which is what the "
     "document says. Same posture as LibreOffice RTF and DOCX: being MORE faithful than the "
@@ -195,7 +195,7 @@ TEXTILE_ADJACENT_LISTS = (
     "a bullet list ADJACENT to an ordered one stays a list. MEASURED on `* bullet` followed "
     "by `# ordered` with no blank line, against python-textile 4.0.2 -- the format's "
     "reference implementation, installed for this -- which yields a list. pandoc yields "
-    "`Para [Str \"*\", Space, Str \"bullet\"]` and then an OrderedList: the bullet list is "
+    '`Para [Str "*", Space, Str "bullet"]` and then an OrderedList: the bullet list is '
     "GONE and its marker is left in the document as a literal asterisk.\n\n"
     "That is the leaked-as-prose failure the Org drawers and MediaWiki's <span> anchors each "
     "produced, and the third format in a row to produce it. panduck emits SIBLING lists "
@@ -209,7 +209,7 @@ TEXTILE_NOTEXTILE = (
     REFERENCE_WRONG,
     "`notextile.` means DO NOT PROCESS THIS, and pandoc processes it. MEASURED: "
     "`notextile. <b>raw</b>` gives pandoc a paragraph whose first word is the literal string "
-    "\"notextile.\", with the body parsed as textile regardless -- so it both advertises the "
+    '"notextile.", with the body parsed as textile regardless -- so it both advertises the '
     "marker to the reader and does the one thing the construct exists to prevent. "
     "python-textile strips the marker and passes the body through, which is what panduck "
     "does: `raw` with format='html'.",
@@ -236,7 +236,7 @@ MEDIAWIKI_BEHAVIOR_SWITCH = (
     "`__TOC__` is held RAW; pandoc leaks it into a paragraph as the literal string. "
     "MEASURED against MediaWiki's own parser: the switch is CONSUMED -- `__TOC__\\n\\nSome "
     "text.` renders as `<p>Some text.</p>` and the token appears nowhere. So pandoc's "
-    "`Str \"__TOC__\"` puts text in the document that no reader of the wiki would ever "
+    '`Str "__TOC__"` puts text in the document that no reader of the wiki would ever '
     "see.\n\n"
     "panduck emits `raw` with encoding='mediawiki' and source_type='behavior_switch'. Note "
     "this is a CLASSIFICATION divergence, not a retention one: both representations keep "
@@ -289,7 +289,11 @@ CASES = [
         "test/fixtures/libreoffice_outlinelvl.docx",
         "docx",
         "read_docx_blocks",
-        expect={"skeleton": DOCX_LO, "marked": DOCX_LO, "meta": OFFICE_META},  # text must AGREE
+        expect={
+            "skeleton": DOCX_LO,
+            "marked": DOCX_LO,
+            "meta": OFFICE_META,
+        },  # text must AGREE
         note="LibreOffice-generated DOCX: headings via w:outlineLvl",
     ),
     Case(
@@ -353,7 +357,11 @@ CASES = [
         # adornment first appeared, not by which character it is. A conventional document
         # cannot tell the right rule from the wrong one -- a reader hardcoding `= -> 1`
         # passes every fixture a person following convention would write.
-        expect={"text": RST_ADMONITION, "skeleton": RST_ADMONITION, "marked": RST_ADMONITION},
+        expect={
+            "text": RST_ADMONITION,
+            "skeleton": RST_ADMONITION,
+            "marked": RST_ADMONITION,
+        },
         note="hand-written RST: ~ before =, so the adornment ORDER decides the levels",
     ),
     Case(
@@ -363,7 +371,11 @@ CASES = [
         # pandoc's own writer NORMALISES adornments to = then -, so this fixture uses
         # different characters for the same levels as its handwritten twin. The pair is
         # what proves the rule is about order rather than about the character.
-        expect={"text": RST_ADMONITION, "skeleton": RST_ADMONITION, "marked": RST_ADMONITION},
+        expect={
+            "text": RST_ADMONITION,
+            "skeleton": RST_ADMONITION,
+            "marked": RST_ADMONITION,
+        },
         note="pandoc-generated RST: adornments normalised to = and -",
     ),
     Case(
@@ -478,10 +490,14 @@ CASES = [
         # Div around the second heading only (LATEX_HYPERTARGET_DIV). Both are declared
         # here since either one alone would leave the other an unexplained divergence.
         expect={
-            "skeleton": (REFERENCE_WRONG,
-                        LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1]),
-            "marked": (REFERENCE_WRONG,
-                      LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1]),
+            "skeleton": (
+                REFERENCE_WRONG,
+                LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1],
+            ),
+            "marked": (
+                REFERENCE_WRONG,
+                LATEX_LOOSE_LISTS[1] + " ALSO: " + LATEX_HYPERTARGET_DIV[1],
+            ),
         },
         note="pandoc-generated LaTeX: \\hypertarget headings, \\tightlist itemize",
     ),
@@ -497,8 +513,10 @@ def read_pandoc(path, fmt):
     if raw.returncode != 0:
         raise RuntimeError(f"pandoc failed on {path}:\n{raw.stderr}")
     doc = json.loads(raw.stdout)
-    return Doc(canonical.pandoc_blocks_to_canonical(doc["blocks"]),
-               canonical.pandoc_meta_to_flat(doc.get("meta") or {}))
+    return Doc(
+        canonical.pandoc_blocks_to_canonical(doc["blocks"]),
+        canonical.pandoc_meta_to_flat(doc.get("meta") or {}),
+    )
 
 
 def read_panduck(path, reader, duckdb_bin, extension=None):
@@ -542,13 +560,15 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
         if r.get("key") is not None:
             attrs["key"] = r["key"]
         r["attributes"] = attrs
-    return Doc(canonical.duckblocks_to_canonical(rows),
-               canonical.meta_from_duckblocks(rows))
+    return Doc(
+        canonical.duckblocks_to_canonical(rows), canonical.meta_from_duckblocks(rows)
+    )
 
 
 class Doc:
     """A document's two axes. Metadata is not body content and pandoc does not carry it in
-    `blocks`, so folding the two together would compare each against the other's absence."""
+    `blocks`, so folding the two together would compare each against the other's absence.
+    """
 
     def __init__(self, blocks, meta):
         self.blocks = blocks
@@ -588,21 +608,29 @@ def render_diff(level, got, ref, limit=6):
             lines.append(f"          pandoc ={r!r}")
             shown += 1
             if shown >= limit:
-                lines.append(f"      ... ({max(len(got), len(ref)) - i - 1} more positions)")
+                lines.append(
+                    f"      ... ({max(len(got), len(ref)) - i - 1} more positions)"
+                )
                 break
     return lines
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--report", action="store_true", help="show divergences without asserting")
+    ap.add_argument(
+        "--report", action="store_true", help="show divergences without asserting"
+    )
     ap.add_argument(
         "--require",
         action="store_true",
         help="treat a missing prerequisite as a failure instead of a skip. CI passes this: "
         "a job that silently skips reports coverage it is not providing.",
     )
-    ap.add_argument("--duckdb", default=os.environ.get("PANDUCK_DUCKDB"), help="duckdb binary to use")
+    ap.add_argument(
+        "--duckdb",
+        default=os.environ.get("PANDUCK_DUCKDB"),
+        help="duckdb binary to use",
+    )
     ap.add_argument(
         "--extension",
         default=os.environ.get("PANDUCK_EXTENSION"),
@@ -624,13 +652,20 @@ def main():
     if not shutil.which("pandoc"):
         return missing("pandoc not on PATH; cannot run differential validation")
     if not (duckdb_bin.exists() or shutil.which(str(duckdb_bin))):
-        return missing(f"duckdb binary not found at {duckdb_bin}; run `make release` first")
+        return missing(
+            f"duckdb binary not found at {duckdb_bin}; run `make release` first"
+        )
     if extension and not extension.exists():
         return missing(f"extension not found at {extension}")
 
-    version = subprocess.run(["pandoc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
+    version = subprocess.run(
+        ["pandoc", "--version"], capture_output=True, text=True
+    ).stdout.splitlines()[0]
     print(f"Differential validation of panduck's readers against {version}")
-    print(f"  duckdb: {duckdb_bin}" + (f"  (LOAD {extension.name})" if extension else "  (linked in)"))
+    print(
+        f"  duckdb: {duckdb_bin}"
+        + (f"  (LOAD {extension.name})" if extension else "  (linked in)")
+    )
     print()
 
     failures = 0
@@ -673,7 +708,9 @@ def main():
                     failures += 1
                 elif agree:
                     # The ratchet: a declared divergence that now agrees is stale.
-                    print(f"    {level:9s} FAIL -- declared '{verdict}' but they now AGREE.")
+                    print(
+                        f"    {level:9s} FAIL -- declared '{verdict}' but they now AGREE."
+                    )
                     print(f"              Promote this level to pass. ({why})")
                     failures += 1
                 else:

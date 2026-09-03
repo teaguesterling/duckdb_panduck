@@ -55,6 +55,7 @@ IT ALSO EXPIRES. The window opened the moment there were two copies and closes w
 deletes upstream's. It is worth running now precisely because a migration between the
 copies is being contemplated, and a migration is when a divergence gets adopted.
 """
+
 import json
 import re
 import sys
@@ -67,15 +68,16 @@ UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
 # The {ref} slot is resolved to a SHA before fetching. A branch url is served from a cache
 # that lags -- check_duck_block_vocabulary.py observed it hand back a superseded file --
 # and a stale fetch here would report agreement against content upstream already replaced.
-UPSTREAM_RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + SRC_REL
+UPSTREAM_RAW = (
+    "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + SRC_REL
+)
 
 # Divergences that are DELIBERATE, recorded with reasons. An allowlist without reasons
 # decays into a mute button, and this one gates a precondition for handoff step 4.
 EXPECTED = {
     "BlockTypes": "panduck renames BlockTypes:: to DuckBlockTypes:: throughout -- 264 "
-                  "sites, mechanical, and the reason a raw text diff of these files is "
-                  "useless for this purpose",
-
+    "sites, mechanical, and the reason a raw text diff of these files is "
+    "useless for this purpose",
     # Flagged by this check on its first run here, then INVESTIGATED rather than muted --
     # which is the workflow it is for.
     #
@@ -121,17 +123,24 @@ def guard_calls(code: str) -> int:
 
 def defined_functions(code: str) -> set:
     """Names of functions defined in the file, as a coarse structural fingerprint."""
-    return set(re.findall(r"^(?:static\s+)?[\w:<>,\s*&]+?\b(\w+)\s*\([^;]*?\)\s*\{",
-                          code, flags=re.M))
+    return set(
+        re.findall(
+            r"^(?:static\s+)?[\w:<>,\s*&]+?\b(\w+)\s*\([^;]*?\)\s*\{", code, flags=re.M
+        )
+    )
 
 
 def fetch_upstream() -> tuple:
     """Return (source_text, sha) or raise urllib.error.URLError."""
-    req = urllib.request.Request(UPSTREAM_API, headers={"User-Agent": "panduck-divergence-check"})
+    req = urllib.request.Request(
+        UPSTREAM_API, headers={"User-Agent": "panduck-divergence-check"}
+    )
     with urllib.request.urlopen(req, timeout=20) as resp:
         sha = json.load(resp)["sha"]
     url = UPSTREAM_RAW.format(ref=sha)
-    req = urllib.request.Request(url, headers={"User-Agent": "panduck-divergence-check"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "panduck-divergence-check"}
+    )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8"), sha
 
@@ -149,14 +158,18 @@ def compare(local: str, upstream: str) -> list:
 
     l_guard, u_guard = guard_calls(lc), guard_calls(uc)
     if l_guard != u_guard:
-        out.append(f"CheckPandocDepth call sites differ: here={l_guard} upstream={u_guard} "
-                   f"-- a recursion bound may have been lost or added")
+        out.append(
+            f"CheckPandocDepth call sites differ: here={l_guard} upstream={u_guard} "
+            f"-- a recursion bound may have been lost or added"
+        )
 
     l_fns, u_fns = defined_functions(lc), defined_functions(uc)
     missing = sorted(u_fns - l_fns)
     if missing:
-        out.append(f"functions defined upstream but not here: {', '.join(missing[:8])}"
-                   + (f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""))
+        out.append(
+            f"functions defined upstream but not here: {', '.join(missing[:8])}"
+            + (f" (+{len(missing) - 8} more)" if len(missing) > 8 else "")
+        )
     return out
 
 
@@ -171,8 +184,10 @@ def self_test() -> list:
     base = 'void f() { CheckPandocDepth(d); if (strcmp(t, "Para") == 0) {} }\n'
 
     # The ACTUAL 2026-09-02 defect: a guard call removed.
-    if not any("CheckPandocDepth call sites differ" in m
-               for m in compare(base.replace("CheckPandocDepth(d); ", ""), base)):
+    if not any(
+        "CheckPandocDepth call sites differ" in m
+        for m in compare(base.replace("CheckPandocDepth(d); ", ""), base)
+    ):
         failures.append("SELF-TEST: a missing guard call was not detected")
 
     # A constructor handled on one side only.
@@ -181,15 +196,21 @@ def self_test() -> list:
         failures.append("SELF-TEST: a diverging constructor set was not detected")
 
     # A whole function present on one side only.
-    if not any("functions defined upstream" in m
-               for m in compare(base, base + "void g() { }\n")):
+    if not any(
+        "functions defined upstream" in m
+        for m in compare(base, base + "void g() { }\n")
+    ):
         failures.append("SELF-TEST: a function missing on this side was not detected")
 
     # THE COMMENT TRAP, which is the one a naive implementation fails. Prose mentioning the
     # guard must not count as a call -- panduck's file now discusses CheckPandocDepth twice.
-    prose = base.replace("void f()", "// CheckPandocDepth and CheckPandocDepth again\nvoid f()")
+    prose = base.replace(
+        "void f()", "// CheckPandocDepth and CheckPandocDepth again\nvoid f()"
+    )
     if compare(prose, base):
-        failures.append("SELF-TEST: a comment mentioning CheckPandocDepth was counted as a call")
+        failures.append(
+            "SELF-TEST: a comment mentioning CheckPandocDepth was counted as a call"
+        )
 
     # A CONFORMING control: identical files must report nothing.
     if compare(base, base):
@@ -210,7 +231,9 @@ def main() -> int:
     if failures:
         for f in failures:
             print(f"  {f}")
-        print("\nFAILED: the checker cannot detect a divergence, so its verdict means nothing.")
+        print(
+            "\nFAILED: the checker cannot detect a divergence, so its verdict means nothing."
+        )
         return 1
 
     try:
@@ -223,12 +246,17 @@ def main() -> int:
         return 1 if require else 0
 
     print(f"  upstream {UPSTREAM_REPO} @ {sha[:10]}")
-    divergences = [d for d in compare(local, upstream)
-                   if not any(k in d for k in EXPECTED)]
+    divergences = [
+        d for d in compare(local, upstream) if not any(k in d for k in EXPECTED)
+    ]
     if not divergences:
-        print("  no divergence in handled constructors, guard calls, or defined functions.")
+        print(
+            "  no divergence in handled constructors, guard calls, or defined functions."
+        )
         print()
-        print("  A SIGNAL, NOT A DIAGNOSIS: this compares three coarse invariants. It does")
+        print(
+            "  A SIGNAL, NOT A DIAGNOSIS: this compares three coarse invariants. It does"
+        )
         print("  not establish that the two copies behave identically.")
         return 0
 
@@ -236,8 +264,12 @@ def main() -> int:
         print(f"  DIVERGENCE: {d}")
     print()
     print("These are SIGNALS TO INVESTIGATE, not diagnoses. Read the diff:")
-    print(f"  git show {sha}:{SRC_REL} > /tmp/upstream.cpp && diff /tmp/upstream.cpp {SRC_REL}")
-    print("A divergence may be deliberate -- if so, record it in EXPECTED with its reason.")
+    print(
+        f"  git show {sha}:{SRC_REL} > /tmp/upstream.cpp && diff /tmp/upstream.cpp {SRC_REL}"
+    )
+    print(
+        "A divergence may be deliberate -- if so, record it in EXPECTED with its reason."
+    )
     return 1
 
 

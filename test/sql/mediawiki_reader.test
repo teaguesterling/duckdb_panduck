@@ -207,11 +207,13 @@ code	print(1)	python
 # generated content exactly as __TOC__ is, and treating it as a behavior switch would be
 # defensible -- but pandoc emits RawBlock ["html", ...] for it as a CHOICE, and this reader
 # only diverges where pandoc leaked non-prose into prose. A choice is not a leak.
-query III
-SELECT element_type, encoding, attributes['source_type'] FROM read_mediawiki_blocks_string(
-  E'<references/>');
+# encoding is `text` even here, where `html` IS a declared encoding -- the format lives in
+# attributes['format'] for every raw block without exception.
+query IIII
+SELECT element_type, encoding, attributes['format'], attributes['source_type']
+FROM read_mediawiki_blocks_string(E'<references/>');
 ----
-raw	html	references
+raw	text	html	references
 
 # ---------------------------------------------------------------------------
 # A FILE LINK becomes figure > caption + image, and `thumb` is a display option rather than
@@ -265,7 +267,7 @@ paragraph
 # only because it stands alone on a line, so adding it to the block-element list would be
 # the wrong fix.
 query III
-SELECT element_type, content, encoding FROM read_mediawiki_blocks_string(
+SELECT element_type, content, attributes['format'] FROM read_mediawiki_blocks_string(
   E'<span id="introduction"></span>');
 ----
 raw	<span id="introduction"></span>	html

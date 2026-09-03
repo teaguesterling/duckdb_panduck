@@ -28,6 +28,7 @@ success by checking nothing, which is how the conformance script once returned S
 exit 0 while every fixture errored. This one proves it can fail before it is trusted to
 pass.
 """
+
 import json
 import shutil
 import subprocess
@@ -42,7 +43,18 @@ EXT = REPO / "build" / "release" / "extension" / "panduck" / "panduck.duckdb_ext
 
 # Extensions read_panduck_doc routes to a block reader. Data formats and the .zim corpus
 # refusal are deliberately absent -- neither has blocks to write back.
-DOC_SUFFIXES = (".org", ".rst", ".tex", ".docx", ".epub", ".ipynb", ".odt", ".rtf", ".wiki", ".textile")
+DOC_SUFFIXES = (
+    ".org",
+    ".rst",
+    ".tex",
+    ".docx",
+    ".epub",
+    ".ipynb",
+    ".odt",
+    ".rtf",
+    ".wiki",
+    ".textile",
+)
 
 WRITE_SQL = """
 SELECT panduck_write_pandoc_ast('{out}', list(struct_pack(
@@ -66,24 +78,60 @@ FROM {source};
 # dropped the construct would report `ok` here forever -- a check on the result that
 # cannot see an error in the shape.
 CONSTRUCTS = [
-    ("org table", r"read_org_blocks_string(E'| a | b |\n|---+---|\n| 1 | 2 |')", "table"),
-    ("rst grid table",
-     r"read_rst_blocks_string(E'+---+---+\n| a | b |\n+===+===+\n| 1 | 2 |\n+---+---+')", "table"),
-    ("rst simple table",
-     r"read_rst_blocks_string(E'===  ===\n a    b\n===  ===\n 1    2\n===  ===')", "table"),
-    ("latex tabular",
-     r"read_latex_blocks_string(E'\\begin{tabular}{ll}\na & b \\\\\n1 & 2 \\\\\n\\end{tabular}')", "table"),
+    (
+        "org table",
+        r"read_org_blocks_string(E'| a | b |\n|---+---|\n| 1 | 2 |')",
+        "table",
+    ),
+    (
+        "rst grid table",
+        r"read_rst_blocks_string(E'+---+---+\n| a | b |\n+===+===+\n| 1 | 2 |\n+---+---+')",
+        "table",
+    ),
+    (
+        "rst simple table",
+        r"read_rst_blocks_string(E'===  ===\n a    b\n===  ===\n 1    2\n===  ===')",
+        "table",
+    ),
+    (
+        "latex tabular",
+        r"read_latex_blocks_string(E'\\begin{tabular}{ll}\na & b \\\\\n1 & 2 \\\\\n\\end{tabular}')",
+        "table",
+    ),
     ("org definition list", r"read_org_blocks_string('- term :: definition')", "list"),
     ("rst field list", r"read_rst_blocks_string(E':Author: A. Writer')", "list"),
     ("org metadata", r"read_org_blocks_string(E'#+TITLE: T\n\nBody.')", "inlines"),
-    ("mediawiki table",
-     r"read_mediawiki_blocks_string(E'{|\n! H !! I\n|-\n| a || b\n|}')", "table"),
+    (
+        "mediawiki table",
+        r"read_mediawiki_blocks_string(E'{|\n! H !! I\n|-\n| a || b\n|}')",
+        "table",
+    ),
     ("mediawiki template", r"read_mediawiki_blocks_string(E'{{Infobox|a=1}}')", "raw"),
-    ("mediawiki definition list", r"read_mediawiki_blocks_string(E'; term\n: definition')", "list"),
-    ("mediawiki figure", r"read_mediawiki_blocks_string(E'[[File:p.png|thumb|cap]]')", "figure"),
-    ("textile table", r"read_textile_blocks_string(E'|_. H |_. I |\n| a | b |')", "table"),
-    ("textile definition list", r"read_textile_blocks_string(E'- term := definition')", "list"),
-    ("textile notextile raw", r"read_textile_blocks_string(E'notextile. <b>x</b>')", "raw"),
+    (
+        "mediawiki definition list",
+        r"read_mediawiki_blocks_string(E'; term\n: definition')",
+        "list",
+    ),
+    (
+        "mediawiki figure",
+        r"read_mediawiki_blocks_string(E'[[File:p.png|thumb|cap]]')",
+        "figure",
+    ),
+    (
+        "textile table",
+        r"read_textile_blocks_string(E'|_. H |_. I |\n| a | b |')",
+        "table",
+    ),
+    (
+        "textile definition list",
+        r"read_textile_blocks_string(E'- term := definition')",
+        "list",
+    ),
+    (
+        "textile notextile raw",
+        r"read_textile_blocks_string(E'notextile. <b>x</b>')",
+        "raw",
+    ),
 ]
 
 COUNT_SQL = "SELECT count(*) FROM {source} WHERE element_type = '{element_type}';"
@@ -92,9 +140,16 @@ COUNT_SQL = "SELECT count(*) FROM {source} WHERE element_type = '{element_type}'
 def duckdb_write(source: str, out: Path) -> str | None:
     """Write a source expression's blocks to out as a pandoc AST. Error string, or None."""
     proc = subprocess.run(
-        [str(DUCKDB), "-unsigned", "-c", f"LOAD '{EXT}';", "-c",
-         WRITE_SQL.format(out=out, source=source)],
-        capture_output=True, text=True,
+        [
+            str(DUCKDB),
+            "-unsigned",
+            "-c",
+            f"LOAD '{EXT}';",
+            "-c",
+            WRITE_SQL.format(out=out, source=source),
+        ],
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         return f"panduck failed to read/write: {proc.stderr.strip()[:200]}"
@@ -106,9 +161,18 @@ def duckdb_write(source: str, out: Path) -> str | None:
 def element_count(source: str, element_type: str) -> int:
     """How many blocks of element_type the source produced. -1 if the query failed."""
     proc = subprocess.run(
-        [str(DUCKDB), "-unsigned", "-noheader", "-list", "-c", f"LOAD '{EXT}';", "-c",
-         COUNT_SQL.format(source=source, element_type=element_type)],
-        capture_output=True, text=True,
+        [
+            str(DUCKDB),
+            "-unsigned",
+            "-noheader",
+            "-list",
+            "-c",
+            f"LOAD '{EXT}';",
+            "-c",
+            COUNT_SQL.format(source=source, element_type=element_type),
+        ],
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
         return -1
@@ -122,10 +186,15 @@ def pandoc_accepts(path: Path) -> str | None:
     """Feed the AST to a real pandoc. Returns pandoc's complaint, or None if accepted."""
     proc = subprocess.run(
         ["pandoc", "-f", "json", "-t", "plain", str(path)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode != 0:
-        return proc.stderr.strip().splitlines()[0][:200] if proc.stderr.strip() else "pandoc rejected it"
+        return (
+            proc.stderr.strip().splitlines()[0][:200]
+            if proc.stderr.strip()
+            else "pandoc rejected it"
+        )
     return None
 
 
@@ -140,7 +209,8 @@ def self_test(tmp: Path) -> list[str]:
     cases = {
         # THE ACTUAL DEFECT this check was written for.
         "native table object as Table's c": (
-            '{%s,"meta":{},"blocks":[{"t":"Table","c":{"headers":["A"],"rows":[["x"]]}}]}' % api
+            '{%s,"meta":{},"blocks":[{"t":"Table","c":{"headers":["A"],"rows":[["x"]]}}]}'
+            % api
         ),
         # The version skew that made duck_block_utils v1.4.3's exports unreadable.
         "stale api version": (
@@ -160,13 +230,19 @@ def self_test(tmp: Path) -> list[str]:
         p = tmp / "selftest.json"
         p.write_text(body)
         if pandoc_accepts(p) is None:
-            failures.append(f"SELF-TEST: pandoc accepted a document it must reject -- {name}")
+            failures.append(
+                f"SELF-TEST: pandoc accepted a document it must reject -- {name}"
+            )
 
     # ...and a CONFORMING control, so the checker is not merely rejecting everything.
     p = tmp / "selftest_ok.json"
-    p.write_text('{%s,"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"ok"}]}]}' % api)
+    p.write_text(
+        '{%s,"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"ok"}]}]}' % api
+    )
     if pandoc_accepts(p) is not None:
-        failures.append("SELF-TEST: pandoc rejected a conforming document -- the check is broken")
+        failures.append(
+            "SELF-TEST: pandoc rejected a conforming document -- the check is broken"
+        )
     return failures
 
 
@@ -194,10 +270,14 @@ def main() -> int:
         if failures:
             for f in failures:
                 print(f"  {f}")
-            print("\nFAILED: the checker cannot detect a bad AST, so its verdict means nothing.")
+            print(
+                "\nFAILED: the checker cannot detect a bad AST, so its verdict means nothing."
+            )
             return 1
 
-        fixtures = sorted(p for p in FIXTURES.iterdir() if p.suffix.lower() in DOC_SUFFIXES)
+        fixtures = sorted(
+            p for p in FIXTURES.iterdir() if p.suffix.lower() in DOC_SUFFIXES
+        )
         if not fixtures:
             # Decided BEFORE the nothing-to-do path: zero fixtures is a broken checkout, not
             # a pass. The conformance script shipped this bug once already.
@@ -226,8 +306,10 @@ def main() -> int:
                 # The construct did not survive the READ, so writing it back proves nothing.
                 # This arm exists precisely to stop a silent drop from reading as success.
                 bad += 1
-                print(f"  NOT PRODUCED  {name}: reader emitted no '{element_type}' block "
-                      f"({'query failed' if n < 0 else 'count 0'})")
+                print(
+                    f"  NOT PRODUCED  {name}: reader emitted no '{element_type}' block "
+                    f"({'query failed' if n < 0 else 'count 0'})"
+                )
                 continue
             err = duckdb_write(source, out) or pandoc_accepts(out)
             if err:
@@ -239,10 +321,14 @@ def main() -> int:
         print()
         total = len(fixtures) + len(CONSTRUCTS)
         if bad:
-            print(f"FAILED: {bad} of {total} cases do not write back as valid pandoc JSON.")
+            print(
+                f"FAILED: {bad} of {total} cases do not write back as valid pandoc JSON."
+            )
             return 1
-        print(f"All {len(fixtures)} fixtures and {len(CONSTRUCTS)} constructs write back as "
-              f"pandoc JSON a real pandoc accepts.")
+        print(
+            f"All {len(fixtures)} fixtures and {len(CONSTRUCTS)} constructs write back as "
+            f"pandoc JSON a real pandoc accepts."
+        )
         return 0
 
 

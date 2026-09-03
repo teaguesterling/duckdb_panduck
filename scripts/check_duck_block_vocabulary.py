@@ -69,6 +69,7 @@ Usage:
     python3 scripts/check_duck_block_vocabulary.py --strict   # offline is a failure
     python3 scripts/check_duck_block_vocabulary.py --self-test
 """
+
 import argparse
 import os
 import re
@@ -87,74 +88,77 @@ UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
 # main at 26bfe05 with SPEC_VERSION 2.0 while the branch url was still serving 1.2.
 # Resolving main to a sha first and fetching THAT is immune -- a sha url is immutable,
 # so it is cached correctly by construction.
-UPSTREAM_RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + HEADER_REL
+UPSTREAM_RAW = (
+    "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + HEADER_REL
+)
 
 # Vendored first: that is panduck's arrangement. The submodule paths stay as
 # fallbacks so this script is not the thing that breaks if that is revisited.
 LOCAL_CANDIDATES = [
-    HEADER_REL,                                     # vendored (panduck today)
-    "duck_block_utils/" + HEADER_REL,               # submodule, as panduck had it
-    "third_party/duck_block_utils/" + HEADER_REL,   # submodule, markdown's layout
+    HEADER_REL,  # vendored (panduck today)
+    "duck_block_utils/" + HEADER_REL,  # submodule, as panduck had it
+    "third_party/duck_block_utils/" + HEADER_REL,  # submodule, markdown's layout
 ]
 
 CONST_RE = re.compile(
-    r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;')
+    r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;'
+)
 
 # Vocabulary panduck deliberately does not branch on. Recorded WITH REASONS so an
 # intentional gap and an unexplained one never look the same -- an allowlist
 # without reasons decays into a mute button.
 INTENTIONAL_GAPS = {
     "TYPE_GENERIC": "no reader emits it: panduck's readers map a closed set of "
-                    "source constructs, and an unrecognised one is dropped rather "
-                    "than wrapped. Emitting `generic` with children is the shape "
-                    "that silently dropped source_type in two sibling extensions, "
-                    "so adopting it needs a deliberate decision, not a fallthrough",
+    "source constructs, and an unrecognised one is dropped rather "
+    "than wrapped. Emitting `generic` with children is the shape "
+    "that silently dropped source_type in two sibling extensions, "
+    "so adopting it needs a deliberate decision, not a fallthrough",
     "INLINE_GENERIC": "same as TYPE_GENERIC, inline side",
     "KIND_VALUE": "panduck reads documents into blocks and inlines; it never "
-                  "produces the value kind, which belongs to metadata encoding",
+    "produces the value kind, which belongs to metadata encoding",
     "VALUE_STRING": "value kind unused -- see KIND_VALUE",
     "VALUE_BOOL": "value kind unused -- see KIND_VALUE",
     "VALUE_LIST": "value kind unused -- see KIND_VALUE. NOTE: this scan cannot actually "
-                  "verify that -- 'list' also collides with TYPE_LIST's own value, so the "
-                  "GAPS scan would report this as 'branched on' even if the reason above "
-                  "stopped being true. Documented, not fixed -- see the docstring's "
-                  "GAPS BLIND SPOT section",
+    "verify that -- 'list' also collides with TYPE_LIST's own value, so the "
+    "GAPS scan would report this as 'branched on' even if the reason above "
+    "stopped being true. Documented, not fixed -- see the docstring's "
+    "GAPS BLIND SPOT section",
     "VALUE_MAP": "value kind unused -- see KIND_VALUE",
     "VALUE_BLOCKS": "value kind unused -- see KIND_VALUE",
     "VALUE_INLINES": "value kind unused -- see KIND_VALUE",
     "VALUE_VERSION": "value kind unused -- see KIND_VALUE",
     "TYPE_METADATA": "no reader extracts document metadata yet; docx/odt/epub all have it "
-                     "available and none read it. NOT A NEUTRAL GAP -- this is a DISCARD. "
-                     "Every document's title, author and date is dropped, and LaTeX drops "
-                     "\\title/\\author/\\maketitle explicitly. A leak into the body would "
-                     "be visible and correctable; a discard is unrecoverable and looks like "
-                     "a document that never had a title. Filed behind fidelity work for a "
-                     "day, which was too generous -- by this project's own gap-versus-"
-                     "discard rule it is on the wrong side. Closing it needs the `value` "
-                     "kind as well as this type",
+    "available and none read it. NOT A NEUTRAL GAP -- this is a DISCARD. "
+    "Every document's title, author and date is dropped, and LaTeX drops "
+    "\\title/\\author/\\maketitle explicitly. A leak into the body would "
+    "be visible and correctable; a discard is unrecoverable and looks like "
+    "a document that never had a title. Filed behind fidelity work for a "
+    "day, which was too generous -- by this project's own gap-versus-"
+    "discard rule it is on the wrong side. Closing it needs the `value` "
+    "kind as well as this type",
     "TYPE_PAGE": "IMPLEMENTED 2026-09-01 for EPUB -- this entry now records what is still "
-                 "missing rather than a gap. <span epub:type=\"pagebreak\" title=\"42\"/> "
-                 "becomes page_break with attributes['page_number'], which is EPUB 3's "
-                 "print-equivalent pagination and what citation workflows need. STILL "
-                 "ABSENT: docx section breaks and odt soft page breaks, both of which are "
-                 "layout-time in those formats rather than authored markers, so whether "
-                 "they are the same construct is a real question and not an oversight. The "
-                 "earlier reason here was WRONG, not merely stale: it said no panduck "
-                 "source exposes page boundaries because epub paginates by spine document "
-                 "-- spine items are chapter boundaries and correctly are not pages, while "
-                 "the construct that IS a page went unread. NOTE: 'page_break' also "
-                 "collides with a provenance comment in duck_block_types.hpp, so the GAPS "
-                 "scan cannot verify this reason either -- see the docstring's GAPS BLIND "
-                 "SPOT section",
+    'missing rather than a gap. <span epub:type="pagebreak" title="42"/> '
+    "becomes page_break with attributes['page_number'], which is EPUB 3's "
+    "print-equivalent pagination and what citation workflows need. STILL "
+    "ABSENT: docx section breaks and odt soft page breaks, both of which are "
+    "layout-time in those formats rather than authored markers, so whether "
+    "they are the same construct is a real question and not an oversight. The "
+    "earlier reason here was WRONG, not merely stale: it said no panduck "
+    "source exposes page boundaries because epub paginates by spine document "
+    "-- spine items are chapter boundaries and correctly are not pages, while "
+    "the construct that IS a page went unread. NOTE: 'page_break' also "
+    "collides with a provenance comment in duck_block_types.hpp, so the GAPS "
+    "scan cannot verify this reason either -- see the docstring's GAPS BLIND "
+    "SPOT section",
     "TYPE_DEFLIST": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
-                    "no code path, currently dropped",
+    "no code path, currently dropped",
     "TYPE_LINEBLOCK": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
-                      "no code path, currently dropped",
+    "no code path, currently dropped",
     "TYPE_FIGURE": "pandoc_ast_map records this STATUS_PLANNED -- pandoc 3.0+, "
-                   "no code path, currently dropped. NOTE: 'figure' also collides with "
-                   "the LaTeX environment NAME in latex_macros.cpp, so the GAPS scan "
-                   "cannot verify this reason either -- see the docstring's GAPS BLIND "
-                   "SPOT section",
+    "no code path, currently dropped. NOTE: 'figure' also collides with "
+    "the LaTeX environment NAME in latex_macros.cpp, so the GAPS scan "
+    "cannot verify this reason either -- see the docstring's GAPS BLIND "
+    "SPOT section",
 }
 
 # Files whose contents count as "panduck branches on this".
@@ -182,10 +186,14 @@ def read_upstream_git(repo, ref):
     try:
         return subprocess.check_output(
             ["git", "-C", repo, "show", f"{ref}:{HEADER_REL}"],
-            stderr=subprocess.PIPE, text=True)
+            stderr=subprocess.PIPE,
+            text=True,
+        )
     except subprocess.CalledProcessError as exc:
-        sys.exit(f"error: cannot read {HEADER_REL} from {repo}@{ref}\n"
-                 f"{exc.stderr.strip()}")
+        sys.exit(
+            f"error: cannot read {HEADER_REL} from {repo}@{ref}\n"
+            f"{exc.stderr.strip()}"
+        )
 
 
 def _get(url, timeout):
@@ -219,12 +227,14 @@ def spec_compatible(local_v, upstream_v):
     Upstream records the mis-numbering rather than quietly renumbering, which is the
     only reason this is knowable at all.
     """
+
     def parse(v):
         try:
             major, _, minor = str(v).partition(".")
             return int(major), int(minor or 0)
         except (TypeError, ValueError):
             return None
+
     lo, up = parse(local_v), parse(upstream_v)
     if lo is None or up is None:
         return False  # unparseable: refuse to call it compatible
@@ -242,17 +252,34 @@ def verdict(breaking, added, verified):
     how the stale-cache bug survived its first hour.
     """
     if breaking:
-        return 1, "FAILED", ("vocabulary drift is breaking. Re-sync the copy and "
-                             "update the references.")
+        return (
+            1,
+            "FAILED",
+            (
+                "vocabulary drift is breaking. Re-sync the copy and "
+                "update the references."
+            ),
+        )
     if not verified:
-        return 0, "UNVERIFIED", (
-            "compared against a branch url that may be served from a stale cache.\n"
-            "         No difference was seen, but the copy was NOT dated -- this is "
-            "not a clean\n         bill of health. Re-run with the API reachable, or "
-            "--upstream <clone>.")
+        return (
+            0,
+            "UNVERIFIED",
+            (
+                "compared against a branch url that may be served from a stale cache.\n"
+                "         No difference was seen, but the copy was NOT dated -- this is "
+                "not a clean\n         bill of health. Re-run with the API reachable, or "
+                "--upstream <clone>."
+            ),
+        )
     if added:
-        return 0, "OK with news", ("upstream added vocabulary. Re-sync and review "
-                                   "whether panduck should handle it.")
+        return (
+            0,
+            "OK with news",
+            (
+                "upstream added vocabulary. Re-sync and review "
+                "whether panduck should handle it."
+            ),
+        )
     return 0, "OK", ""
 
 
@@ -296,6 +323,7 @@ def branched_on(root):
     type and legitimately spells the types as strings.
     """
     import glob
+
     named, literal = set(), set()
     # Excluded BY NAME, not by narrowing SCAN_GLOBS: the vendored header is what
     # DEFINES the vocabulary, so scanning it reads every constant's own definition
@@ -311,7 +339,7 @@ def branched_on(root):
                 continue
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
-            named |= set(re.findall(r'DuckBlockTypes::([A-Z_][A-Z0-9_]*)', text))
+            named |= set(re.findall(r"DuckBlockTypes::([A-Z_][A-Z0-9_]*)", text))
             literal |= set(re.findall(r'"([a-z][a-z0-9_:]*)"', text))
     return named, literal
 
@@ -336,8 +364,9 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
     # which are fine; the thing to go read is the spec.
     spec_moved = "SPEC_VERSION" in changed
     changed = [k for k in changed if k != "SPEC_VERSION"]
-    spec_breaking = spec_moved and not spec_compatible(local.get("SPEC_VERSION"),
-                                                       upstream.get("SPEC_VERSION"))
+    spec_breaking = spec_moved and not spec_compatible(
+        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
+    )
     if changed:
         breaking = True
         print("DRIFT  value changed upstream (our output silently stops matching):")
@@ -348,14 +377,22 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
         if spec_breaking:
             breaking = True
             print(f"SPEC   MAJOR version moved: {arrow}")
-            print("       A breaking shape or vocabulary change. Names and values may be")
+            print(
+                "       A breaking shape or vocabulary change. Names and values may be"
+            )
             print("       untouched while the SHAPE rules changed -- read")
-            print("       docs/duck_blocks_spec.md upstream before re-syncing; a version")
+            print(
+                "       docs/duck_blocks_spec.md upstream before re-syncing; a version"
+            )
             print("       bump is the only signal a structural change gives you.")
         else:
             print(f"SPEC   minor version moved: {arrow}")
-            print("       Additive by the stated contract, so this does not fail. Re-sync")
-            print("       when convenient and check whether the addition needs handling.")
+            print(
+                "       Additive by the stated contract, so this does not fail. Re-sync"
+            )
+            print(
+                "       when convenient and check whether the addition needs handling."
+            )
     if added:
         print("NEW    published upstream, not in our copy:")
         for k in added:
@@ -375,18 +412,26 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
         # vocabulary name, and reporting it as an unhandled type is the kind of
         # false positive that trains people to ignore this arm. Vocabulary values
         # are lowercase tokens ("heading", "page_break"); offsets are numeric.
-        vocab = {k: v for k, v in upstream.items()
-                 if k.startswith(("TYPE_", "INLINE_", "VALUE_", "KIND_"))
-                 and not v.isdigit()}
-        gaps = sorted(k for k, v in vocab.items()
-                      if k not in named and v not in literal
-                      and k not in INTENTIONAL_GAPS)
+        vocab = {
+            k: v
+            for k, v in upstream.items()
+            if k.startswith(("TYPE_", "INLINE_", "VALUE_", "KIND_")) and not v.isdigit()
+        }
+        gaps = sorted(
+            k
+            for k, v in vocab.items()
+            if k not in named and v not in literal and k not in INTENTIONAL_GAPS
+        )
         if gaps:
             print()
-            print("GAPS   published but nothing branches on it (reaches a fallthrough):")
+            print(
+                "GAPS   published but nothing branches on it (reaches a fallthrough):"
+            )
             for k in gaps:
                 print(f"         {k} = {vocab[k]!r}")
-            print("       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason.")
+            print(
+                "       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason."
+            )
 
     print()
     code, headline, detail = verdict(breaking, bool(added), verified)
@@ -405,17 +450,24 @@ def test_count_blindness():
     duck_block_utils shipped a check that printed "42 vs 42" directly above a real
     failure.
     """
-    base = ('static constexpr const char *TYPE_PAGE = "page_break";\n'
-            'static constexpr const char *TYPE_HEADING = "heading";\n')
+    base = (
+        'static constexpr const char *TYPE_PAGE = "page_break";\n'
+        'static constexpr const char *TYPE_HEADING = "heading";\n'
+    )
     renamed = base.replace("TYPE_PAGE", "TYPE_PAGEBREAK")
     revalued = base.replace('"page_break"', '"pagebreak"')
 
-    a, b, c = (parse_constants(base), parse_constants(renamed),
-               parse_constants(revalued))
+    a, b, c = (
+        parse_constants(base),
+        parse_constants(renamed),
+        parse_constants(revalued),
+    )
     failures = []
 
     if not (len(a) == len(b) == len(c) == 2):
-        failures.append(f"setup: counts should all be 2, got {len(a)}/{len(b)}/{len(c)}")
+        failures.append(
+            f"setup: counts should all be 2, got {len(a)}/{len(b)}/{len(c)}"
+        )
 
     # A rename: same count, must still be caught (as a removal + an addition).
     if not (set(a) - set(b)):
@@ -425,13 +477,15 @@ def test_count_blindness():
     if changed != ["TYPE_PAGE"]:
         failures.append(f"a value change was not detected; got {changed}")
     # Cosmetic churn must be silent -- this is what keeps the check credible.
-    cosmetic = base.replace("const char *", "const char* ").replace(";\n", ";  // note\n")
+    cosmetic = base.replace("const char *", "const char* ").replace(
+        ";\n", ";  // note\n"
+    )
     if parse_constants(cosmetic) != a:
         failures.append("cosmetic churn changed the parsed vocabulary")
 
     # Field offsets are not vocabulary. KIND_IDX is a struct index, and reporting it
     # as an unhandled type is the false positive that trains people to ignore GAPS.
-    offsets = parse_constants('static constexpr uint64_t KIND_IDX = 0;\n')
+    offsets = parse_constants("static constexpr uint64_t KIND_IDX = 0;\n")
     if not all(v.isdigit() for v in offsets.values()):
         failures.append("numeric field offsets are not distinguishable from vocabulary")
 
@@ -455,7 +509,12 @@ def test_count_blindness():
         ("1.1", "1.2", True, "a minor bump must not fail"),
         ("2.0", "2.0", True, "equal versions are compatible"),
         ("2.1", "2.0", False, "upstream behind on minor is not a floor match"),
-        ("1.1", "nonsense", False, "an unparseable version must not read as compatible"),
+        (
+            "1.1",
+            "nonsense",
+            False,
+            "an unparseable version must not read as compatible",
+        ),
     ]:
         if spec_compatible(lo, up) != want:
             failures.append(f"spec_compatible({lo!r}, {up!r}) -- {why}")
@@ -464,27 +523,46 @@ def test_count_blindness():
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
-    print("self-test OK: rename, value change and cosmetic churn classified correctly "
-          "with the count held constant;")
+    print(
+        "self-test OK: rename, value change and cosmetic churn classified correctly "
+        "with the count held constant;"
+    )
     print("              field offsets excluded; an undated read never reports OK")
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--upstream", default=None,
-                    help="path to a local duck_block_utils clone "
-                         "(default: fetch the published header over HTTPS)")
-    ap.add_argument("--ref", default="origin/main",
-                    help="upstream ref, only with --upstream (default: origin/main)")
-    ap.add_argument("--fetch", action="store_true",
-                    help="git fetch first, only with --upstream")
-    ap.add_argument("--timeout", type=float, default=15.0,
-                    help="HTTPS timeout in seconds (default: 15)")
-    ap.add_argument("--strict", action="store_true",
-                    help="treat an unreachable upstream as a failure rather than a skip")
-    ap.add_argument("--self-test", action="store_true",
-                    help="verify the checker's own classification, then exit")
+    ap.add_argument(
+        "--upstream",
+        default=None,
+        help="path to a local duck_block_utils clone "
+        "(default: fetch the published header over HTTPS)",
+    )
+    ap.add_argument(
+        "--ref",
+        default="origin/main",
+        help="upstream ref, only with --upstream (default: origin/main)",
+    )
+    ap.add_argument(
+        "--fetch", action="store_true", help="git fetch first, only with --upstream"
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="HTTPS timeout in seconds (default: 15)",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="treat an unreachable upstream as a failure rather than a skip",
+    )
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="verify the checker's own classification, then exit",
+    )
     args = ap.parse_args()
 
     if args.self_test:
@@ -493,16 +571,19 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_path = find_local(root)
     if not local_path:
-        sys.exit("error: no duck_block_vocabulary.hpp found in "
-                 + " or ".join(LOCAL_CANDIDATES))
+        sys.exit(
+            "error: no duck_block_vocabulary.hpp found in "
+            + " or ".join(LOCAL_CANDIDATES)
+        )
     local = parse_constants(open(local_path, encoding="utf-8").read())
 
     if args.upstream:
         if not os.path.exists(os.path.join(args.upstream, ".git")):
             sys.exit(f"error: {args.upstream} is not a git clone")
         if args.fetch:
-            subprocess.run(["git", "-C", args.upstream, "fetch", "--quiet", "origin"],
-                           check=False)
+            subprocess.run(
+                ["git", "-C", args.upstream, "fetch", "--quiet", "origin"], check=False
+            )
         text = read_upstream_git(args.upstream, args.ref)
         source = f"{args.upstream}@{args.ref}"
         verified = True
@@ -512,8 +593,10 @@ def main():
         if text is None:
             # Skipping loudly beats failing a build over a flaky network, but
             # --strict exists so CI can refuse to skip.
-            msg = (f"SKIPPED: cannot reach upstream ({ref_label}).\n"
-                   f"         The vendored copy was NOT verified against anything.")
+            msg = (
+                f"SKIPPED: cannot reach upstream ({ref_label}).\n"
+                f"         The vendored copy was NOT verified against anything."
+            )
             if args.strict:
                 print(msg.replace("SKIPPED", "FAILED"))
                 return 1
@@ -523,14 +606,20 @@ def main():
 
     upstream = parse_constants(text)
     if not upstream:
-        sys.exit("error: parsed no constants from upstream -- has the header's "
-                 "shape changed?")
+        sys.exit(
+            "error: parsed no constants from upstream -- has the header's "
+            "shape changed?"
+        )
 
     print(f"local    {os.path.relpath(local_path, root)}  ({len(local)} constants)")
     print(f"upstream {source}  ({len(upstream)} constants)")
-    print(f"spec     local {local.get('SPEC_VERSION', '?')}  "
-          f"upstream {upstream.get('SPEC_VERSION', '?')}")
-    print("         (counts are context, not the assertion -- a rename leaves them equal)")
+    print(
+        f"spec     local {local.get('SPEC_VERSION', '?')}  "
+        f"upstream {upstream.get('SPEC_VERSION', '?')}"
+    )
+    print(
+        "         (counts are context, not the assertion -- a rename leaves them equal)"
+    )
     print()
 
     code, _ = report(local, upstream, root, verified=verified, strict=args.strict)

@@ -125,7 +125,16 @@ def pandoc_inlines_to_marked(inlines) -> str:
 #: Block types whose identity is STRUCTURAL: they mean something while carrying no text of
 #: their own, because the text is in the blocks they contain. A paragraph is not one of
 #: them -- an empty paragraph is nothing in either model.
-CONTAINER_TYPES = {"div", "blockquote", "list_item", "figure", "table", "hr", "section", "caption"}
+CONTAINER_TYPES = {
+    "div",
+    "blockquote",
+    "list_item",
+    "figure",
+    "table",
+    "hr",
+    "section",
+    "caption",
+}
 
 
 def _drop_empty_paragraphs(blocks: List[CBlock]) -> List[CBlock]:
@@ -150,11 +159,23 @@ def pandoc_blocks_to_canonical(blocks, out=None) -> List[CBlock]:
             continue
         t, c = node.get("t"), node.get("c")
         if t == "Header":
-            out.append(CBlock("heading", int(c[0]), normalize_text(pandoc_inlines_to_marked(c[2]))))
+            out.append(
+                CBlock(
+                    "heading", int(c[0]), normalize_text(pandoc_inlines_to_marked(c[2]))
+                )
+            )
         elif t in ("Para", "Plain"):
-            out.append(CBlock("paragraph", 0, normalize_text(pandoc_inlines_to_marked(c))))
+            out.append(
+                CBlock("paragraph", 0, normalize_text(pandoc_inlines_to_marked(c)))
+            )
         elif t == "CodeBlock":
-            out.append(CBlock("code", 0, normalize_text(c[1] if isinstance(c, list) and len(c) > 1 else "")))
+            out.append(
+                CBlock(
+                    "code",
+                    0,
+                    normalize_text(c[1] if isinstance(c, list) and len(c) > 1 else ""),
+                )
+            )
         elif t == "BlockQuote":
             out.append(CBlock("blockquote", 0, ""))
             pandoc_blocks_to_canonical(c, out)
@@ -168,25 +189,43 @@ def pandoc_blocks_to_canonical(blocks, out=None) -> List[CBlock]:
                 # later position shifts -- which looks like a reader defect and is not one.
                 item_blocks = list(item or [])
                 text = ""
-                if item_blocks and isinstance(item_blocks[0], dict) and item_blocks[0].get("t") == "Plain":
-                    text = normalize_text(pandoc_inlines_to_marked(item_blocks[0].get("c")))
+                if (
+                    item_blocks
+                    and isinstance(item_blocks[0], dict)
+                    and item_blocks[0].get("t") == "Plain"
+                ):
+                    text = normalize_text(
+                        pandoc_inlines_to_marked(item_blocks[0].get("c"))
+                    )
                     item_blocks = item_blocks[1:]
                 out.append(CBlock("list_item", 0, text))
                 pandoc_blocks_to_canonical(item_blocks, out)
         elif t == "DefinitionList":
             for term, defs in c or []:
-                out.append(CBlock("list_item", 0, normalize_text(pandoc_inlines_to_marked(term))))
+                out.append(
+                    CBlock(
+                        "list_item", 0, normalize_text(pandoc_inlines_to_marked(term))
+                    )
+                )
                 for d in defs or []:
                     pandoc_blocks_to_canonical(d, out)
         elif t == "LineBlock":
             for line in c or []:
-                out.append(CBlock("paragraph", 0, normalize_text(pandoc_inlines_to_marked(line))))
+                out.append(
+                    CBlock(
+                        "paragraph", 0, normalize_text(pandoc_inlines_to_marked(line))
+                    )
+                )
         elif t == "Figure":
             out.append(CBlock("figure", 0, ""))
-            pandoc_blocks_to_canonical(c[2] if isinstance(c, list) and len(c) > 2 else [], out)
+            pandoc_blocks_to_canonical(
+                c[2] if isinstance(c, list) and len(c) > 2 else [], out
+            )
         elif t == "Div":
             out.append(CBlock("div", 0, ""))
-            pandoc_blocks_to_canonical(c[1] if isinstance(c, list) and len(c) > 1 else [], out)
+            pandoc_blocks_to_canonical(
+                c[1] if isinstance(c, list) and len(c) > 1 else [], out
+            )
         elif t == "HorizontalRule":
             out.append(CBlock("hr", 0, ""))
         elif t == "Table":
@@ -259,9 +298,13 @@ def duckblocks_to_canonical(rows) -> List[CBlock]:
             elif etype in ("space", "softbreak", "linebreak"):
                 piece = " "
             elif etype == "link":
-                piece = _mark("l", content, (row.get("attributes") or {}).get("href", ""))
+                piece = _mark(
+                    "l", content, (row.get("attributes") or {}).get("href", "")
+                )
             elif etype == "image":
-                piece = _mark("img", content, (row.get("attributes") or {}).get("src", ""))
+                piece = _mark(
+                    "img", content, (row.get("attributes") or {}).get("src", "")
+                )
             elif etype in DUCKBLOCK_WRAPPERS:
                 piece = _mark(DUCKBLOCK_WRAPPERS[etype], content) if content else ""
             else:
@@ -319,8 +362,8 @@ def meta_from_duckblocks(rows) -> Dict[str, str]:
     is the failure this whole comparison exists to catch.
     """
     meta: Dict[str, str] = {}
-    key = None          # the key currently accumulating
-    in_list = False     # inside a value/list, so nested value/inlines belong to it
+    key = None  # the key currently accumulating
+    in_list = False  # inside a value/list, so nested value/inlines belong to it
     for row in rows:
         kind = row.get("kind")
         etype = row.get("element_type") or ""
@@ -363,6 +406,7 @@ def pandoc_meta_to_flat(meta) -> Dict[str, str]:
     this does not know raises rather than flattening to empty -- an unhandled MetaValue
     comparing as absent would make a real divergence look like agreement.
     """
+
     def flat(v):
         t = v.get("t")
         if t in ("MetaInlines", "MetaBlocks"):
@@ -377,6 +421,7 @@ def pandoc_meta_to_flat(meta) -> Dict[str, str]:
             f"unhandled MetaValue {t!r}; extend pandoc_meta_to_flat rather than letting "
             f"it compare as empty"
         )
+
     return {k: flat(v) for k, v in (meta or {}).items()}
 
 

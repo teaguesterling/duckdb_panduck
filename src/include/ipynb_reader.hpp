@@ -22,7 +22,8 @@ struct IpynbBlock {
 	std::string key;  //!< `value` only: pandoc's key name
 	std::string element_type;
 	std::string content;
-	std::string encoding;    //!< `raw`: the EMBEDDED format's name
+	std::string encoding;    //!< left at its default; a raw block's format is NOT here
+	std::string raw_format;  //!< `raw` only: attributes['format'] -- the embedded format
 	std::string language;    //!< `code` only
 	std::string source_type; //!< div: the cell or output kind; value: the original field
 	int level = 1;

@@ -101,6 +101,16 @@ private:
 		blocks_.push_back(std::move(b));
 	}
 
+	//! A raw block: content verbatim, format in an ATTRIBUTE, encoding left at its default.
+	void PushRaw(const std::string &content, int level, const char *format) {
+		IpynbBlock b;
+		b.element_type = DuckBlockTypes::TYPE_RAW;
+		b.content = content;
+		b.level = level;
+		b.raw_format = format;
+		blocks_.push_back(std::move(b));
+	}
+
 	void Cells(yyjson_val *cells) {
 		if (!cells || !yyjson_is_arr(cells)) {
 			return;
@@ -138,7 +148,10 @@ private:
 				// helper for embedded formats -- NOT by markdown parsing landing in panduck,
 				// which would violate the isolation that put it here.
 				if (!source.empty()) {
-					Push(DuckBlockTypes::TYPE_RAW, source, 2, DuckBlockTypes::ENCODING_MARKDOWN);
+					// FORMAT IN THE ATTRIBUTE, not in `encoding`. This carried encoding='markdown' with
+					// no format at all, so the one field a consumer reads to learn what the markup
+					// IS was empty and the one it does read said something the flat rule forbids.
+					PushRaw(source, 2, "markdown");
 				}
 				continue;
 			}
@@ -296,6 +309,9 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 		row.element_order = order++;
 		if (!block.key.empty()) {
 			row.attributes[DuckBlockTypes::ATTR_KEY] = block.key;
+		}
+		if (!block.raw_format.empty()) {
+			row.attributes["format"] = block.raw_format;
 		}
 		if (!block.source_type.empty()) {
 			// A div's cell or output kind, or a metadata field's original path. On metadata

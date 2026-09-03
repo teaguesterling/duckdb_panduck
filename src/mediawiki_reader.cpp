@@ -607,7 +607,12 @@ private:
 			MwBlock r;
 			r.element_type = DuckBlockTypes::TYPE_RAW;
 			r.level = 1;
-			r.encoding = DuckBlockTypes::ENCODING_HTML;
+			// THE FORMAT NEVER LIVES IN `encoding`. duck_block_utils measured this across four
+			// formats and made it a FLAT rule at 61da561: a raw block's encoding is `text`
+			// even for html and latex, which ARE declared encodings. Stated as a fallback --
+			// "use the attribute when the encoding set lacks your format" -- it invites
+			// encoding='html' whenever it happens to fit, and produces two shapes for one
+			// element_type.
 			r.attributes["format"] = "html";
 			r.content = ln.text;
 			if (!ln.name.empty()) {
@@ -650,7 +655,7 @@ private:
 		MwBlock r;
 		r.element_type = DuckBlockTypes::TYPE_RAW;
 		r.level = 1;
-		r.encoding = DuckBlockTypes::ENCODING_HTML;
+		// The format never lives in `encoding` -- see the verbatim arm above.
 		r.attributes["format"] = "html";
 		r.content = ln.text.empty() ? "<" + ln.name + (ln.attrs.empty() ? "" : " " + ln.attrs) + "/>"
 		                            : "<" + ln.name + ">" + ln.text + "</" + ln.name + ">";

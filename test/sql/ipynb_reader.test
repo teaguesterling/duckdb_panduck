@@ -13,11 +13,18 @@ require panduck
 # notebook read without its outputs is a script. Both output spellings appear below: a
 # `stream` (stdout) and an `execute_result` (a returned value), which are different shapes
 # in the file and must both be found.
+# THE EMBEDDED FORMAT MOVED from `encoding` to attributes['format']. A raw block's
+# encoding is `text` for every format -- duck_block_utils measured that across four and
+# made it flat rather than a fallback -- so the column that says what the markup IS is the
+# attribute. This selects the attribute where present and falls back to encoding, so the
+# non-raw rows below still read as they did.
+#
 # CONTENT IS NOT SELECTED HERE: a markdown cell's raw content spans lines, and
 # sqllogictest cannot hold a newline inside a tab-delimited value. The shape is asserted
 # here and the content just below, which also keeps the two failures separable.
 query IIII
-SELECT element_type, level, attributes['source_type'], encoding
+SELECT element_type, level, attributes['source_type'],
+       coalesce(attributes['format'], encoding)
 FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
 WHERE kind = 'block' ORDER BY element_order;
 ----
@@ -67,8 +74,9 @@ python
 # Asserted as VERBATIM, markers and all: if this ever starts returning parsed text the
 # deferral has been discharged somewhere and this test is where that shows up.
 query II
-SELECT encoding, replace(content, chr(10), ' // ') FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
-WHERE element_type = 'raw' AND encoding = 'markdown';
+SELECT attributes['format'], replace(content, chr(10), ' // ')
+FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+WHERE element_type = 'raw' AND attributes['format'] = 'markdown';
 ----
 markdown	# Notebook Title //  // Prose with *emphasis*.
 

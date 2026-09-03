@@ -277,7 +277,9 @@ public:
 				r.element_type = DuckBlockTypes::TYPE_RAW;
 				r.level = 1;
 				r.content = ln.text;
-				r.encoding = DuckBlockTypes::ENCODING_HTML;
+				// The format never lives in `encoding`: duck_block_utils measured that a raw
+				// block's encoding is `text` even for html and latex, which ARE declared
+				// encodings, and made it a flat rule rather than a fallback.
 				r.attributes["format"] = "html";
 				r.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = "notextile";
 				blocks_.push_back(std::move(r));
@@ -294,7 +296,9 @@ public:
 				r.element_type = DuckBlockTypes::TYPE_RAW;
 				r.level = 1;
 				r.content = ln.text;
-				r.encoding = DuckBlockTypes::ENCODING_HTML;
+				// The format never lives in `encoding`: duck_block_utils measured that a raw
+				// block's encoding is `text` even for html and latex, which ARE declared
+				// encodings, and made it a flat rule rather than a fallback.
 				r.attributes["format"] = "html";
 				r.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = ln.markers;
 				blocks_.push_back(std::move(r));

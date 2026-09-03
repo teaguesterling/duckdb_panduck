@@ -81,11 +81,15 @@ list_item	4	deep
 # string "notextile.", with the body parsed as textile regardless -- so it both advertises
 # the marker to the reader and does the one thing the construct exists to prevent.
 # python-textile strips the marker and passes the body through.
+# THE FORMAT NEVER LIVES IN `encoding`. duck_block_utils measured a raw block's encoding as
+# `text` across four formats -- including html and latex, which ARE declared encodings --
+# and made it a FLAT rule rather than a fallback. Stated as a fallback it invites
+# encoding='html' whenever that happens to fit, giving two shapes for one element_type.
 query IIII
-SELECT element_type, content, encoding, attributes['source_type'] FROM read_textile_blocks_string(
+SELECT element_type, content, encoding, attributes['format'] FROM read_textile_blocks_string(
   E'notextile. <b>raw</b>');
 ----
-raw	<b>raw</b>	html	notextile
+raw	<b>raw</b>	text	html
 
 # The marker must not appear anywhere in the output.
 query I
@@ -266,8 +270,8 @@ custom
 # raw HTML and the body still leaked into a paragraph, so half the markup was hidden and
 # half of it on show.
 query III
-SELECT element_type, replace(content, chr(10), ' '), encoding FROM read_textile_blocks_string(
-  E'<dl>\n<dt>term</dt>\n<dd>def</dd>\n</dl>');
+SELECT element_type, replace(content, chr(10), ' '), attributes['format']
+FROM read_textile_blocks_string(E'<dl>\n<dt>term</dt>\n<dd>def</dd>\n</dl>');
 ----
 raw	<dl> <dt>term</dt> <dd>def</dd> </dl>	html
 

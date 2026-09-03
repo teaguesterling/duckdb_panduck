@@ -1,4 +1,5 @@
 #include "doc_metadata.hpp"
+#include "panduck_bind_names.hpp"
 #include "docx_reader.hpp"
 
 #include "block_json.hpp"
@@ -765,7 +766,7 @@ struct DocxGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                  vector<string> &names) {
+                                  panduck::BindNames &names) {
 	// Column order mirrors the duck_block struct, so a row casts straight to duck_block
 	// and read_panduck_doc's flat branch can SELECT * it through.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};

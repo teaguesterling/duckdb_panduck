@@ -1,4 +1,5 @@
 #include "pandoc_reader.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "duck_block_types.hpp"
 #include "pandoc_block_convert.hpp"
@@ -22,14 +23,15 @@ struct PandocGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void PandocColumns(vector<LogicalType> &types, vector<string> &names) {
+void PandocColumns(vector<LogicalType> &types, panduck::BindNames &names) {
 	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 }
 
-unique_ptr<FunctionData> BindFromJson(const string &json, vector<LogicalType> &return_types, vector<string> &names) {
+unique_ptr<FunctionData> BindFromJson(const string &json, vector<LogicalType> &return_types,
+                                      panduck::BindNames &names) {
 	PandocColumns(return_types, names);
 	auto result = make_uniq<PandocBindData>();
 	// The converter's own entry point, reached in C++ rather than through a SQL name --
@@ -39,7 +41,7 @@ unique_ptr<FunctionData> BindFromJson(const string &json, vector<LogicalType> &r
 }
 
 unique_ptr<FunctionData> PandocFileBind(ClientContext &, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, panduck::BindNames &names) {
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
 	if (!in) {
@@ -50,7 +52,7 @@ unique_ptr<FunctionData> PandocFileBind(ClientContext &, TableFunctionBindInput 
 }
 
 unique_ptr<FunctionData> PandocStringBind(ClientContext &, TableFunctionBindInput &input,
-                                          vector<LogicalType> &return_types, vector<string> &names) {
+                                          vector<LogicalType> &return_types, panduck::BindNames &names) {
 	return BindFromJson(input.inputs[0].GetValue<string>(), return_types, names);
 }
 

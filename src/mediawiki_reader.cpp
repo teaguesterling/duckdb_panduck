@@ -1,4 +1,5 @@
 #include "mediawiki_reader.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -790,7 +791,7 @@ struct MwGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void MwColumns(vector<LogicalType> &types, vector<string> &names) {
+void MwColumns(vector<LogicalType> &types, panduck::BindNames &names) {
 	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
@@ -832,7 +833,7 @@ void BuildRows(const std::string &src, std::vector<MwRow> &rows) {
 }
 
 unique_ptr<FunctionData> MwFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                    vector<string> &names) {
+                                    panduck::BindNames &names) {
 	MwColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -846,7 +847,7 @@ unique_ptr<FunctionData> MwFileBind(ClientContext &, TableFunctionBindInput &inp
 }
 
 unique_ptr<FunctionData> MwStringBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      vector<string> &names) {
+                                      panduck::BindNames &names) {
 	MwColumns(return_types, names);
 	auto result = make_uniq<MwBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

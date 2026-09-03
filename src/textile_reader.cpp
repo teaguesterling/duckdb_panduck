@@ -1,4 +1,5 @@
 #include "textile_reader.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -527,7 +528,7 @@ struct TxGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void TxColumns(vector<LogicalType> &types, vector<string> &names) {
+void TxColumns(vector<LogicalType> &types, panduck::BindNames &names) {
 	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
@@ -566,7 +567,7 @@ void BuildRows(const std::string &src, std::vector<TxRow> &rows) {
 }
 
 unique_ptr<FunctionData> TxFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                    vector<string> &names) {
+                                    panduck::BindNames &names) {
 	TxColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -580,7 +581,7 @@ unique_ptr<FunctionData> TxFileBind(ClientContext &, TableFunctionBindInput &inp
 }
 
 unique_ptr<FunctionData> TxStringBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      vector<string> &names) {
+                                      panduck::BindNames &names) {
 	TxColumns(return_types, names);
 	auto result = make_uniq<TxBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

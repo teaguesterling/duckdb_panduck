@@ -1,4 +1,5 @@
 #include "pandoc_block_convert.hpp"
+#include "panduck_bind_names.hpp"
 #include "block_normalize.hpp"
 // For the pandoc-api-version triple, which both export paths in this file derive rather
 // than spell out -- see API_VERSION_PATCH's comment for why that matters.
@@ -3014,7 +3015,7 @@ static string ConvertMetaMapToJson(const Value &meta_map) {
 }
 
 static unique_ptr<FunctionData> PandocAstBind(ClientContext &context, TableFunctionBindInput &input,
-                                              vector<LogicalType> &return_types, vector<string> &names) {
+                                              vector<LogicalType> &return_types, panduck::BindNames &names) {
 	auto result = make_uniq<PandocAstBindData>();
 
 	if (!input.inputs.empty() && !input.inputs[0].IsNull()) {

@@ -1,4 +1,5 @@
 #include "block_json.hpp"
+#include "panduck_bind_names.hpp"
 #include "latex_reader.hpp"
 
 #include "duck_block_types.hpp"
@@ -1514,7 +1515,7 @@ struct LatexReaderGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void LatexColumns(vector<LogicalType> &return_types, vector<string> &names) {
+void LatexColumns(vector<LogicalType> &return_types, panduck::BindNames &names) {
 	// Column order mirrors the duck_block struct so a row casts straight to duck_block.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
@@ -1594,7 +1595,7 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 }
 
 unique_ptr<FunctionData> LatexFileBind(ClientContext &context, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, panduck::BindNames &names) {
 	LatexColumns(return_types, names);
 
 	auto path = input.inputs[0].GetValue<string>();
@@ -1616,7 +1617,7 @@ unique_ptr<FunctionData> LatexFileBind(ClientContext &context, TableFunctionBind
 }
 
 unique_ptr<FunctionData> LatexStringBind(ClientContext &, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, panduck::BindNames &names) {
 	LatexColumns(return_types, names);
 	auto result = make_uniq<LatexReaderBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

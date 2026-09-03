@@ -1,4 +1,5 @@
 #include "pandoc_ast_map.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -75,7 +76,7 @@ struct PandocAstMapGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> PandocAstMapBind(ClientContext &, TableFunctionBindInput &, vector<LogicalType> &return_types,
-                                          vector<string> &names) {
+                                          panduck::BindNames &names) {
 	names = {"pandoc_type", "kind", "element_type", "status", "notes"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR};

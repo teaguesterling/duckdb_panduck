@@ -1,4 +1,5 @@
 #include "latex_tokenizer.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -397,7 +398,7 @@ struct LatexTokensGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> LatexTokensBind(ClientContext &, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, panduck::BindNames &names) {
 	names = {"kind", "text"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
 	auto result = make_uniq<LatexTokensBindData>();

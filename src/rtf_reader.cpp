@@ -1,4 +1,5 @@
 #include "rtf_reader.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "block_json.hpp"
 
@@ -765,7 +766,7 @@ struct RtfReaderGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, panduck::BindNames &names) {
 	// Column order mirrors the duck_block struct so a row casts straight to duck_block.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,

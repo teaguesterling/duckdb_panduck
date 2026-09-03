@@ -1,4 +1,5 @@
 #include "ipynb_reader.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "duck_block_types.hpp"
 #include "yyjson.hpp"
@@ -289,7 +290,7 @@ struct IpynbGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-void IpynbColumns(vector<LogicalType> &types, vector<string> &names) {
+void IpynbColumns(vector<LogicalType> &types, panduck::BindNames &names) {
 	types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	         LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR),
 	         LogicalType::INTEGER};
@@ -347,7 +348,7 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 }
 
 unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &input,
-                                       vector<LogicalType> &return_types, vector<string> &names) {
+                                       vector<LogicalType> &return_types, panduck::BindNames &names) {
 	IpynbColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -361,7 +362,7 @@ unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &
 }
 
 unique_ptr<FunctionData> IpynbStringBind(ClientContext &, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, panduck::BindNames &names) {
 	IpynbColumns(return_types, names);
 	auto result = make_uniq<IpynbBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

@@ -1,4 +1,5 @@
 #include "reader_registry.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "supported_extensions.hpp"
 
@@ -224,7 +225,7 @@ struct RegistryGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> RegistryBind(ClientContext &, TableFunctionBindInput &, vector<LogicalType> &return_types,
-                                      vector<string> &names) {
+                                      panduck::BindNames &names) {
 	names = {"ext", "format", "reader_ext", "function", "kind", "source"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
@@ -267,7 +268,7 @@ struct RegisterGlobalState : public GlobalTableFunctionState {
 
 template <const char *KIND>
 unique_ptr<FunctionData> RegisterBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      vector<string> &names) {
+                                      panduck::BindNames &names) {
 	names = {"ext", "reader_ext", "function", "kind"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 	auto result = make_uniq<RegisterBindData>();

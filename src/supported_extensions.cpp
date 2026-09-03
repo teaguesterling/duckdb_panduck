@@ -1,4 +1,5 @@
 #include "supported_extensions.hpp"
+#include "panduck_bind_names.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -175,7 +176,7 @@ struct SupportedExtensionsGlobalState : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> SupportedExtensionsBind(ClientContext &, TableFunctionBindInput &,
-                                                 vector<LogicalType> &return_types, vector<string> &names) {
+                                                 vector<LogicalType> &return_types, panduck::BindNames &names) {
 	names = {"format", "extensions", "reader", "status", "notes"};
 	return_types = {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::VARCHAR};

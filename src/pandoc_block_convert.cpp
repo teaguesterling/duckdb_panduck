@@ -1,5 +1,5 @@
 #include "pandoc_block_convert.hpp"
-#include "panduck_bind_names.hpp"
+#include "panduck_duckdb_compat.hpp"
 #include "block_normalize.hpp"
 // For the pandoc-api-version triple, which both export paths in this file derive rather
 // than spell out -- see API_VERSION_PATCH's comment for why that matters.
@@ -3177,7 +3177,7 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	// the caller's own write fail further downstream, where the cause is no longer visible.
 	// Now is the moment to settle it -- these names have no callers yet.
 	auto to_ast = ScalarFunction("panduck_blocks_to_pandoc_ast", {blocks_type}, ast_type, DuckBlocksToPandocAstFun);
-	to_ast.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	panduck::SetNullHandling(to_ast, FunctionNullHandling::SPECIAL_HANDLING);
 	loader.RegisterFunction(to_ast);
 
 	loader.RegisterFunction(ScalarFunction("panduck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
@@ -3185,7 +3185,7 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
-	write_ast.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
 	loader.RegisterFunction(write_ast);
 }
 

@@ -1,5 +1,5 @@
 #include "latex_tokenizer.hpp"
-#include "panduck_bind_names.hpp"
+#include "panduck_duckdb_compat.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"

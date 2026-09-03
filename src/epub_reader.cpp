@@ -1,5 +1,5 @@
 #include "block_json.hpp"
-#include "panduck_bind_names.hpp"
+#include "panduck_duckdb_compat.hpp"
 #include "epub_reader.hpp"
 
 #include "duck_block_types.hpp"

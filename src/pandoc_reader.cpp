@@ -1,5 +1,5 @@
 #include "pandoc_reader.hpp"
-#include "panduck_bind_names.hpp"
+#include "panduck_duckdb_compat.hpp"
 
 #include "duck_block_types.hpp"
 #include "pandoc_block_convert.hpp"

@@ -1,5 +1,5 @@
 #include "reader_registry.hpp"
-#include "panduck_bind_names.hpp"
+#include "panduck_duckdb_compat.hpp"
 
 #include "supported_extensions.hpp"
 

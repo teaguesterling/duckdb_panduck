@@ -266,3 +266,19 @@ list_item	4	nested bullet
 list_item	4	nested two
 list_item	2	third
 list_item	2	plain bullet
+
+# ---------------------------------------------------------------------------
+# TABLES. A w:tbl is a SIBLING of w:p, and this reader iterated body.children("w:p") --
+# so a table was not flattened, it was NEVER SEEN, and every cell's text vanished with it.
+# That is content loss rather than a structure gap, and it is what "tables are not read yet"
+# actually meant.
+#
+# The HEADER ROW is the one marked w:tblHeader and only that. Promoting the first row
+# unconditionally invents a header for every headerless table; pandoc reports an empty
+# header for those and so does this. Measured on rich.docx: pandoc gives 1 header row and 2
+# body rows, which is what the native schema below says.
+query III
+SELECT element_type, encoding, content FROM read_docx_blocks('test/fixtures/rich.docx')
+WHERE element_type = 'table';
+----
+table	json	{"headers":["Name","Value"],"rows":[["a","1"],["b","2"]]}

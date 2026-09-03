@@ -180,3 +180,15 @@ list_item	4	nested bullet
 list_item	4	nested two
 list_item	2	third
 list_item	2	plain bullet
+
+# ---------------------------------------------------------------------------
+# TABLES. A table:table is a sibling of text:p and was never collected, so every cell's
+# text vanished -- content loss, not a structure gap.
+#
+# ODF marks header rows STRUCTURALLY, in their own table:table-header-rows element, rather
+# than with an attribute on the row. A table without one has no header.
+query III
+SELECT element_type, encoding, content FROM read_odt_blocks('test/fixtures/rich.odt')
+WHERE element_type = 'table';
+----
+table	json	{"headers":["Name","Value"],"rows":[["a","1"],["b","2"]]}

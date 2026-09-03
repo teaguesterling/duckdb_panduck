@@ -1,6 +1,8 @@
 #include "doc_metadata.hpp"
 #include "docx_reader.hpp"
 
+#include "block_json.hpp"
+
 #include "duck_block_types.hpp"
 #include "zip_container.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -278,6 +280,18 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 	}
 
+	// A w:tbl is a SIBLING of w:p, and this loop used to iterate `body.children("w:p")` --
+	// so a table was not flattened, it was NEVER SEEN. Every cell's text vanished with it,
+	// which is content loss rather than a structure gap. Measured against pandoc, which
+	// reports Table for the same file.
+	auto para_text = [](const pugi::xml_node &p) {
+		std::string out;
+		for (auto t : p.select_nodes(".//w:t")) {
+			out += t.node().text().get();
+		}
+		return out;
+	};
+
 	std::vector<DocxBlock> blocks;
 	auto body = doc.child("w:document").child("w:body");
 	// The TYPE of each currently-open list, not merely how many are open. A bullet list
@@ -285,7 +299,48 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	// alone silently swallows the second into the first -- measured on a generated fixture,
 	// where `- plain bullet` after `1. 2. 3.` became a fourth ordered item.
 	std::vector<bool> open_ordered;
-	for (auto para : body.children("w:p")) {
+	for (auto node : body.children()) {
+		std::string node_name = node.name();
+		if (node_name == "w:tbl") {
+			// A table ends any open list -- OOXML permits the nesting and no consumer wants
+			// a table as a list item.
+			open_ordered.clear();
+			std::vector<std::string> headers;
+			std::vector<std::vector<std::string>> rows;
+			for (auto tr : node.children("w:tr")) {
+				std::vector<std::string> cells;
+				for (auto tc : tr.children("w:tc")) {
+					std::string cell;
+					for (auto p : tc.children("w:p")) {
+						if (!cell.empty()) {
+							cell += " ";
+						}
+						cell += para_text(p);
+					}
+					cells.push_back(cell);
+				}
+				// THE HEADER ROW is the one marked w:tblHeader, and only that. Treating the
+				// first row as a header unconditionally invents one for every headerless
+				// table -- pandoc reports an empty header for those, and so does this.
+				bool is_header = tr.child("w:trPr").child("w:tblHeader") || tr.select_node(".//w:tblHeader").node();
+				if (is_header && headers.empty()) {
+					headers = cells;
+				} else {
+					rows.push_back(cells);
+				}
+			}
+			DocxBlock t;
+			t.element_type = DuckBlockTypes::TYPE_TABLE;
+			t.level = 1;
+			t.encoding = DuckBlockTypes::ENCODING_JSON;
+			t.content = BuildTableJson(headers, rows);
+			blocks.push_back(std::move(t));
+			continue;
+		}
+		if (node_name != "w:p") {
+			continue;
+		}
+		auto para = node;
 		auto ppr = para.child("w:pPr");
 		int level = ParagraphHeadingLevel(ppr, styles);
 
@@ -424,6 +479,7 @@ namespace {
 
 struct DocxRow {
 	std::string kind, element_type, content;
+	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
 	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
@@ -468,6 +524,9 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.encoding.empty()) {
+			row.encoding = block.encoding;
+		}
 		if (!block.list_type.empty()) {
 			// Both spellings, as every panduck reader emits.
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
@@ -506,7 +565,7 @@ void DocxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value(DuckBlockTypes::INLINE_TEXT));
+		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 		state.offset++;

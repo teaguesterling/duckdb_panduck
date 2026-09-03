@@ -1,5 +1,7 @@
 #include "rtf_reader.hpp"
 
+#include "block_json.hpp"
+
 #include "duck_block_types.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -138,6 +140,8 @@ public:
 			}
 		}
 		FlushParagraph();
+		// A document ending inside a table still has one to emit.
+		FlushTable();
 		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract. Sorted, because
 		// std::map iterates sorted and that is also pandoc's Meta serialisation order.
 		for (auto &kv : meta_) {
@@ -296,9 +300,40 @@ private:
 			return;
 		}
 
-		if (word == "par") {
+		if (word == "cell") {
+			// \cell ENDS A CELL, and does the job \par does outside a table -- the cell's
+			// text is in runs_ and nothing else will flush it.
+			row_cells_.push_back(CurrentText());
+			runs_.clear();
+			in_table_ = true;
+		} else if (word == "row") {
+			if (row_is_header_ && table_headers_.empty()) {
+				table_headers_ = row_cells_;
+			} else if (!row_cells_.empty()) {
+				table_rows_.push_back(row_cells_);
+			}
+			row_cells_.clear();
+			row_is_header_ = false;
+			in_table_ = true;
+		} else if (word == "trowd") {
+			in_table_ = true;
+		} else if (word == "intbl") {
+			in_table_ = true;
+		} else if (word == "trhdr") {
+			row_is_header_ = true;
+		} else if (word == "par") {
+			// A \par INSIDE a table separates paragraphs within one cell, not blocks. Left to
+			// \cell to flush, or the cell's text is emitted as a stray paragraph.
+			if (in_table_) {
+				return;
+			}
 			FlushParagraph();
 		} else if (word == "pard") {
+			// \pard resets paragraph properties, INCLUDING \intbl -- and RTF emits one at the
+			// start of EVERY row, so flushing the table here produced one table per row.
+			// The table ends when a paragraph arrives that is not in it, which FlushParagraph
+			// decides.
+			in_table_ = false;
 			style_id_ = -1;
 			outline_level_ = -1;
 			// \pard resets paragraph properties, INCLUDING list membership. Without this a
@@ -435,7 +470,43 @@ private:
 		return 0;
 	}
 
+	//! The accumulated runs as flat text, trimmed. Shared by the cell and paragraph paths so
+	//! a cell and a paragraph cannot disagree about what their text is.
+	std::string CurrentText() {
+		std::string all;
+		for (auto &r : runs_) {
+			all += r.text;
+		}
+		size_t b = all.find_first_not_of(" \t\n");
+		size_t e = all.find_last_not_of(" \t\n");
+		return b == std::string::npos ? std::string() : all.substr(b, e - b + 1);
+	}
+
+	//! Emit the accumulated table, if any. Idempotent: called on \pard and at end of input,
+	//! and a call with nothing accumulated does nothing.
+	void FlushTable() {
+		if (table_headers_.empty() && table_rows_.empty()) {
+			in_table_ = false;
+			return;
+		}
+		RtfBlock t;
+		t.element_type = DuckBlockTypes::TYPE_TABLE;
+		t.level = 1;
+		t.encoding = DuckBlockTypes::ENCODING_JSON;
+		t.content = BuildTableJson(table_headers_, table_rows_);
+		blocks_.push_back(std::move(t));
+		table_headers_.clear();
+		table_rows_.clear();
+		row_cells_.clear();
+		in_table_ = false;
+	}
+
 	void FlushParagraph() {
+		// A paragraph outside a table ENDS any table being accumulated. This is the only
+		// reliable boundary: RTF has no table-end control word, and \pard fires per row.
+		if (!in_table_) {
+			FlushTable();
+		}
 		std::string all;
 		bool any_format = false;
 		for (auto &r : runs_) {
@@ -535,6 +606,15 @@ private:
 
 	int style_id_ = -1;
 	int outline_level_ = -1;
+	//! TABLE STATE. RTF has no table element -- a table is a RUN of paragraphs marked
+	//! \intbl, with \cell ending each cell and \row each row. So the reader accumulates
+	//! rather than descends, and the table is emitted when the run ends.
+	bool in_table_ = false;
+	bool row_is_header_ = false;
+	std::vector<std::string> row_cells_;
+	std::vector<std::string> table_headers_;
+	std::vector<std::vector<std::string>> table_rows_;
+
 	int list_id_ = 0;    //!< \lsN -- 0 means this paragraph is not in a list
 	int list_level_ = 0; //!< \ilvlN -- depth within that list
 	int open_lists_ = 0; //!< how many `list` containers are currently open
@@ -561,6 +641,7 @@ struct BlockRow {
 	std::string kind;
 	std::string element_type;
 	std::string content;
+	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
 	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
@@ -615,6 +696,9 @@ unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBind
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.encoding.empty()) {
+			row.encoding = block.encoding;
+		}
 		if (!block.list_type.empty()) {
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
@@ -656,7 +740,7 @@ void RtfReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &output
 		// lives in structured inline children.
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value(DuckBlockTypes::INLINE_TEXT));
+		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 

@@ -41,6 +41,7 @@ struct RtfBlock {
 	int heading_level = 0;          //!< 1-6 for headings, 0 otherwise
 	int level = 1;                  //!< STRUCTURAL depth; lists nest, so not always 1
 	std::string list_type;          //!< `list` only: DuckBlockTypes::LIST_TYPE_*
+	std::string encoding;           //!< `table` only: 'json'
 	std::vector<RtfInline> inlines; //!< empty for a text-only run
 };
 

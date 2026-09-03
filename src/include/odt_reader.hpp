@@ -48,6 +48,8 @@ struct OdtBlock {
 	int level = 1;
 	//! `list` only: DuckBlockTypes::LIST_TYPE_*
 	std::string list_type;
+	//! `table` only: 'json'.
+	std::string encoding;
 	std::vector<OdtInline> inlines;
 };
 

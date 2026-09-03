@@ -162,3 +162,19 @@ statement error
 SELECT * FROM read_rtf_blocks('test/fixtures/does_not_exist.rtf');
 ----
 file not found
+
+# ---------------------------------------------------------------------------
+# TABLES. RTF has no table ELEMENT: a table is a run of paragraphs marked \intbl, with
+# \cell ending each cell and \row each row. So the reader accumulates rather than descends.
+#
+# \pard fires at the start of EVERY row, so it cannot end the table -- doing that produced
+# one table per row. The table ends when a paragraph arrives that is not in it.
+#
+# No header: \trhdr is absent from this file, and pandoc reports 0 header rows and 3 body
+# rows for it. Inventing a header from the first row would disagree with both the document
+# and the reference.
+query III
+SELECT element_type, encoding, content FROM read_rtf_blocks('test/fixtures/rich.rtf')
+WHERE element_type = 'table';
+----
+table	json	{"headers":[],"rows":[["Name","Value"],["a","1"],["b","2"]]}

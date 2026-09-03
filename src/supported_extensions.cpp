@@ -46,7 +46,8 @@ const FormatReader FORMATS[] = {
      "numbering.xml -- numId 0 means NO numbering rather than numbering zero, and "
      "LibreOffice writes exactly that. Blockquotes from a quote pStyle or w:ind "
      "w:left>=720, which is how LibreOffice marks one with no style at all. Tables, "
-     "images and footnotes are not read yet"},
+     "images and footnotes are not read yet. TABLES ARE read, into the spec 5.0 native "
+     "schema, with the header row taken from w:tblHeader and only from there"},
     {"odt", EXT_ODT, "read_odt_blocks", STATUS_IMPLEMENTED,
      "ZIP via miniz + content.xml via pugixml, sharing ZipContainer with docx. ODF has a "
      "dedicated text:h element with text:outline-level, so unlike RTF and DOCX there is no "
@@ -54,14 +55,17 @@ const FormatReader FORMATS[] = {
      "LEVEL -- ODF declares all ten levels of a list style up front and routinely mixes "
      "bullet and number among them. Blockquotes from the Block_20_Text / Quotations "
      "styles, followed through style:parent-style-name. Tables, images and footnotes "
-     "are not read yet"},
+     "are not read yet. TABLES ARE read, with header rows taken from ODF's structural "
+     "table:table-header-rows rather than by promoting the first row"},
     {"epub", EXT_EPUB, "read_epub_blocks", STATUS_IMPLEMENTED,
      "ZIP via ZipContainer, then META-INF/container.xml -> the .opf package document -> the "
      "SPINE, which is the only statement of reading order. Content documents are XHTML, so "
      "pugixml reads them directly and no HTML parser is needed. Headings, paragraphs, list "
      "items, blockquotes, divs, links and images; run formatting resolves through CSS "
      "classes because LibreOffice's export emits no semantic markup at all. Tables and "
-     "footnotes are not read yet"},
+     "footnotes are not read yet. TABLES ARE read: RTF has no table element, so a table is "
+     "a run of \\intbl paragraphs with \\cell and \\row as terminators, accumulated "
+     "rather than descended into"},
     {"pandoc", EXT_PANDOC, "read_pandoc_blocks", STATUS_IMPLEMENTED,
      "pandoc's own JSON AST, and the widest interface panduck has: `json` is what "
      "`pandoc -t json` emits, so this one reader makes ALL 43 of pandoc's input formats "
@@ -137,7 +141,9 @@ const FormatReader FORMATS[] = {
      "{\\listtext} -- the RENDERED bullet glyph -- suppressed as the presentation it is. "
      "Orderedness is NOT read: it lives in the \\listtable, which this reader does not "
      "parse, so every list is bullet rather than a guessed ordered=true. Tables and "
-     "footnotes are not read yet"},
+     "footnotes are not read yet. TABLES ARE read: RTF has no table element, so a table is "
+     "a run of \\intbl paragraphs with \\cell and \\row as terminators, accumulated "
+     "rather than descended into"},
 };
 
 const size_t FORMAT_COUNT = sizeof(FORMATS) / sizeof(FORMATS[0]);

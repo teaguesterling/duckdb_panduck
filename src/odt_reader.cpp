@@ -1,6 +1,8 @@
 #include "doc_metadata.hpp"
 #include "odt_reader.hpp"
 
+#include "block_json.hpp"
+
 #include "duck_block_types.hpp"
 #include "zip_container.hpp"
 
@@ -334,6 +336,7 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		pugi::xml_node node;
 		int depth = 0;
 		std::string list_style;
+		bool is_table = false; //!< a table:table, which is a sibling of text:p, not a container of it
 	};
 	std::vector<Entry> entries;
 	std::function<void(const pugi::xml_node &, int, const std::string &)> collect =
@@ -348,6 +351,11 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 				    collect(node, depth + 1, style.empty() ? list_style : style);
 			    } else if (tag == "text:list-item" || tag == "text:list-header") {
 				    collect(node, depth, list_style);
+			    } else if (tag == "table:table") {
+				    // A table:table is a SIBLING of text:p and was never collected, so every
+				    // cell's text vanished -- content loss, not a structure gap. pandoc
+				    // reports Table for the same file.
+				    entries.push_back(Entry {node, 0, {}, true});
 			    }
 			    // tables, sequence declarations and drawing frames are not read yet.
 		    }
@@ -361,6 +369,50 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	std::vector<bool> open_ordered;
 	for (auto &entry : entries) {
 		auto node = entry.node;
+		if (entry.is_table) {
+			open_ordered.clear();
+			std::vector<std::string> headers;
+			std::vector<std::vector<std::string>> rows;
+			std::function<void(const pugi::xml_node &, bool)> read_rows = [&](const pugi::xml_node &parent,
+			                                                                  bool header) {
+				for (auto child : parent.children()) {
+					std::string ctag = child.name();
+					if (ctag == "table:table-header-rows") {
+						// ODF marks header rows STRUCTURALLY, in their own element, rather than
+						// with an attribute on the row. A table without one has no header, and
+						// promoting its first row would invent one.
+						read_rows(child, true);
+					} else if (ctag == "table:table-row") {
+						std::vector<std::string> cells;
+						for (auto cell : child.children("table:table-cell")) {
+							std::string text;
+							for (auto p : cell.children("text:p")) {
+								if (!text.empty()) {
+									text += " ";
+								}
+								text += p.text().get();
+							}
+							cells.push_back(text);
+						}
+						if (header && headers.empty()) {
+							headers = cells;
+						} else {
+							rows.push_back(cells);
+						}
+					} else if (ctag == "table:table-rows" || ctag == "table:table-column-group") {
+						read_rows(child, header);
+					}
+				}
+			};
+			read_rows(node, false);
+			OdtBlock t;
+			t.element_type = DuckBlockTypes::TYPE_TABLE;
+			t.level = 1;
+			t.encoding = DuckBlockTypes::ENCODING_JSON;
+			t.content = BuildTableJson(headers, rows);
+			blocks.push_back(std::move(t));
+			continue;
+		}
 		std::string tag = node.name();
 		bool is_heading = (tag == "text:h");
 
@@ -455,6 +507,7 @@ namespace {
 
 struct OdtRow {
 	std::string kind, element_type, content;
+	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
 	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
@@ -497,6 +550,9 @@ unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input,
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.encoding.empty()) {
+			row.encoding = block.encoding;
+		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, as every panduck reader emits -- `ordered` is the v1 name and
 			// `list_type` the later alias, and a consumer written against either reads this.
@@ -536,7 +592,7 @@ void OdtScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
-		output.SetValue(4, count, Value("text"));
+		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));
 		state.offset++;

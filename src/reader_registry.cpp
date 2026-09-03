@@ -168,33 +168,43 @@ enum class Field { FORMAT, FUNCTION, READER_EXT, KIND };
 
 template <Field F>
 void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-	    args.data[0], result, args.size(), [&](string_t path, ValidityMask &mask, idx_t idx) {
-		    ReaderEntry entry;
-		    if (!ReaderRegistry::Get().Lookup(ExtOfPath(path.GetString()), entry)) {
-			    mask.SetInvalid(idx);
-			    return string_t();
-		    }
-		    const std::string *value = &entry.format;
-		    switch (F) {
-		    case Field::FUNCTION:
-			    value = &entry.function;
-			    break;
-		    case Field::READER_EXT:
-			    value = &entry.reader_ext;
-			    break;
-		    case Field::KIND:
-			    value = &entry.kind;
-			    break;
-		    case Field::FORMAT:
-			    break;
-		    }
-		    if (value->empty()) {
-			    mask.SetInvalid(idx);
-			    return string_t();
-		    }
-		    return StringVector::AddString(result, *value);
-	    });
+	// WRITTEN WITH Vector::SetValue RATHER THAN UnaryExecutor, because the executor's null
+	// protocol is not stable across DuckDB versions: v1.5.5 offers ExecuteWithNulls with a
+	// (value, ValidityMask &, idx) lambda; v2.0 removed it in favour of a lambda returning
+	// optional<T>. SetValue has the same signature in both, and a default-constructed Value
+	// IS the NULL -- so one spelling covers both the value and the null case with no shim.
+	//
+	// This is a registry lookup over a handful of paths, not a hot loop, so the cost of
+	// going through Value rather than the flat array does not matter here. Reaching for the
+	// flat array WOULD need a shim, since v2.0 renamed the mutable accessors.
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+	auto paths = UnifiedVectorFormat::GetData<string_t>(input);
+
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		ReaderEntry entry;
+		if (!input.validity.RowIsValid(idx) ||
+		    !ReaderRegistry::Get().Lookup(ExtOfPath(paths[idx].GetString()), entry)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		const std::string *value = &entry.format;
+		switch (F) {
+		case Field::FUNCTION:
+			value = &entry.function;
+			break;
+		case Field::READER_EXT:
+			value = &entry.reader_ext;
+			break;
+		case Field::KIND:
+			value = &entry.kind;
+			break;
+		case Field::FORMAT:
+			break;
+		}
+		result.SetValue(i, value->empty() ? Value() : Value(*value));
+	}
 }
 
 void CanReadFun(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -361,7 +371,10 @@ SELECT * FROM query(
 )
 )SQL"};
 
-const DefaultMacro SCALAR_MACROS[] = {
+// The macro TABLE is version-neutral -- see panduck::PanduckMacro. DuckDB's own
+// DefaultMacro changed shape between v1.5.5 and v2.0, and the SQL below is the part worth
+// keeping in one place; only the conversion is version-aware.
+const panduck::PanduckMacro SCALAR_MACROS[] = {
     {DEFAULT_SCHEMA,
      "panduck_quote",
      {"s", nullptr},
@@ -674,7 +687,10 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 		loader.RegisterFunction(*info);
 	}
 	for (idx_t i = 0; SCALAR_MACROS[i].name != nullptr; i++) {
-		auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(SCALAR_MACROS[i]);
+		// `definition` must outlive the call: on v2.0 the built DefaultMacro points into it.
+		std::string definition;
+		auto macro = panduck::MakeDefaultMacro(SCALAR_MACROS[i], definition);
+		auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(macro);
 		loader.RegisterFunction(*info);
 	}
 

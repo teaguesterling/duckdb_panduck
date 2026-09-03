@@ -98,3 +98,34 @@ jobs:
           echo "extension: $EXT"
           python3 test/roundtrip/check_roundtrip.py \
             --require --duckdb ./duckdb-cli/duckdb --extension "$EXT"
+
+  # The .wasm is linked by a SEPARATE emcc -sSIDE_MODULE=2 step that reads only
+  # DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS -- target_link_libraries() is ignored there.
+  # A dependency missing from that list is left as an unresolved import: the build is
+  # green, the artifact uploads, and the module throws on first call in the browser.
+  # The matrix above BUILDS the wasm but never instantiates it, so nothing upstream of
+  # this job can see the difference. Three sibling repos shipped this bug.
+  #
+  # Static parse only -- no duckdb-wasm runtime and no version match -- so a failure
+  # here is unambiguously the link bug rather than an ABI mismatch.
+  wasm-symbol-check:
+    name: WASM unresolved-symbol check
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No name filter: this pulls every artifact from the run, so the check does not
+      # silently skip if the wasm artifact naming changes. run_wasm_checks.sh exits
+      # non-zero when it finds no .wasm at all, which is the failure we want.
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Check wasm modules for unresolved dependency symbols
+        run: test/wasm/run_wasm_checks.sh artifacts

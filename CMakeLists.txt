@@ -18,11 +18,48 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # matching duckdb_markdown / duckdb_webbed / duckdb_zim.
 #   pugixml -- DOCX/ODT/EPUB XML parsing (word/document.xml, .opf, nav.xhtml)
 #   miniz   -- ZIP container reading for the OOXML/ODF/EPUB archive formats
-# Both are resolved in Phase 1 even though no source calls them yet: that proves the
-# dependency chain configures and links before any reader code exists to confound a
-# failure.
 find_package(pugixml CONFIG REQUIRED)
 find_package(miniz CONFIG REQUIRED)
+
+# WASM SIDE-MODULE LINKING. The loadable .wasm is produced by a SEPARATE emcc step:
+#
+#   emcc <archive> -o <out>.wasm -O3 -sSIDE_MODULE=2 ... ${TO_BE_LINKED}
+#
+# and TO_BE_LINKED is set from DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS alone
+# (duckdb/extension/extension_build_tools.cmake, the EMSCRIPTEN block at ~L183). The
+# target_link_libraries() calls further down are IGNORED by that link. Anything not
+# named here is left as an unresolved import: the .wasm builds, CI goes green because
+# it never instantiates the module, and the first call into any DOCX/ODT/EPUB reader
+# throws in the user's browser.
+#
+# This is a known failure class in this family of extensions, shipped three times
+# already -- duckdb_markdown#19, duckdb_webbed#96, duckdb_yaml#40.
+#
+# Resolved HERE rather than as a $<TARGET_FILE:> genexpr in extension_config.cmake:
+# that file is evaluated in duckdb's scope, where these imported targets need not be
+# defined, and an unresolvable genexpr expands to the EMPTY STRING rather than
+# erroring -- which is precisely the silent success this block exists to prevent.
+if(WASM_LOADABLE_EXTENSIONS)
+    macro(_panduck_resolve_imported_lib OUT TGT)
+        get_target_property(${OUT} ${TGT} IMPORTED_LOCATION)
+        if(NOT ${OUT})
+            # A CONFIG package commonly sets only the config-specific location.
+            get_target_property(${OUT} ${TGT} IMPORTED_LOCATION_RELEASE)
+        endif()
+    endmacro()
+    _panduck_resolve_imported_lib(_panduck_pugixml_lib pugixml::pugixml)
+    _panduck_resolve_imported_lib(_panduck_miniz_lib miniz::miniz)
+    if(_panduck_pugixml_lib AND _panduck_miniz_lib)
+        set(DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS
+            "${_panduck_pugixml_lib};${_panduck_miniz_lib}")
+        message(STATUS "panduck WASM link libs: ${DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS}")
+    else()
+        # Fail the BUILD rather than emit a .wasm that loads and then throws.
+        message(FATAL_ERROR
+            "panduck: could not resolve pugixml/miniz archive paths for the WASM link "
+            "(pugixml='${_panduck_pugixml_lib}' miniz='${_panduck_miniz_lib}')")
+    endif()
+endif()
 
 # The duck_block vocabulary header is VENDORED into src/include rather than reached
 # through a submodule include path -- see src/include/duck_block_types.hpp for why, and

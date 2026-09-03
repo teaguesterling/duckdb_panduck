@@ -357,9 +357,23 @@ WHERE element_type = 'table';
 # see it today.
 #
 # panduck's copy is not affected -- measured, both spellings present -- and this pins that
-# rather than trusting it. The gap was invisible because check-divergence compares
-# constructors, guard calls and function names; ATTRIBUTE EMISSION is not among them, so the
-# one comparison built for exactly this class of drift could not have seen it either.
+# rather than trusting it.
+#
+# I FIRST WROTE THAT check-divergence MISSED THIS BECAUSE ATTRIBUTE EMISSION IS NOT AMONG ITS
+# COMPARATORS, which implies widening it would help. duckeye measured that and it is wrong on
+# both halves.
+#
+# It is not that class of defect at all. check-divergence compares TWO COPIES OF ONE FILE.
+# This is a disagreement between two DIFFERENT files -- a producer writing `list_type` and a
+# consumer reading `ordered` -- inside a single repo. Structurally out of scope, not narrowly
+# scoped, so no widening reaches it.
+#
+# And the obvious complement does not work either. duckeye prototyped it -- attributes
+# WRITTEN anywhere versus attributes READ anywhere -- and ran it against the pre-fix tree,
+# where it stays SILENT on this exact bug: `ordered` IS written, just by a different producer
+# path than the failing one. The property is per-path and the measurement was per-repo.
+# Coarser than the property, in a check built to catch coarseness. Its one hit was a false
+# positive on correct layering.
 query IIII
 SELECT element_type, attributes['list_type'], attributes['ordered'], attributes['start']
 FROM read_pandoc_blocks_string(

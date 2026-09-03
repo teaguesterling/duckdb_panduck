@@ -24,6 +24,33 @@ identified the cause was reading the diff hunks and noticing a parameter had dis
 A green run here means "these two coarse invariants agree", nothing more -- and a check
 believed to say more than it does is the same failure as a guard that cannot fire.
 
+WHAT IT CANNOT SEE, AND WHY WIDENING IT DOES NOT HELP. Measured, not assumed, so that a
+later session does not spend the afternoon I nearly did.
+
+A producer/consumer attribute mismatch is invisible here and is NOT a missing comparator.
+duck_block_utils shipped one: its converter writes attrs["list_type"] while its ANSI renderer
+reads GetAttribute(block, "ordered"), so ordered lists render as bullets. This check compares
+two copies of ONE file; that bug is a disagreement between two DIFFERENT files in a single
+repo. Structurally out of scope.
+
+The obvious complement -- attributes written anywhere versus attributes read anywhere -- was
+prototyped by duckeye and FAILS IN BOTH DIRECTIONS on its first run:
+
+  SILENT on the real defect. Run against the pre-fix tree, `ordered` does not appear,
+  because `ordered` IS written -- by a different producer path than the broken one. The
+  property is per-path; a repo-wide set comparison is per-repo, and reports agreement.
+
+  LOUD on correct layering. Its one hit, `page_number`, is read by the renderer and written
+  by no producer in that repo -- correctly, because a blocks-in library does not read PDFs;
+  an upstream READER supplies it. For such a library "read but never written" is the
+  expected state of every attribute a reader provides, so the signal is noise by
+  construction.
+
+What would actually catch it is per-producer attribute sets -- for each path constructing a
+list block, does it write every name any consumer switches on. That needs knowing which
+function is a producer for which path, which is not a grep. Recorded as measured-and-rejected
+rather than left as an obvious improvement someone reimplements.
+
 IT ALSO EXPIRES. The window opened the moment there were two copies and closes when step 4
 deletes upstream's. It is worth running now precisely because a migration between the
 copies is being contemplated, and a migration is when a divergence gets adopted.

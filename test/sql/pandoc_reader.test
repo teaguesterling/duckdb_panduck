@@ -343,3 +343,37 @@ SELECT content FROM read_pandoc_blocks_string(
 WHERE element_type = 'table';
 ----
 {"headers":["a","b"],"rows":[["linktext and BoldCell","plain"]]}
+
+# ---------------------------------------------------------------------------
+# BOTH SPELLINGS OF ORDEREDNESS, from the pandoc path too.
+#
+# duck_block carries `ordered` (the v1 name) and `list_type` (the later alias), and every
+# panduck reader emits BOTH so a consumer written against either reads the output. That was
+# asserted for epub and latex and NOT for this reader, which is the one that mattered:
+#
+# Reported by duckeye 2026-09-02, rendering a real document. The shipped duck_block_utils
+# renderer reads attributes['ordered'] while its pandoc path writes only
+# attributes['list_type'], so an ordered list arrives and renders as BULLETS. Their users
+# see it today.
+#
+# panduck's copy is not affected -- measured, both spellings present -- and this pins that
+# rather than trusting it. The gap was invisible because check-divergence compares
+# constructors, guard calls and function names; ATTRIBUTE EMISSION is not among them, so the
+# one comparison built for exactly this class of drift could not have seen it either.
+query IIII
+SELECT element_type, attributes['list_type'], attributes['ordered'], attributes['start']
+FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"OrderedList","c":[[1,{"t":"Decimal"},{"t":"Period"}],[[{"t":"Plain","c":[{"t":"Str","c":"one"}]}]]]}]}')
+WHERE element_type = 'list';
+----
+list	ordered	true	1
+
+# A bullet list says so in both spellings too -- `ordered=false` is a claim, not an absence,
+# and a renderer switching on it must not have to distinguish "false" from "missing".
+query III
+SELECT element_type, attributes['list_type'], attributes['ordered']
+FROM read_pandoc_blocks_string(
+  '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Str","c":"x"}]}]]}]}')
+WHERE element_type = 'list';
+----
+list	bullet	false

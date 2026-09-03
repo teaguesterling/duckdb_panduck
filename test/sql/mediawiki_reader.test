@@ -310,3 +310,10 @@ query I
 SELECT panduck_format_for('guide.mediawiki');
 ----
 mediawiki
+
+# Both spellings of orderedness -- see pandoc_reader.test for why.
+query III
+SELECT element_type, attributes['list_type'], attributes['ordered']
+FROM read_mediawiki_blocks_string(E'# one\n# two') WHERE element_type = 'list';
+----
+list	ordered	true

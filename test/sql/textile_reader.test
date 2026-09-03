@@ -278,3 +278,12 @@ SELECT count(*) FROM read_textile_blocks('test/fixtures/pandoc.textile')
 WHERE element_type = 'paragraph' AND content LIKE '%<%';
 ----
 0
+
+# Both spellings of orderedness, as every panduck reader emits -- see pandoc_reader.test for
+# why this is pinned per reader rather than assumed: a sibling repo renders ordered lists as
+# bullets today because one code path emitted only `list_type`.
+query III
+SELECT element_type, attributes['list_type'], attributes['ordered']
+FROM read_textile_blocks_string(E'# one\n# two') WHERE element_type = 'list';
+----
+list	ordered	true

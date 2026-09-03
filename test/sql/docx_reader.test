@@ -335,3 +335,38 @@ statement error
 SELECT count(*) FROM read_docx_blocks('test/fixtures/malformed/badxml.docx');
 ----
 word/document.xml is not well-formed XML
+
+# ---------------------------------------------------------------------------
+# A HYPERLINK'S RUNS ARE NOT DIRECT CHILDREN OF THE PARAGRAPH.
+#
+# <w:hyperlink> WRAPS its <w:r>, so the reader's `para.children("w:r")` walk never visited
+# them. This was not a missing attribute -- the anchor TEXT disappeared from the output
+# entirely. `Paragraph with ... and a [link](https://example.com).` read back as
+# "and a ." with the word itself gone.
+#
+# Found by an audit that asked "does a construct the format plainly has come back at all",
+# not by the 1900 assertions that were passing at the time. None of them read a document
+# containing a link, so none of them could have seen it.
+query IIII
+SELECT kind, element_type, content, attributes['href']
+FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type = 'link';
+----
+inline	link	link	https://example.com
+
+# The surrounding sentence must be intact on BOTH sides of the link -- the failure removed
+# text, so asserting only that the link exists would miss a fix that ate its neighbours.
+query I
+SELECT string_agg(content, '' ORDER BY element_order)
+FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE kind = 'inline' AND element_order BETWEEN 4 AND 12;
+----
+Paragraph with bold, italic, inline code, struck, and a link.
+
+# No text may be lost anywhere in the document: every word of the source paragraph is
+# present. A count of elements cannot see deletion; only the text can.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE kind = 'inline' AND element_type = 'link' AND content = '';
+----
+0

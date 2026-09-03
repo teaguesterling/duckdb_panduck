@@ -420,7 +420,12 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		std::vector<Run> runs;
 		bool any_format = false;
 
-		for (auto run : para.children("w:r")) {
+		// A RUN IS NOT ALWAYS A DIRECT CHILD OF THE PARAGRAPH. <w:hyperlink> WRAPS its runs,
+		// so iterating children("w:r") never visits them: measured on a pandoc-written DOCX,
+		// "and a [link](https://example.com)." read back as "and a ." -- the anchor text gone
+		// from the output entirely, not merely unmarked. That is DATA LOSS, which is a
+		// different failure from ODT's, where the text survives and only the href is dropped.
+		auto process_run = [&](pugi::xml_node run, const std::string &link_href) {
 			RunFormat fmt;
 			auto rpr = run.child("w:rPr");
 			if (rpr) {
@@ -478,7 +483,19 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			}
 
 			if (text.empty()) {
-				continue;
+				return;
+			}
+
+			// A LINK carries its own element_type and href rather than being folded into the
+			// surrounding text, so the URL survives into attributes where a consumer can use it.
+			if (!link_href.empty()) {
+				Run link;
+				link.special_type = DuckBlockTypes::INLINE_LINK;
+				link.attrs["href"] = link_href;
+				link.text = text;
+				any_format = true;
+				runs.push_back(std::move(link));
+				return;
 			}
 			if (!fmt.Plain()) {
 				any_format = true;
@@ -488,6 +505,31 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				runs.back().text += text;
 			} else {
 				runs.push_back(Run {fmt, text});
+			}
+		};
+
+		for (auto child : para.children()) {
+			std::string ctag = child.name();
+			if (ctag == "w:r") {
+				process_run(child, "");
+			} else if (ctag == "w:hyperlink") {
+				// r:id resolves through document.xml.rels, exactly as an image's r:embed does.
+				std::string href;
+				auto hit = rels.find(child.attribute("r:id").value());
+				if (hit != rels.end()) {
+					href = hit->second;
+				}
+				if (href.empty()) {
+					// w:anchor is an internal bookmark rather than a URL -- a same-document
+					// target, which is what a cross-reference or a TOC entry uses.
+					std::string anchor = child.attribute("w:anchor").value();
+					if (!anchor.empty()) {
+						href = "#" + anchor;
+					}
+				}
+				for (auto hrun : child.children("w:r")) {
+					process_run(hrun, href);
+				}
 			}
 		}
 

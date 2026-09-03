@@ -205,6 +205,48 @@ about which divergences are the format genuinely differing.
 [Readers](readers.md): LaTeX interleaves `paragraph` between list items; textile produces
 no `blockquote`; EPUB emits a `plain` element no other reader does.
 
+## DuckDB v2.0 (`test_against_latest`)
+
+The community-extensions pipeline runs a `test_against_latest` job that builds against
+DuckDB **v2.0-cyanoptera**, a pre-release. It is a forward-compatibility preview: it sets
+`deploy: false`, and the last extension merged into that repo had it skipped entirely. The
+`build` jobs — which use the pinned v1.5.5 this extension targets — pass on every platform.
+
+Two v2.0 breaks are fixed, both because the fix is better code either way:
+
+| Change | How it is handled |
+|---|---|
+| bind `names` is `vector<Identifier>&`, was `vector<string>&` | the type is **derived from `table_function_bind_t`**, so whatever DuckDB declares is what the 32 bind functions accept |
+| `null_handling` moved behind `SetNullHandling()` | overload resolution picks the setter when it exists, the member otherwise |
+
+**Two remain, and were deliberately not fixed.** Both are in `reader_registry.cpp`:
+
+- `UnaryExecutor::ExecuteWithNulls` is gone. v2.0 changed the *protocol*: a null is an
+  empty `optional<T>` return rather than a write through `ValidityMask &`. Writing the loop
+  directly avoids the executor, but v2.0 also renamed the mutable vector accessors
+  (`GetData` → `GetDataMutable`, `Validity` → `ValidityMutable`), so the output side still
+  needs a shim per accessor.
+- `DefaultMacro` collapsed from five fields to three, folding the parameter list into the
+  definition string. The *struct shape* differs, so the macro table cannot be written once;
+  it needs a builder branching on field layout plus runtime storage for the built strings.
+  (`DefaultTableMacro` is unchanged.)
+
+The rule applied was: **one version-stable implementation, or none.** The first is
+borderline and the second is not achievable, and since v2.0 will not build without both,
+half the port buys nothing while adding shims for a version this extension does not target.
+Port it when v2.0 ships and its API has stopped moving.
+
+There is a local check for this, which is what made the remaining set knowable rather than
+discovered one CI round-trip at a time:
+
+```sh
+git clone --depth 1 --branch v2.0-cyanoptera https://github.com/duckdb/duckdb /tmp/duckdb20
+g++ -fsyntax-only -std=c++17 -I src/include -I /tmp/duckdb20/src/include \
+    -I build/release/vcpkg_installed/x64-linux/include src/*.cpp
+```
+
+It reproduces the CI errors exactly, in seconds.
+
 ## A note on writing assertions
 
 Three failure modes surfaced building this, each one passing while the property it named

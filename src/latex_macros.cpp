@@ -37,6 +37,11 @@ const MacroEntry MACROS[] = {
     {"href", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 2, 1, nullptr},
     {"url", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 1, 0, nullptr},
     {"includegraphics", Disposition::SEMANTIC, DuckBlockTypes::INLINE_IMAGE, 1, 0, nullptr},
+    // `\caption` inside a figure is the figure's CAPTION, and duck_block has the type.
+    // Unmapped, its text still survived -- as an ordinary paragraph inside the figure -- so
+    // this is a shape gap rather than content loss, and the fix is cheap enough that leaving
+    // it would just be a caption a consumer cannot find by name.
+    {"caption", Disposition::SEMANTIC, DuckBlockTypes::TYPE_CAPTION, 1, 0, nullptr},
     {"footnote", Disposition::SEMANTIC, DuckBlockTypes::INLINE_NOTE, 1, 0, nullptr},
     {"cite", Disposition::SEMANTIC, DuckBlockTypes::INLINE_CITE, 1, 0, nullptr},
 
@@ -122,6 +127,12 @@ const MacroEntry ENVIRONMENTS[] = {
     // while duck_block had no table to map onto; spec 5.0's native {headers, rows} schema
     // is that map, and EmitTabular walks the cells rather than descending into them.
     {"tabular", Disposition::SEMANTIC, DuckBlockTypes::TYPE_TABLE, 0, -1, nullptr},
+    // `longtable` IS WHAT PANDOC'S LATEX WRITER EMITS. tabular was mapped and longtable was
+    // not, so every table in a pandoc-generated .tex was dropped while every table in a
+    // hand-written one was read -- and NEITHER latex fixture had a table, so nothing caught
+    // it. Same shape as the tabular gap it sits beside: the environment was simply absent
+    // from this list, and an absent environment falls through to being discarded.
+    {"longtable", Disposition::SEMANTIC, DuckBlockTypes::TYPE_TABLE, 0, -1, nullptr},
     // tikzpicture stays dropped: its body is coordinates, not prose, and there is no
     // element_type whose meaning it would carry.
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},
@@ -137,8 +148,18 @@ const MacroEntry ENVIRONMENTS[] = {
     {"gather", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"multline", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"displaymath", Disposition::DROPPED, nullptr, 0, -1, nullptr},
-    {"figure", Disposition::DROPPED, nullptr, 0, -1, nullptr},
-    {"table", Disposition::DROPPED, nullptr, 0, -1, nullptr},
+    // `figure` AND `table` WERE DROPPED WHOLE, which discarded their CONTENTS -- the
+    // \includegraphics inside a figure and the tabular inside a table environment, both of
+    // which this reader maps and neither of which was ever reached. Losing the wrapper is a
+    // gap; losing the image and the table it wraps is content loss, which this reader's own
+    // tabular comment calls "the worse of the two".
+    //
+    // SEMANTIC rather than TRANSPARENT: duck_block has `figure`, and pandoc emits Figure for
+    // exactly this environment, so the wrapper is expressible rather than something to
+    // flatten away. `table` is LaTeX's float wrapper around a tabular and has no duck_block
+    // counterpart of its own, so it is TRANSPARENT -- its child table stands alone.
+    {"figure", Disposition::SEMANTIC, DuckBlockTypes::TYPE_FIGURE, 0, -1, nullptr},
+    {"table", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
 };
 
 const size_t ENVIRONMENT_COUNT = sizeof(ENVIRONMENTS) / sizeof(ENVIRONMENTS[0]);

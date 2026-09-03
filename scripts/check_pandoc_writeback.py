@@ -132,6 +132,19 @@ CONSTRUCTS = [
         r"read_textile_blocks_string(E'notextile. <b>x</b>')",
         "raw",
     ),
+    # longtable is what pandoc's LaTeX WRITER emits; it was unmapped while tabular was, so
+    # every table in a pandoc-generated .tex was dropped. Neither latex fixture had a table.
+    (
+        "latex longtable",
+        r"read_latex_blocks_string(E'\\begin{longtable}{ll}\na & b \\\\\n\\end{longtable}')",
+        "table",
+    ),
+    # `figure` was DROPPED WHOLE, discarding the \includegraphics inside it.
+    (
+        "latex figure",
+        r"read_latex_blocks_string('\begin{figure}\includegraphics{p.png}\caption{c}\end{figure}')",
+        "figure",
+    ),
 ]
 
 COUNT_SQL = "SELECT count(*) FROM {source} WHERE element_type = '{element_type}';"

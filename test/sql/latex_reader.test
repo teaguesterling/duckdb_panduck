@@ -604,14 +604,27 @@ SELECT src, n FROM (
   SELECT 'b_align_plain', count(*) FROM read_latex_blocks_string('\begin{align} E &= mc^2 \end{align}')
   UNION ALL
   SELECT 'c_gather_star', count(*) FROM read_latex_blocks_string('\begin{gather*} x = y \end{gather*}')
-  UNION ALL
-  SELECT 'd_figure_star', count(*) FROM read_latex_blocks_string('\begin{figure*}\caption{c}\end{figure*}')
 ) ORDER BY src;
 ----
 a_align_star	0
 b_align_plain	0
 c_gather_star	0
-d_figure_star	0
+
+# `figure*` USED TO BE IN THE LIST ABOVE, asserting 0, and that encoded a defect rather than
+# the property: `figure` was DROPPED, which discarded the \includegraphics and \caption
+# inside it. Losing the wrapper is a gap; losing the image it wraps is content loss.
+#
+# The property this pair actually tests is that a STARRED environment gets its unstarred
+# form's disposition -- so it is asserted directly, as EQUALITY between the two, which
+# survives figure's disposition changing again.
+query II
+SELECT
+  (SELECT string_agg(element_type, ',' ORDER BY element_order)
+     FROM read_latex_blocks_string('\begin{figure*}\includegraphics{p.png}\caption{c}\end{figure*}')),
+  (SELECT string_agg(element_type, ',' ORDER BY element_order)
+     FROM read_latex_blocks_string('\begin{figure}\includegraphics{p.png}\caption{c}\end{figure}'));
+----
+figure,paragraph,image,caption	figure,paragraph,image,caption
 
 # ...and the star reaches the verbatim LEXER too, which is a separate lookup: without it
 # `\begin{verbatim*}` was tokenized as ordinary LaTeX and its body was read as markup.
@@ -1036,3 +1049,42 @@ SELECT element_type, encoding FROM read_latex_blocks_string(
   '\begin{tabular}{ll}a & b \\\end{tabular}') WHERE kind = 'block';
 ----
 table	json
+
+# ---------------------------------------------------------------------------
+# `longtable` IS WHAT PANDOC'S LATEX WRITER EMITS, and it was not in the environment table
+# at all -- so every table in a pandoc-generated .tex was dropped while every table in a
+# hand-written one was read.
+#
+# NEITHER LATEX FIXTURE HAD A TABLE, which is why nothing caught it. The write-back check
+# exercised `tabular` through a string constant, and a construct tested only through a
+# string is a construct no real document has proven.
+query II
+SELECT
+  (SELECT count(*) FROM read_latex_blocks_string(E'\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}')
+   WHERE element_type = 'table'),
+  (SELECT count(*) FROM read_latex_blocks_string(E'\\begin{longtable}{ll}\na & b \\\\\n\\end{longtable}')
+   WHERE element_type = 'table');
+----
+1	1
+
+# `figure` and `table` were DROPPED WHOLE, discarding their CONTENTS -- the \includegraphics
+# inside a figure and the tabular inside a table float, both of which this reader maps and
+# neither of which was ever reached. This reader's own tabular comment calls losing the text
+# rather than the shape "the worse of the two"; these were doing exactly that.
+query III
+SELECT element_type, level, content FROM read_latex_blocks_string(
+  '\begin{figure}\includegraphics{p.png}\caption{A caption}\end{figure}')
+WHERE element_type IN ('figure', 'image', 'caption') ORDER BY element_order;
+----
+figure	1	NULL
+image	3	NULL
+caption	3	A caption
+
+# The `table` FLOAT is transparent -- it has no duck_block counterpart of its own, so its
+# child table stands alone rather than being wrapped in something invented.
+query I
+SELECT element_type FROM read_latex_blocks_string(
+  E'\\begin{table}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{table}')
+WHERE element_type = 'table';
+----
+table

@@ -266,3 +266,39 @@ FROM read_odt_blocks('test/fixtures/constructs.odt')
 WHERE element_type = 'link';
 ----
 link	link	https://example.com
+
+# ---------------------------------------------------------------------------
+# CONTENT HIDDEN BEHIND WRAPPER ELEMENTS -- the ODF half of the same sweep.
+#
+# The block collector recognised text:p, text:h, lists and tables, and silently dropped
+# every other element. <text:section> wraps block content (a linked or protected region,
+# and a table of contents lives in one), so a paragraph inside one never reached the
+# output. Inline, text:meta and text:ruby wrap text that vanished the same way.
+query I
+SELECT string_agg(content, '|' ORDER BY element_order)
+FROM read_odt_blocks('test/fixtures/wrappers.odt')
+WHERE content IN ('SECTIONPARA', 'meta METATEXT tail', 'ruby RUBYBASE tail');
+----
+SECTIONPARA|meta METATEXT tail|ruby RUBYBASE tail
+
+# RUBY IS A BASE PLUS A GLOSS. Only the base is the sentence's text -- descending into the
+# whole element would splice the pronunciation into the prose.
+query I
+SELECT count(*) FROM read_odt_blocks('test/fixtures/wrappers.odt')
+WHERE content LIKE '%GLOSS%';
+----
+0
+
+# office:annotation is a COMMENT -- about the document, not part of it. The ODF counterpart
+# of <w:del>: proof that the fix descends deliberately rather than into everything.
+query I
+SELECT count(*) FROM read_odt_blocks('test/fixtures/wrappers.odt')
+WHERE content LIKE '%COMMENTTEXT%';
+----
+0
+
+query I
+SELECT content FROM read_odt_blocks('test/fixtures/wrappers.odt')
+WHERE content LIKE 'note%';
+----
+note  tail

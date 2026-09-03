@@ -190,8 +190,23 @@ void CollectRuns(const pugi::xml_node &node, const RunFormat &inherited, const s
 			r.special_type = DuckBlockTypes::INLINE_NOTE;
 			r.text = body;
 			runs.push_back(std::move(r));
+		} else if (tag == "text:meta" || tag == "text:meta-field" || tag == "text:ruby-base" ||
+		           tag == "text:bookmark-ref" || tag == "text:reference-mark-start") {
+			// TRANSPARENT WRAPPERS. They annotate a span of text -- RDF metadata, a
+			// reference -- and carry no formatting of their own, so their CONTENT is part of
+			// the sentence. Probed: "meta <text:meta>METATEXT</text:meta> tail" read back as
+			// "meta  tail", with the wrapped word gone. Same class as DOCX's <w:hyperlink>.
+			CollectRuns(child, inherited, styles, runs);
+		} else if (tag == "text:ruby") {
+			// RUBY is a base plus a pronunciation gloss. Only the BASE is the sentence's
+			// text; descending into the whole element would splice the gloss into the prose.
+			CollectRuns(child.child("text:ruby-base"), inherited, styles, runs);
 		}
-		// text:bookmark-start / -end, text:sequence-decls and friends carry no content.
+		// DELIBERATELY NOT DESCENDED: office:annotation is a COMMENT, and text:ruby-text is
+		// a pronunciation gloss. Both are about the document rather than part of it -- the
+		// same reason DOCX does not descend into <w:del>. Unknown elements are ignored
+		// rather than flattened, so a wrapper that does carry text has to be added here
+		// deliberately; that is what hid text:meta and text:ruby until they were probed.
 	}
 }
 
@@ -473,6 +488,13 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 				    std::string style = node.attribute("text:style-name").value();
 				    collect(node, depth + 1, style.empty() ? list_style : style);
 			    } else if (tag == "text:list-item" || tag == "text:list-header") {
+				    collect(node, depth, list_style);
+			    } else if (tag == "text:section" || tag == "office:text") {
+				    // A SECTION WRAPS block content. Probed: a paragraph inside
+				    // <text:section> never reached the output at all -- the collector only
+				    // recognised text:p, text:h, lists and tables, and silently dropped
+				    // everything else. Sections are how ODF marks linked or protected
+				    // regions, and a table of contents lives in one.
 				    collect(node, depth, list_style);
 			    } else if (tag == "table:table") {
 				    // A table:table is a SIBLING of text:p and was never collected, so every

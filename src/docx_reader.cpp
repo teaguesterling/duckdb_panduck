@@ -9,6 +9,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include <cctype>
+#include <functional>
 #include <map>
 #include <pugixml.hpp>
 
@@ -352,7 +353,28 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	// alone silently swallows the second into the first -- measured on a generated fixture,
 	// where `- plain bullet` after `1. 2. 3.` became a fourth ordered item.
 	std::vector<bool> open_ordered;
-	for (auto node : body.children()) {
+
+	// <w:sdt> IS A CONTENT CONTROL, and it WRAPS block content in <w:sdtContent>. Word
+	// emits them for form fields, citations, tables of contents and any structured region,
+	// so they are ordinary in real documents rather than exotic. A paragraph inside one is
+	// not a child of the body, and this loop skipped it outright: the whole paragraph, text
+	// and all, never reached the output.
+	//
+	// Same class as the <w:hyperlink> bug -- a wrapper between the container and the thing
+	// being looked for. Flattened here so every later stage sees a plain block sequence.
+	std::vector<pugi::xml_node> body_nodes;
+	std::function<void(pugi::xml_node)> flatten_blocks = [&](pugi::xml_node parent) {
+		for (auto n : parent.children()) {
+			if (std::string(n.name()) == "w:sdt") {
+				flatten_blocks(n.child("w:sdtContent"));
+			} else {
+				body_nodes.push_back(n);
+			}
+		}
+	};
+	flatten_blocks(body);
+
+	for (auto node : body_nodes) {
 		std::string node_name = node.name();
 		if (node_name == "w:tbl") {
 			// A table ends any open list -- OOXML permits the nesting and no consumer wants
@@ -537,30 +559,46 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			}
 		};
 
-		for (auto child : para.children()) {
-			std::string ctag = child.name();
-			if (ctag == "w:r") {
-				process_run(child, "");
-			} else if (ctag == "w:hyperlink") {
-				// r:id resolves through document.xml.rels, exactly as an image's r:embed does.
-				std::string href;
-				auto hit = rels.find(child.attribute("r:id").value());
-				if (hit != rels.end()) {
-					href = hit->second;
-				}
-				if (href.empty()) {
-					// w:anchor is an internal bookmark rather than a URL -- a same-document
-					// target, which is what a cross-reference or a TOC entry uses.
-					std::string anchor = child.attribute("w:anchor").value();
-					if (!anchor.empty()) {
-						href = "#" + anchor;
+		// A RUN IS REACHED THROUGH ANY NUMBER OF WRAPPERS, so this descends rather than
+		// listing direct children. Probed against a hand-built document: <w:ins> lost the
+		// inserted words ("before INSERTED after" read back as "before  after"),
+		// <w:smartTag> and <w:fldSimple> lost theirs entirely. Tracked changes and fields
+		// are not edge cases -- a reviewed document is full of the first and any
+		// cross-reference or page number is the second.
+		//
+		// <w:del> is deliberately NOT transparent: it holds <w:delText>, text the author
+		// REMOVED. Descending into it would resurrect deleted content into the document,
+		// which is a worse failure than dropping it.
+		std::function<void(pugi::xml_node, const std::string &)> walk_inline = [&](pugi::xml_node parent,
+		                                                                           const std::string &href) {
+			for (auto child : parent.children()) {
+				std::string ctag = child.name();
+				if (ctag == "w:r") {
+					process_run(child, href);
+				} else if (ctag == "w:hyperlink") {
+					// r:id resolves through document.xml.rels, as an image's r:embed does.
+					std::string link;
+					auto hit = rels.find(child.attribute("r:id").value());
+					if (hit != rels.end()) {
+						link = hit->second;
 					}
-				}
-				for (auto hrun : child.children("w:r")) {
-					process_run(hrun, href);
+					if (link.empty()) {
+						// w:anchor is an internal bookmark rather than a URL -- the
+						// same-document target a cross-reference or TOC entry uses.
+						std::string anchor = child.attribute("w:anchor").value();
+						if (!anchor.empty()) {
+							link = "#" + anchor;
+						}
+					}
+					walk_inline(child, link);
+				} else if (ctag == "w:ins" || ctag == "w:smartTag" || ctag == "w:fldSimple" || ctag == "w:sdt" ||
+				           ctag == "w:sdtContent" || ctag == "w:bdo" || ctag == "w:dir") {
+					// Transparent: these carry no text of their own, only runs.
+					walk_inline(child, href);
 				}
 			}
-		}
+		};
+		walk_inline(para, "");
 
 		std::string all;
 		for (auto &r : runs) {

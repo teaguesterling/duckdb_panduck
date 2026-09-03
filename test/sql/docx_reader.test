@@ -419,3 +419,40 @@ WHERE attributes['role'] IS NOT NULL ORDER BY element_order;
 ----
 list_item	Term	term
 list_item	The definition of the term.	definition
+
+# ---------------------------------------------------------------------------
+# CONTENT HIDDEN BEHIND WRAPPER ELEMENTS.
+#
+# A run is not always a direct child of its paragraph, and a paragraph is not always a
+# direct child of the body. OOXML puts wrappers in between, and the reader's fixed-tag
+# walks looked straight past them -- silently, because the text simply was not in the
+# output. Five at once, found by probing the format rather than by any test:
+#
+#   <w:hyperlink> anchor  <w:ins> tracked insertions  <w:sdt> content controls
+#   <w:smartTag> entities  <w:fldSimple> field results
+#
+# These are not exotic: a reviewed document is full of tracked changes, and any
+# cross-reference, page number or table of contents is a field or a content control.
+query I
+SELECT string_agg(content, '|' ORDER BY element_order)
+FROM read_docx_blocks('test/fixtures/wrappers.docx')
+WHERE content IN ('before INSERTED after', 'SDTPARA', 'SMARTTAG', 'FIELDTEXT');
+----
+before INSERTED after|SDTPARA|SMARTTAG|FIELDTEXT
+
+# <w:del> IS NOT TRANSPARENT, and must never become so. It holds <w:delText> -- text the
+# author REMOVED. Descending into every wrapper would resurrect deleted content into the
+# document, which is a worse failure than dropping it. This is the guard on the fix.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/wrappers.docx')
+WHERE content LIKE '%DELETEDWORD%';
+----
+0
+
+# ...while the text AROUND the deletion still reads correctly, so the exclusion is not
+# achieved by dropping the whole paragraph.
+query I
+SELECT content FROM read_docx_blocks('test/fixtures/wrappers.docx')
+WHERE content LIKE 'kept%';
+----
+kept tail

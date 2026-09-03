@@ -152,9 +152,7 @@ CH2 = CHAPTER % {"title": "Second Chapter", "body": "Read me second, stored me f
 
 def main():
     with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(
-            zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED
-        )
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", zipfile.ZIP_STORED)
         z.writestr("META-INF/container.xml", CONTAINER)
         z.writestr("OEBPS/pkg/book.opf", OPF)
         z.writestr("OEBPS/css/book.css", CSS)

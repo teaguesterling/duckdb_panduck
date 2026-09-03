@@ -1,7 +1,8 @@
 # name: test/sql/textile_reader.test
 # description: read_textile_blocks() -- textile, one of the last two before the pandoc
-#              dependency can actually be removed
 # group: [sql]
+
+#              dependency can actually be removed
 
 require panduck
 

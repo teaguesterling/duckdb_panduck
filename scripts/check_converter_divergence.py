@@ -68,9 +68,7 @@ UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
 # The {ref} slot is resolved to a SHA before fetching. A branch url is served from a cache
 # that lags -- check_duck_block_vocabulary.py observed it hand back a superseded file --
 # and a stale fetch here would report agreement against content upstream already replaced.
-UPSTREAM_RAW = (
-    "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + SRC_REL
-)
+UPSTREAM_RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + SRC_REL
 
 # Divergences that are DELIBERATE, recorded with reasons. An allowlist without reasons
 # decays into a mute button, and this one gates a precondition for handoff step 4.
@@ -93,6 +91,34 @@ EXPECTED = {
     # is the smaller idea -- it needs no per-constructor arm -- and panduck carries two arms
     # it could drop. That is redundancy, not a defect, and not worth churn in a file whose
     # two copies are being compared.
+    # PARALLEL REPAIR, THE THIRD INSTANCE, and the check caught this one live.
+    #
+    # Both repos independently fixed the native-table export defect -- a {headers,rows}
+    # projection written into pandoc's `c` where a six-element ARRAY belongs. duckeye hit it
+    # in the shipped artifact and reported it to both of us. The fixes are the same shape and
+    # the helper names differ:
+    #
+    #     upstream                     panduck
+    #     EmptyPandocAttr              EmptyAttr
+    #     PandocTableCell              TableCellVal
+    #     PandocTableRow               TableRowVal
+    #     TableContentToPandocVal      NativeTableToPandocVal
+    #     PandocTagObj                 (inlined -- no separate helper)
+    #
+    # Verified by measurement rather than by reading the names: panduck's exporter emits
+    # Table `c` as a list of 6 that a real pandoc renders, on four separate paths (pandoc
+    # JSON, docx, org, mediawiki). Same behaviour, different spelling.
+    #
+    # This is the pattern the depth-guard divergence taught: two sessions fixing the same
+    # reported bug produce the same behaviour under different names, and exact agreement is
+    # the accident rather than the rule. The names are not worth churning to match -- a
+    # rename here would be cosmetic and would break nothing either way -- but the divergence
+    # is recorded rather than muted so the next person sees it was checked.
+    "EmptyPandocAttr": "parallel repair of the native-table export -- see the note above",
+    "PandocTableCell": "parallel repair -- panduck calls it TableCellVal",
+    "PandocTableRow": "parallel repair -- panduck calls it TableRowVal",
+    "PandocTagObj": "upstream helper; panduck inlines the equivalent",
+    "TableContentToPandocVal": "parallel repair -- panduck calls it NativeTableToPandocVal",
     "Link": "different strategy for the same requirement -- see the note in EXPECTED",
     "Image": "different strategy for the same requirement -- see the note in EXPECTED",
 }
@@ -123,24 +149,16 @@ def guard_calls(code: str) -> int:
 
 def defined_functions(code: str) -> set:
     """Names of functions defined in the file, as a coarse structural fingerprint."""
-    return set(
-        re.findall(
-            r"^(?:static\s+)?[\w:<>,\s*&]+?\b(\w+)\s*\([^;]*?\)\s*\{", code, flags=re.M
-        )
-    )
+    return set(re.findall(r"^(?:static\s+)?[\w:<>,\s*&]+?\b(\w+)\s*\([^;]*?\)\s*\{", code, flags=re.M))
 
 
 def fetch_upstream() -> tuple:
     """Return (source_text, sha) or raise urllib.error.URLError."""
-    req = urllib.request.Request(
-        UPSTREAM_API, headers={"User-Agent": "panduck-divergence-check"}
-    )
+    req = urllib.request.Request(UPSTREAM_API, headers={"User-Agent": "panduck-divergence-check"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         sha = json.load(resp)["sha"]
     url = UPSTREAM_RAW.format(ref=sha)
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "panduck-divergence-check"}
-    )
+    req = urllib.request.Request(url, headers={"User-Agent": "panduck-divergence-check"})
     with urllib.request.urlopen(req, timeout=20) as resp:
         return resp.read().decode("utf-8"), sha
 
@@ -185,8 +203,7 @@ def self_test() -> list:
 
     # The ACTUAL 2026-09-02 defect: a guard call removed.
     if not any(
-        "CheckPandocDepth call sites differ" in m
-        for m in compare(base.replace("CheckPandocDepth(d); ", ""), base)
+        "CheckPandocDepth call sites differ" in m for m in compare(base.replace("CheckPandocDepth(d); ", ""), base)
     ):
         failures.append("SELF-TEST: a missing guard call was not detected")
 
@@ -196,21 +213,14 @@ def self_test() -> list:
         failures.append("SELF-TEST: a diverging constructor set was not detected")
 
     # A whole function present on one side only.
-    if not any(
-        "functions defined upstream" in m
-        for m in compare(base, base + "void g() { }\n")
-    ):
+    if not any("functions defined upstream" in m for m in compare(base, base + "void g() { }\n")):
         failures.append("SELF-TEST: a function missing on this side was not detected")
 
     # THE COMMENT TRAP, which is the one a naive implementation fails. Prose mentioning the
     # guard must not count as a call -- panduck's file now discusses CheckPandocDepth twice.
-    prose = base.replace(
-        "void f()", "// CheckPandocDepth and CheckPandocDepth again\nvoid f()"
-    )
+    prose = base.replace("void f()", "// CheckPandocDepth and CheckPandocDepth again\nvoid f()")
     if compare(prose, base):
-        failures.append(
-            "SELF-TEST: a comment mentioning CheckPandocDepth was counted as a call"
-        )
+        failures.append("SELF-TEST: a comment mentioning CheckPandocDepth was counted as a call")
 
     # A CONFORMING control: identical files must report nothing.
     if compare(base, base):
@@ -231,9 +241,7 @@ def main() -> int:
     if failures:
         for f in failures:
             print(f"  {f}")
-        print(
-            "\nFAILED: the checker cannot detect a divergence, so its verdict means nothing."
-        )
+        print("\nFAILED: the checker cannot detect a divergence, so its verdict means nothing.")
         return 1
 
     try:
@@ -246,17 +254,11 @@ def main() -> int:
         return 1 if require else 0
 
     print(f"  upstream {UPSTREAM_REPO} @ {sha[:10]}")
-    divergences = [
-        d for d in compare(local, upstream) if not any(k in d for k in EXPECTED)
-    ]
+    divergences = [d for d in compare(local, upstream) if not any(k in d for k in EXPECTED)]
     if not divergences:
-        print(
-            "  no divergence in handled constructors, guard calls, or defined functions."
-        )
+        print("  no divergence in handled constructors, guard calls, or defined functions.")
         print()
-        print(
-            "  A SIGNAL, NOT A DIAGNOSIS: this compares three coarse invariants. It does"
-        )
+        print("  A SIGNAL, NOT A DIAGNOSIS: this compares three coarse invariants. It does")
         print("  not establish that the two copies behave identically.")
         return 0
 
@@ -264,12 +266,8 @@ def main() -> int:
         print(f"  DIVERGENCE: {d}")
     print()
     print("These are SIGNALS TO INVESTIGATE, not diagnoses. Read the diff:")
-    print(
-        f"  git show {sha}:{SRC_REL} > /tmp/upstream.cpp && diff /tmp/upstream.cpp {SRC_REL}"
-    )
-    print(
-        "A divergence may be deliberate -- if so, record it in EXPECTED with its reason."
-    )
+    print(f"  git show {sha}:{SRC_REL} > /tmp/upstream.cpp && diff /tmp/upstream.cpp {SRC_REL}")
+    print("A divergence may be deliberate -- if so, record it in EXPECTED with its reason.")
     return 1
 
 

@@ -236,9 +236,7 @@ RENDER_EXEMPT = {
 def skip(reason: str) -> int:
     if os.environ.get("DUCK_BLOCK_CHECKS_STRICT") == "1":
         print(f"FAIL: {reason}")
-        print(
-            "      DUCK_BLOCK_CHECKS_STRICT=1 is set, so a skipped check is a failed check."
-        )
+        print("      DUCK_BLOCK_CHECKS_STRICT=1 is set, so a skipped check is a failed check.")
         return 1
     print(f"SKIP: {reason}")
     return 0
@@ -264,11 +262,7 @@ def run(duckdb, sql: str) -> str:
         text=True,
     )
     if proc.returncode != 0:
-        return (
-            "<ERROR> " + proc.stderr.strip().splitlines()[0]
-            if proc.stderr.strip()
-            else "<ERROR>"
-        )
+        return "<ERROR> " + proc.stderr.strip().splitlines()[0] if proc.stderr.strip() else "<ERROR>"
     return proc.stdout.strip().splitlines()[0] if proc.stdout.strip() else ""
 
 
@@ -348,20 +342,12 @@ def main() -> int:
         if ty in INHERENT and got == INHERENT[ty][0]:
             continue
         failed = True
-        print(
-            f"\nFAIL: `{ty}` does not survive a round trip -- it reads back as `{got}`."
-        )
+        print(f"\nFAIL: `{ty}` does not survive a round trip -- it reads back as `{got}`.")
         if ty in INHERENT:
-            print(
-                f"      Expected `{INHERENT[ty][0]}` by the recorded exception, got `{got}`."
-            )
+            print(f"      Expected `{INHERENT[ty][0]}` by the recorded exception, got `{got}`.")
         else:
-            print(
-                "      Either the reader cannot read what the exporter writes (add the read side),"
-            )
-            print(
-                "      or the encoding genuinely cannot carry the distinction -- in which case add"
-            )
+            print("      Either the reader cannot read what the exporter writes (add the read side),")
+            print("      or the encoding genuinely cannot carry the distinction -- in which case add")
             print("      it to INHERENT with the reasoning rather than 'fixing' it.")
     if not failed:
         n_inherent = len(INHERENT)
@@ -384,26 +370,16 @@ def main() -> int:
     unaccounted = sorted(declared - set(PROBES) - set(NOT_A_BLOCK))
     if unaccounted:
         failed = True
-        print(
-            f"\nFAIL: {len(unaccounted)} declared type(s) are neither probed nor excused here: {unaccounted}"
-        )
-        print(
-            "      Add a PROBES entry, or a NOT_A_BLOCK entry saying why a block round trip"
-        )
-        print(
-            "      is not the property. Leaving it out is not a third option: the content arm"
-        )
-        print(
-            "      below still passes it, and 'its text appears somewhere in the AST' is"
-        )
+        print(f"\nFAIL: {len(unaccounted)} declared type(s) are neither probed nor excused here: {unaccounted}")
+        print("      Add a PROBES entry, or a NOT_A_BLOCK entry saying why a block round trip")
+        print("      is not the property. Leaving it out is not a third option: the content arm")
+        print("      below still passes it, and 'its text appears somewhere in the AST' is")
         print("      satisfied by a fallback that destroys the type.")
     stale_keys = sorted((set(PROBES) | set(NOT_A_BLOCK)) - declared)
     if stale_keys:
         failed = True
         print(f"\nFAIL: {stale_keys} named here but no longer declared by the build.")
-        print(
-            "      A probe for a vanished type fails and looks exactly like a defect; an"
-        )
+        print("      A probe for a vanished type fails and looks exactly like a defect; an")
         print("      exemption for one goes on excusing nothing, forever.")
     # And the excuses expire the same way the others do: a type recorded as "not a block"
     # that DOES round-trip to itself in block position has become block-capable, and the
@@ -420,17 +396,11 @@ def main() -> int:
             revived.append(ty)
     if revived:
         failed = True
-        print(
-            f"\nFAIL: {revived} round-trip to themselves as blocks, so the excuse has expired."
-        )
-        print(
-            "      Move them to PROBES -- an expired exemption hides the next regression"
-        )
+        print(f"\nFAIL: {revived} round-trip to themselves as blocks, so the excuse has expired.")
+        print("      Move them to PROBES -- an expired exemption hides the next regression")
         print("      behind an explanation nobody rechecks.")
     if not failed:
-        print(
-            f"    coverage: all {len(declared)} declared types are probed here or excused with a reason"
-        )
+        print(f"    coverage: all {len(declared)} declared types are probed here or excused with a reason")
 
     # Three containers, not one. This arm probed only a Div until 2026-09-01, and that
     # is exactly why a definition list silently dropped every block after the first for
@@ -466,8 +436,7 @@ def main() -> int:
         ),
         (
             "a figure",
-            '{"t":"Figure","c":[["",[],[]],[null,[]],'
-            '[{"t":"Para","c":[{"t":"Str","c":"lead"}]},%s]]}',
+            '{"t":"Figure","c":[["",[],[]],[null,[]],' '[{"t":"Para","c":[{"t":"Str","c":"lead"}]},%s]]}',
         ),
         (
             "a list item",
@@ -480,16 +449,10 @@ def main() -> int:
         ),
     ]
 
-    print(
-        "Containment sweep: every constructor inside each container that has its own walk"
-    )
+    print("Containment sweep: every constructor inside each container that has its own walk")
     for cname, shell in CONTAINERS:
         for name, inner, probe in NESTED:
-            doc = (
-                '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":['
-                + (shell % inner)
-                + "]}"
-            )
+            doc = '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[' + (shell % inner) + "]}"
             got = run(
                 duckdb,
                 f"SELECT duck_blocks_to_pandoc_blocks(pandoc_ast_to_blocks('{doc}'))::VARCHAR;",
@@ -503,20 +466,12 @@ def main() -> int:
             # for both sends the reader looking for a deletion that is not there.
             shape = "DEGRADED to a classed Div" if '"Div"' in got else "DROPPED"
             print(f"\nFAIL: `{name}` is {shape} inside {cname}.")
-            print(
-                "      A container's child walk must not decide whether a child EXISTS by"
-            )
-            print(
-                "      enumerating type names, and must not stop after the FIRST child."
-            )
-            print(
-                "      Every container with its own walk needs the same terminal arm; where"
-            )
+            print("      A container's child walk must not decide whether a child EXISTS by")
+            print("      enumerating type names, and must not stop after the FIRST child.")
+            print("      Every container with its own walk needs the same terminal arm; where")
             print("      two walks read one structure, they must read all of it.")
     if not failed:
-        print(
-            f"  all {len(NESTED)} constructors survive inside each of {len(CONTAINERS)} containers"
-        )
+        print(f"  all {len(NESTED)} constructors survive inside each of {len(CONTAINERS)} containers")
 
     # FIFTH ARM, from duckdb_markdown, who ran it over their own 43 types after their
     # reader flattened a multi-block blockquote into one run-together string. The
@@ -543,22 +498,15 @@ def main() -> int:
         " || ' ' || count(*) FILTER (WHERE ast NOT LIKE '%ALPHA%')"
         " || ' ' || count(*) FILTER (WHERE ast NOT LIKE '%BETA%') FROM d;"
     )
-    swept, joined, alpha_gone, beta_gone = (
-        int(x) for x in run(duckdb, sweep_sql).split()
-    )
+    swept, joined, alpha_gone, beta_gone = (int(x) for x in run(duckdb, sweep_sql).split())
     n_declared = len(declared)
     if (joined, alpha_gone, beta_gone) != (0, 0, 0):
         failed = True
         print(
-            f"\nFAIL: containers that JOINED their children: {joined}; that dropped one: "
-            f"{alpha_gone + beta_gone}."
+            f"\nFAIL: containers that JOINED their children: {joined}; that dropped one: " f"{alpha_gone + beta_gone}."
         )
-        print(
-            "      A container with block children must emit them as blocks. Joining is the"
-        )
-        print(
-            "      worse half: the words survive, so any check asking whether the text is"
-        )
+        print("      A container with block children must emit them as blocks. Joining is the")
+        print("      worse half: the words survive, so any check asking whether the text is")
         print("      still there passes on the destroyed output.")
     # THE COUNT IS PART OF THE ASSERTION, not decoration. It swept 47 rows against 43
     # declared types the first time it ran, because duck_block_type_names() enumerated
@@ -568,19 +516,11 @@ def main() -> int:
     if swept != n_declared:
         failed = True
         print(f"\nFAIL: swept {swept} rows for {n_declared} declared types.")
-        print(
-            "      duck_block_type_names() is returning duplicates, so a consumer counting"
-        )
-        print(
-            "      it gets the wrong vocabulary size and any join against it double-counts."
-        )
+        print("      duck_block_type_names() is returning duplicates, so a consumer counting")
+        print("      it gets the wrong vocabulary size and any join against it double-counts.")
     if not failed:
-        print(
-            f"  all {swept} types emit two block children as two blocks, neither joined nor dropped"
-        )
-        print(
-            "    (detector control: 'ALPHABETA' matches the JOINED probe, 'ALPHA' matches DROPPED)"
-        )
+        print(f"  all {swept} types emit two block children as two blocks, neither joined nor dropped")
+        print("    (detector control: 'ALPHABETA' matches the JOINED probe, 'ALPHA' matches DROPPED)")
 
     print("Content sweep: every block type, hand-built, must not lose its own text")
     types = run(
@@ -613,22 +553,13 @@ def main() -> int:
         failed = True
         print(f"\nFAIL: `{ty}` carries text in `content` and the exporter DROPS it.")
         print(f"      got: {got[:160]}")
-        print(
-            "      The vocabulary's content rule says a single text child lives in `content`,"
-        )
-        print(
-            "      so an exporter reading only an attribute loses it for every producer but"
-        )
-        print(
-            "      one that happens to write both. Read `content` as the fallback, or add the"
-        )
-        print(
-            "      type to CONTENT_EXEMPT with the reason its text has nowhere to go."
-        )
+        print("      The vocabulary's content rule says a single text child lives in `content`,")
+        print("      so an exporter reading only an attribute loses it for every producer but")
+        print("      one that happens to write both. Read `content` as the fallback, or add the")
+        print("      type to CONTENT_EXEMPT with the reason its text has nowhere to go.")
     if not failed:
         print(
-            f"  {checked} types keep their text; {len(CONTENT_EXEMPT)} exempt "
-            f"({', '.join(sorted(CONTENT_EXEMPT))})"
+            f"  {checked} types keep their text; {len(CONTENT_EXEMPT)} exempt " f"({', '.join(sorted(CONTENT_EXEMPT))})"
         )
 
     print("Render sweep: the same text, through render_ansi and to_text")
@@ -644,34 +575,18 @@ def main() -> int:
         rendered += 1
         shown = run_all(
             duckdb,
-            "SELECT regexp_replace(duck_blocks_render_ansi("
-            + blk
-            + ", 40), '\x1b\\[[0-9;]*m', '', 'g');",
+            "SELECT regexp_replace(duck_blocks_render_ansi(" + blk + ", 40), '\x1b\\[[0-9;]*m', '', 'g');",
         )
         text = run_all(duckdb, f"SELECT duck_blocks_to_text({blk});")
-        missing = [
-            n
-            for n, v in (("render_ansi", shown), ("to_text", text))
-            if CONTENT_PROBE not in v
-        ]
+        missing = [n for n, v in (("render_ansi", shown), ("to_text", text)) if CONTENT_PROBE not in v]
         if not missing:
             continue
         failed = True
-        print(
-            f"\nFAIL: `{ty}` carries text in `content` and {' and '.join(missing)} shows NOTHING."
-        )
-        print(
-            "      A type can export its text perfectly and still render as nothing -- this repo"
-        )
-        print(
-            "      shipped exactly that for figure, caption and list. Check for a structural branch"
-        )
-        print(
-            "      that consumes the element and emits nothing, which SHADOWS the leaf renderer and"
-        )
-        print(
-            "      makes a correct fix unreachable. Or add it to RENDER_EXEMPT with the reason."
-        )
+        print(f"\nFAIL: `{ty}` carries text in `content` and {' and '.join(missing)} shows NOTHING.")
+        print("      A type can export its text perfectly and still render as nothing -- this repo")
+        print("      shipped exactly that for figure, caption and list. Check for a structural branch")
+        print("      that consumes the element and emits nothing, which SHADOWS the leaf renderer and")
+        print("      makes a correct fix unreachable. Or add it to RENDER_EXEMPT with the reason.")
     if not failed:
         print(
             f"  {rendered} types show their text in both; {len(RENDER_EXEMPT)} exempt "
@@ -698,9 +613,7 @@ def main() -> int:
             f"[{{'kind':'block','element_type':'{ty}','content':'{CONTENT_PROBE}','level':1,"
             f"'encoding':'text','attributes':{attrs},'element_order':0}}::{STRUCT}]"
         )
-        if CONTENT_PROBE in run(
-            duckdb, f"SELECT duck_blocks_to_pandoc_blocks({blk})::VARCHAR;"
-        ):
+        if CONTENT_PROBE in run(duckdb, f"SELECT duck_blocks_to_pandoc_blocks({blk})::VARCHAR;"):
             stale.append(("CONTENT_EXEMPT", ty, "it PASSES now", reason))
     for ty, reason in sorted(RENDER_EXEMPT.items()):
         attrs = CONTENT_ATTRS.get(ty, "MAP{}")
@@ -710,9 +623,7 @@ def main() -> int:
         )
         shown = run_all(
             duckdb,
-            "SELECT regexp_replace(duck_blocks_render_ansi("
-            + blk
-            + ", 40), '\x1b\\[[0-9;]*m', '', 'g');",
+            "SELECT regexp_replace(duck_blocks_render_ansi(" + blk + ", 40), '\x1b\\[[0-9;]*m', '', 'g');",
         )
         text = run_all(duckdb, f"SELECT duck_blocks_to_text({blk});")
         if CONTENT_PROBE in shown and CONTENT_PROBE in text:
@@ -752,29 +663,19 @@ def main() -> int:
         failed = True
         for where, ty, why, reason in stale:
             print(f"\nFAIL: `{ty}` no longer needs its {where} entry -- {why}.")
-            print(
-                "      DELETE the entry rather than rewording it. A stale exclusion goes on"
-            )
-            print(
-                "      excusing a case that no longer needs excusing, and the next real"
-            )
-            print(
-                "      regression in that type hides behind an explanation nobody rechecks."
-            )
+            print("      DELETE the entry rather than rewording it. A stale exclusion goes on")
+            print("      excusing a case that no longer needs excusing, and the next real")
+            print("      regression in that type hides behind an explanation nobody rechecks.")
             # The recorded reason, so the deletion is informed rather than obedient --
             # if it still reads as true, the property it describes moved, and THAT is
             # worth understanding before the entry goes.
             print(f"      recorded reason: {reason}")
     else:
-        print(
-            f"  all {len(CONTENT_EXEMPT) + len(RENDER_EXEMPT) + len(INHERENT)} exclusions still hold"
-        )
+        print(f"  all {len(CONTENT_EXEMPT) + len(RENDER_EXEMPT) + len(INHERENT)} exclusions still hold")
 
     if failed:
         return 1
-    print(
-        "OK: no write-only types, nothing dropped in a container, no text lost on export or render."
-    )
+    print("OK: no write-only types, nothing dropped in a container, no text lost on export or render.")
     # WHAT THIS DOES NOT COVER, stated so a green run is not read as more than it is.
     # duckdb_markdown found the same limit in their own arm by perturbing their writer
     # to emit a hard break as a soft one and watching it PASS: a consistently wrong
@@ -782,9 +683,7 @@ def main() -> int:
     # LOST or that MEANS something different when read back. They do not find output
     # that is simply wrong in both directions -- that is the unit suite's job, and
     # neither subsumes the other.
-    print(
-        "    (round-trip stability cannot see a consistently wrong conversion -- see test/sql/)"
-    )
+    print("    (round-trip stability cannot see a consistently wrong conversion -- see test/sql/)")
     return 0
 
 

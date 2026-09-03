@@ -431,7 +431,7 @@ struct DuckBlockVocabulary {
 	// Without it, a blob the author deliberately placed last is indistinguishable from
 	// metadata the FORMAT supplied with no position at all: both appended, both roleless.
 	static constexpr const char *ROLE_TAILMATTER = "tailmatter";
-	static constexpr const char *ROLE_DOCUMENT = "document";       // the blob IS the whole document
+	static constexpr const char *ROLE_DOCUMENT = "document"; // the blob IS the whole document
 
 	// ========================================================================
 	// `list_type` values -- the attribute is ATTR_LIST_TYPE

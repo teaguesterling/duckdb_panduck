@@ -190,11 +190,7 @@ def pandoc_accepts(path: Path) -> str | None:
         text=True,
     )
     if proc.returncode != 0:
-        return (
-            proc.stderr.strip().splitlines()[0][:200]
-            if proc.stderr.strip()
-            else "pandoc rejected it"
-        )
+        return proc.stderr.strip().splitlines()[0][:200] if proc.stderr.strip() else "pandoc rejected it"
     return None
 
 
@@ -209,40 +205,29 @@ def self_test(tmp: Path) -> list[str]:
     cases = {
         # THE ACTUAL DEFECT this check was written for.
         "native table object as Table's c": (
-            '{%s,"meta":{},"blocks":[{"t":"Table","c":{"headers":["A"],"rows":[["x"]]}}]}'
-            % api
+            '{%s,"meta":{},"blocks":[{"t":"Table","c":{"headers":["A"],"rows":[["x"]]}}]}' % api
         ),
         # The version skew that made duck_block_utils v1.4.3's exports unreadable.
         "stale api version": (
             '{"pandoc-api-version":[1,20],"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"x"}]}]}'
         ),
         # A constructor that does not exist -- what emitting an invented element_type does.
-        "unknown constructor": (
-            '{%s,"meta":{},"blocks":[{"t":"NotAThing","c":[]}]}' % api
-        ),
+        "unknown constructor": ('{%s,"meta":{},"blocks":[{"t":"NotAThing","c":[]}]}' % api),
         # Right constructor, wrong arity: pandoc validates tuple shape, not just names.
-        "table with too few fields": (
-            '{%s,"meta":{},"blocks":[{"t":"Table","c":[["",[],[]],[null,[]]]}]}' % api
-        ),
+        "table with too few fields": ('{%s,"meta":{},"blocks":[{"t":"Table","c":[["",[],[]],[null,[]]]}]}' % api),
     }
     failures = []
     for name, body in cases.items():
         p = tmp / "selftest.json"
         p.write_text(body)
         if pandoc_accepts(p) is None:
-            failures.append(
-                f"SELF-TEST: pandoc accepted a document it must reject -- {name}"
-            )
+            failures.append(f"SELF-TEST: pandoc accepted a document it must reject -- {name}")
 
     # ...and a CONFORMING control, so the checker is not merely rejecting everything.
     p = tmp / "selftest_ok.json"
-    p.write_text(
-        '{%s,"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"ok"}]}]}' % api
-    )
+    p.write_text('{%s,"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"ok"}]}]}' % api)
     if pandoc_accepts(p) is not None:
-        failures.append(
-            "SELF-TEST: pandoc rejected a conforming document -- the check is broken"
-        )
+        failures.append("SELF-TEST: pandoc rejected a conforming document -- the check is broken")
     return failures
 
 
@@ -270,14 +255,10 @@ def main() -> int:
         if failures:
             for f in failures:
                 print(f"  {f}")
-            print(
-                "\nFAILED: the checker cannot detect a bad AST, so its verdict means nothing."
-            )
+            print("\nFAILED: the checker cannot detect a bad AST, so its verdict means nothing.")
             return 1
 
-        fixtures = sorted(
-            p for p in FIXTURES.iterdir() if p.suffix.lower() in DOC_SUFFIXES
-        )
+        fixtures = sorted(p for p in FIXTURES.iterdir() if p.suffix.lower() in DOC_SUFFIXES)
         if not fixtures:
             # Decided BEFORE the nothing-to-do path: zero fixtures is a broken checkout, not
             # a pass. The conformance script shipped this bug once already.
@@ -321,9 +302,7 @@ def main() -> int:
         print()
         total = len(fixtures) + len(CONSTRUCTS)
         if bad:
-            print(
-                f"FAILED: {bad} of {total} cases do not write back as valid pandoc JSON."
-            )
+            print(f"FAILED: {bad} of {total} cases do not write back as valid pandoc JSON.")
             return 1
         print(
             f"All {len(fixtures)} fixtures and {len(CONSTRUCTS)} constructs write back as "

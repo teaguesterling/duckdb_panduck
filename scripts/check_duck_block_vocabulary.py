@@ -88,9 +88,7 @@ UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
 # main at 26bfe05 with SPEC_VERSION 2.0 while the branch url was still serving 1.2.
 # Resolving main to a sha first and fetching THAT is immune -- a sha url is immutable,
 # so it is cached correctly by construction.
-UPSTREAM_RAW = (
-    "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + HEADER_REL
-)
+UPSTREAM_RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{ref}/" + HEADER_REL
 
 # Vendored first: that is panduck's arrangement. The submodule paths stay as
 # fallbacks so this script is not the thing that breaks if that is revisited.
@@ -100,9 +98,7 @@ LOCAL_CANDIDATES = [
     "third_party/duck_block_utils/" + HEADER_REL,  # submodule, markdown's layout
 ]
 
-CONST_RE = re.compile(
-    r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;'
-)
+CONST_RE = re.compile(r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;')
 
 # Vocabulary panduck deliberately does not branch on. Recorded WITH REASONS so an
 # intentional gap and an unexplained one never look the same -- an allowlist
@@ -150,8 +146,7 @@ INTENTIONAL_GAPS = {
     "collides with a provenance comment in duck_block_types.hpp, so the GAPS "
     "scan cannot verify this reason either -- see the docstring's GAPS BLIND "
     "SPOT section",
-    "TYPE_DEFLIST": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
-    "no code path, currently dropped",
+    "TYPE_DEFLIST": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, " "no code path, currently dropped",
     "TYPE_LINEBLOCK": "pandoc_ast_map records this STATUS_PLANNED -- spec'd upstream, "
     "no code path, currently dropped",
     "TYPE_FIGURE": "pandoc_ast_map records this STATUS_PLANNED -- pandoc 3.0+, "
@@ -190,10 +185,7 @@ def read_upstream_git(repo, ref):
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        sys.exit(
-            f"error: cannot read {HEADER_REL} from {repo}@{ref}\n"
-            f"{exc.stderr.strip()}"
-        )
+        sys.exit(f"error: cannot read {HEADER_REL} from {repo}@{ref}\n" f"{exc.stderr.strip()}")
 
 
 def _get(url, timeout):
@@ -255,10 +247,7 @@ def verdict(breaking, added, verified):
         return (
             1,
             "FAILED",
-            (
-                "vocabulary drift is breaking. Re-sync the copy and "
-                "update the references."
-            ),
+            ("vocabulary drift is breaking. Re-sync the copy and " "update the references."),
         )
     if not verified:
         return (
@@ -275,10 +264,7 @@ def verdict(breaking, added, verified):
         return (
             0,
             "OK with news",
-            (
-                "upstream added vocabulary. Re-sync and review "
-                "whether panduck should handle it."
-            ),
+            ("upstream added vocabulary. Re-sync and review " "whether panduck should handle it."),
         )
     return 0, "OK", ""
 
@@ -364,9 +350,7 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
     # which are fine; the thing to go read is the spec.
     spec_moved = "SPEC_VERSION" in changed
     changed = [k for k in changed if k != "SPEC_VERSION"]
-    spec_breaking = spec_moved and not spec_compatible(
-        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
-    )
+    spec_breaking = spec_moved and not spec_compatible(local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION"))
     if changed:
         breaking = True
         print("DRIFT  value changed upstream (our output silently stops matching):")
@@ -377,22 +361,14 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
         if spec_breaking:
             breaking = True
             print(f"SPEC   MAJOR version moved: {arrow}")
-            print(
-                "       A breaking shape or vocabulary change. Names and values may be"
-            )
+            print("       A breaking shape or vocabulary change. Names and values may be")
             print("       untouched while the SHAPE rules changed -- read")
-            print(
-                "       docs/duck_blocks_spec.md upstream before re-syncing; a version"
-            )
+            print("       docs/duck_blocks_spec.md upstream before re-syncing; a version")
             print("       bump is the only signal a structural change gives you.")
         else:
             print(f"SPEC   minor version moved: {arrow}")
-            print(
-                "       Additive by the stated contract, so this does not fail. Re-sync"
-            )
-            print(
-                "       when convenient and check whether the addition needs handling."
-            )
+            print("       Additive by the stated contract, so this does not fail. Re-sync")
+            print("       when convenient and check whether the addition needs handling.")
     if added:
         print("NEW    published upstream, not in our copy:")
         for k in added:
@@ -417,21 +393,13 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
             for k, v in upstream.items()
             if k.startswith(("TYPE_", "INLINE_", "VALUE_", "KIND_")) and not v.isdigit()
         }
-        gaps = sorted(
-            k
-            for k, v in vocab.items()
-            if k not in named and v not in literal and k not in INTENTIONAL_GAPS
-        )
+        gaps = sorted(k for k, v in vocab.items() if k not in named and v not in literal and k not in INTENTIONAL_GAPS)
         if gaps:
             print()
-            print(
-                "GAPS   published but nothing branches on it (reaches a fallthrough):"
-            )
+            print("GAPS   published but nothing branches on it (reaches a fallthrough):")
             for k in gaps:
                 print(f"         {k} = {vocab[k]!r}")
-            print(
-                "       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason."
-            )
+            print("       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason.")
 
     print()
     code, headline, detail = verdict(breaking, bool(added), verified)
@@ -465,9 +433,7 @@ def test_count_blindness():
     failures = []
 
     if not (len(a) == len(b) == len(c) == 2):
-        failures.append(
-            f"setup: counts should all be 2, got {len(a)}/{len(b)}/{len(c)}"
-        )
+        failures.append(f"setup: counts should all be 2, got {len(a)}/{len(b)}/{len(c)}")
 
     # A rename: same count, must still be caught (as a removal + an addition).
     if not (set(a) - set(b)):
@@ -477,9 +443,7 @@ def test_count_blindness():
     if changed != ["TYPE_PAGE"]:
         failures.append(f"a value change was not detected; got {changed}")
     # Cosmetic churn must be silent -- this is what keeps the check credible.
-    cosmetic = base.replace("const char *", "const char* ").replace(
-        ";\n", ";  // note\n"
-    )
+    cosmetic = base.replace("const char *", "const char* ").replace(";\n", ";  // note\n")
     if parse_constants(cosmetic) != a:
         failures.append("cosmetic churn changed the parsed vocabulary")
 
@@ -523,10 +487,7 @@ def test_count_blindness():
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
-    print(
-        "self-test OK: rename, value change and cosmetic churn classified correctly "
-        "with the count held constant;"
-    )
+    print("self-test OK: rename, value change and cosmetic churn classified correctly " "with the count held constant;")
     print("              field offsets excluded; an undated read never reports OK")
     return 0
 
@@ -536,17 +497,14 @@ def main():
     ap.add_argument(
         "--upstream",
         default=None,
-        help="path to a local duck_block_utils clone "
-        "(default: fetch the published header over HTTPS)",
+        help="path to a local duck_block_utils clone " "(default: fetch the published header over HTTPS)",
     )
     ap.add_argument(
         "--ref",
         default="origin/main",
         help="upstream ref, only with --upstream (default: origin/main)",
     )
-    ap.add_argument(
-        "--fetch", action="store_true", help="git fetch first, only with --upstream"
-    )
+    ap.add_argument("--fetch", action="store_true", help="git fetch first, only with --upstream")
     ap.add_argument(
         "--timeout",
         type=float,
@@ -571,19 +529,14 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_path = find_local(root)
     if not local_path:
-        sys.exit(
-            "error: no duck_block_vocabulary.hpp found in "
-            + " or ".join(LOCAL_CANDIDATES)
-        )
+        sys.exit("error: no duck_block_vocabulary.hpp found in " + " or ".join(LOCAL_CANDIDATES))
     local = parse_constants(open(local_path, encoding="utf-8").read())
 
     if args.upstream:
         if not os.path.exists(os.path.join(args.upstream, ".git")):
             sys.exit(f"error: {args.upstream} is not a git clone")
         if args.fetch:
-            subprocess.run(
-                ["git", "-C", args.upstream, "fetch", "--quiet", "origin"], check=False
-            )
+            subprocess.run(["git", "-C", args.upstream, "fetch", "--quiet", "origin"], check=False)
         text = read_upstream_git(args.upstream, args.ref)
         source = f"{args.upstream}@{args.ref}"
         verified = True
@@ -606,20 +559,12 @@ def main():
 
     upstream = parse_constants(text)
     if not upstream:
-        sys.exit(
-            "error: parsed no constants from upstream -- has the header's "
-            "shape changed?"
-        )
+        sys.exit("error: parsed no constants from upstream -- has the header's " "shape changed?")
 
     print(f"local    {os.path.relpath(local_path, root)}  ({len(local)} constants)")
     print(f"upstream {source}  ({len(upstream)} constants)")
-    print(
-        f"spec     local {local.get('SPEC_VERSION', '?')}  "
-        f"upstream {upstream.get('SPEC_VERSION', '?')}"
-    )
-    print(
-        "         (counts are context, not the assertion -- a rename leaves them equal)"
-    )
+    print(f"spec     local {local.get('SPEC_VERSION', '?')}  " f"upstream {upstream.get('SPEC_VERSION', '?')}")
+    print("         (counts are context, not the assertion -- a rename leaves them equal)")
     print()
 
     code, _ = report(local, upstream, root, verified=verified, strict=args.strict)

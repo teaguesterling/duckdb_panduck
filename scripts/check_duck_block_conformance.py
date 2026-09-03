@@ -36,9 +36,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DUCKDB = os.path.join(ROOT, "build", "release", "duckdb")
-EXTENSION = os.path.join(
-    ROOT, "build", "release", "extension", "panduck", "panduck.duckdb_extension"
-)
+EXTENSION = os.path.join(ROOT, "build", "release", "extension", "panduck", "panduck.duckdb_extension")
 # NOT VENDORED. The conformance macros are duck_block_utils' artifact and are read from
 # where that repo prepares them, so there is no second copy in this tree to drift. A
 # copy is only safe when something compares it, and upstream already runs that
@@ -125,11 +123,7 @@ def run_sql(sql):
     )
     if proc.returncode != 0:
         raise RuntimeError("duckdb failed:\n%s" % (proc.stderr or proc.stdout))
-    lines = [
-        ln
-        for ln in proc.stdout.splitlines()
-        if ln.strip() and not ln.startswith("WARNING") and SEP in ln
-    ]
+    lines = [ln for ln in proc.stdout.splitlines() if ln.strip() and not ln.startswith("WARNING") and SEP in ln]
     return lines
 
 
@@ -167,24 +161,16 @@ def self_test(macros):
         valid = valid_s.lower() == "true"
         undecl = [u for u in undecl_s.split(",") if u]
         if valid != want_valid:
-            failures.append(
-                "%s: duck_blocks_are_valid returned %s, expected %s"
-                % (name, valid, want_valid)
-            )
+            failures.append("%s: duck_blocks_are_valid returned %s, expected %s" % (name, valid, want_valid))
         if undecl != want_undecl:
-            failures.append(
-                "%s: undeclared_types returned %r, expected %r"
-                % (name, undecl, want_undecl)
-            )
+            failures.append("%s: undeclared_types returned %r, expected %r" % (name, undecl, want_undecl))
     return failures
 
 
 def check_fixtures(macros):
     fixtures = []
     for pattern in FIXTURE_GLOBS:
-        fixtures.extend(
-            sorted(glob.glob(os.path.join(ROOT, "test", "fixtures", pattern)))
-        )
+        fixtures.extend(sorted(glob.glob(os.path.join(ROOT, "test", "fixtures", pattern))))
     if not fixtures:
         return [], []
 
@@ -201,8 +187,7 @@ def check_fixtures(macros):
     for f in fixtures:
         rel = os.path.relpath(f, ROOT)
         sql = (
-            preamble(macros)
-            + "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks('%s') AS blk;\n"
+            preamble(macros) + "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks('%s') AS blk;\n"
             "SELECT '%s' || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
             "coalesce(list_aggregate(duck_blocks_undeclared_types(blk), "
             "'string_agg', ','), '') FROM fx;\n"
@@ -219,9 +204,7 @@ def check_fixtures(macros):
             else:
                 failures.append("%s: %s" % (rel, detail.strip().splitlines()[-1]))
             continue
-        errs = [
-            ln.split(SEP, 1)[1].strip() for ln in lines if ln.startswith("ERR" + SEP)
-        ]
+        errs = [ln.split(SEP, 1)[1].strip() for ln in lines if ln.startswith("ERR" + SEP)]
         for line in lines:
             if line.startswith("ERR" + SEP):
                 continue
@@ -236,18 +219,11 @@ def check_fixtures(macros):
                     "%s: %s"
                     % (
                         rel,
-                        (
-                            "; ".join(errs)
-                            if errs
-                            else "duck_blocks_are_valid returned false"
-                        ),
+                        ("; ".join(errs) if errs else "duck_blocks_are_valid returned false"),
                     )
                 )
             if undecl:
-                failures.append(
-                    "%s: element types outside the vocabulary: %s"
-                    % (rel, ", ".join(undecl))
-                )
+                failures.append("%s: element types outside the vocabulary: %s" % (rel, ", ".join(undecl)))
     return results, failures, skipped
 
 
@@ -261,8 +237,7 @@ def main():
     ap.add_argument(
         "--upstream",
         default=DEFAULT_UPSTREAM,
-        help="duck_block_utils checkout providing %s (default: %s)"
-        % (MACROS_RELPATH, DEFAULT_UPSTREAM),
+        help="duck_block_utils checkout providing %s (default: %s)" % (MACROS_RELPATH, DEFAULT_UPSTREAM),
     )
     args = ap.parse_args()
 
@@ -270,14 +245,10 @@ def main():
     if macros is None:
         msg = (
             "SKIP: conformance macros not found at %s\n"
-            "      Pass --upstream <duck_block_utils checkout>."
-            % os.path.join(args.upstream, MACROS_RELPATH)
+            "      Pass --upstream <duck_block_utils checkout>." % os.path.join(args.upstream, MACROS_RELPATH)
         )
         if args.strict:
-            print(
-                msg.replace("SKIP", "FAIL")
-                + "\n      --strict: refusing to pass without checking."
-            )
+            print(msg.replace("SKIP", "FAIL") + "\n      --strict: refusing to pass without checking.")
             return 1
         print(msg)
         return 0
@@ -286,10 +257,7 @@ def main():
         if not os.path.exists(path):
             msg = "SKIP: %s not found at %s (run `make release`)" % (label, path)
             if args.strict:
-                print(
-                    msg.replace("SKIP", "FAIL")
-                    + "\n       --strict: refusing to pass without checking."
-                )
+                print(msg.replace("SKIP", "FAIL") + "\n       --strict: refusing to pass without checking.")
                 return 1
             print(msg)
             return 0
@@ -298,21 +266,14 @@ def main():
     print("Self-test: proving the macros can detect a defect...")
     failures = self_test(macros)
     if failures:
-        print(
-            "\nFAIL: the conformance macros did not behave as expected on constructed"
-        )
-        print(
-            "      input. The check cannot be trusted against real fixtures until this"
-        )
+        print("\nFAIL: the conformance macros did not behave as expected on constructed")
+        print("      input. The check cannot be trusted against real fixtures until this")
         print("      is resolved -- a check that cannot fire reports the same clean")
         print("      output as one that can.\n")
         for f in failures:
             print("  - %s" % f)
         return 1
-    print(
-        "  %d/%d constructed cases classified correctly.\n"
-        % (len(SELF_TESTS), len(SELF_TESTS))
-    )
+    print("  %d/%d constructed cases classified correctly.\n" % (len(SELF_TESTS), len(SELF_TESTS)))
 
     results, failures, skipped = check_fixtures(macros)
     if failures and not results:
@@ -344,15 +305,8 @@ def main():
             print("  - %s" % f)
         return 1
 
-    tail = (
-        ""
-        if not skipped
-        else " (%d skipped for missing optional extensions)" % len(skipped)
-    )
-    print(
-        "\nOK: %d fixtures, all conformant (shape and vocabulary).%s"
-        % (len(results), tail)
-    )
+    tail = "" if not skipped else " (%d skipped for missing optional extensions)" % len(skipped)
+    print("\nOK: %d fixtures, all conformant (shape and vocabulary).%s" % (len(results), tail))
     return 0
 
 

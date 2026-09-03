@@ -560,9 +560,7 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
         if r.get("key") is not None:
             attrs["key"] = r["key"]
         r["attributes"] = attrs
-    return Doc(
-        canonical.duckblocks_to_canonical(rows), canonical.meta_from_duckblocks(rows)
-    )
+    return Doc(canonical.duckblocks_to_canonical(rows), canonical.meta_from_duckblocks(rows))
 
 
 class Doc:
@@ -608,18 +606,14 @@ def render_diff(level, got, ref, limit=6):
             lines.append(f"          pandoc ={r!r}")
             shown += 1
             if shown >= limit:
-                lines.append(
-                    f"      ... ({max(len(got), len(ref)) - i - 1} more positions)"
-                )
+                lines.append(f"      ... ({max(len(got), len(ref)) - i - 1} more positions)")
                 break
     return lines
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "--report", action="store_true", help="show divergences without asserting"
-    )
+    ap.add_argument("--report", action="store_true", help="show divergences without asserting")
     ap.add_argument(
         "--require",
         action="store_true",
@@ -652,20 +646,13 @@ def main():
     if not shutil.which("pandoc"):
         return missing("pandoc not on PATH; cannot run differential validation")
     if not (duckdb_bin.exists() or shutil.which(str(duckdb_bin))):
-        return missing(
-            f"duckdb binary not found at {duckdb_bin}; run `make release` first"
-        )
+        return missing(f"duckdb binary not found at {duckdb_bin}; run `make release` first")
     if extension and not extension.exists():
         return missing(f"extension not found at {extension}")
 
-    version = subprocess.run(
-        ["pandoc", "--version"], capture_output=True, text=True
-    ).stdout.splitlines()[0]
+    version = subprocess.run(["pandoc", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
     print(f"Differential validation of panduck's readers against {version}")
-    print(
-        f"  duckdb: {duckdb_bin}"
-        + (f"  (LOAD {extension.name})" if extension else "  (linked in)")
-    )
+    print(f"  duckdb: {duckdb_bin}" + (f"  (LOAD {extension.name})" if extension else "  (linked in)"))
     print()
 
     failures = 0
@@ -708,9 +695,7 @@ def main():
                     failures += 1
                 elif agree:
                     # The ratchet: a declared divergence that now agrees is stale.
-                    print(
-                        f"    {level:9s} FAIL -- declared '{verdict}' but they now AGREE."
-                    )
+                    print(f"    {level:9s} FAIL -- declared '{verdict}' but they now AGREE.")
                     print(f"              Promote this level to pass. ({why})")
                     failures += 1
                 else:

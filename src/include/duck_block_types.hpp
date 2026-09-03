@@ -13,7 +13,12 @@
 // a submodule -- avoiding a divergent fork of real logic -- does not apply.
 //
 // VENDORED IS NOT A LICENCE TO EDIT. src/include/duck_block_vocabulary.hpp is a
-// byte-for-byte copy. Editing it locally is one failure mode; upstream moving without us
+// byte-for-byte copy -- ALMOST. `make format-check` runs clang-format over src/ and does
+// not exempt vendored files, so the copy acquires this repo's comment alignment on arrival.
+// That is whitespace inside comments and nothing else, and it does not matter BECAUSE the
+// check below compares names and values rather than diffing text. Recorded because
+// "byte-for-byte" is what the paragraph used to say, and a doctrine that is quietly false
+// is worse than one that states its own exception. Editing it locally is one failure mode; upstream moving without us
 // is the other, and NEITHER is caught by the compiler in the way you would hope:
 //
 //     TYPE_HEADING -> TYPE_HEAD               a RENAME: compile error at every use site

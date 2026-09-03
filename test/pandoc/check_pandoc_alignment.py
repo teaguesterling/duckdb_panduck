@@ -75,9 +75,7 @@ def fail(msg):
 def parse_cpp_table():
     """Extract (pandoc_type -> (kind, element_type, status)) from the C++ table."""
     text = MAP_CPP.read_text()
-    entry = re.compile(
-        r'\{"([A-Za-z]+)",\s*"(block|inline)",\s*(?:"([^"]*)"|(nullptr)),\s*STATUS_([A-Z]+)'
-    )
+    entry = re.compile(r'\{"([A-Za-z]+)",\s*"(block|inline)",\s*(?:"([^"]*)"|(nullptr)),\s*STATUS_([A-Z]+)')
     table = {}
     for m in entry.finditer(text):
         name, kind, element_type, is_null, status = m.groups()
@@ -120,9 +118,7 @@ def main():
         print("      Install pandoc to run this check (CI installs it explicitly).")
         return 0
 
-    version = subprocess.run(
-        [pandoc, "--version"], capture_output=True, text=True
-    ).stdout.splitlines()[0]
+    version = subprocess.run([pandoc, "--version"], capture_output=True, text=True).stdout.splitlines()[0]
     print(f"Checking panduck's AST mapping against {version}")
 
     raw = subprocess.run(
@@ -154,9 +150,7 @@ def main():
     unmapped = sorted(emitted - set(table))
     if unmapped:
         missing = ", ".join(unmapped)
-        errors += fail(
-            f"pandoc emits {len(unmapped)} constructor(s) absent from src/pandoc_ast_map.cpp: {missing}"
-        )
+        errors += fail(f"pandoc emits {len(unmapped)} constructor(s) absent from src/pandoc_ast_map.cpp: {missing}")
     else:
         print(f"  all {len(emitted)} emitted constructors are present in the mapping")
 
@@ -169,12 +163,8 @@ def main():
         if added:
             detail.append(f"newly unimplemented: {', '.join(added)}")
         if removed:
-            detail.append(
-                f"now implemented (drop from KNOWN_GAPS): {', '.join(removed)}"
-            )
-        errors += fail(
-            "the set of unimplemented constructors changed -- " + "; ".join(detail)
-        )
+            detail.append(f"now implemented (drop from KNOWN_GAPS): {', '.join(removed)}")
+        errors += fail("the set of unimplemented constructors changed -- " + "; ".join(detail))
     else:
         print(f"  {len(planned)} known gap(s) unchanged: {', '.join(sorted(planned))}")
 

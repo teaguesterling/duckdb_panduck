@@ -251,3 +251,41 @@ SELECT attributes['list_type'] FROM read_rtf_blocks('test/fixtures/libreoffice_s
 WHERE element_type = 'list';
 ----
 bullet
+
+# ---------------------------------------------------------------------------
+# ORDERED AND NESTED LISTS FROM A REAL WRITER.
+#
+# I recorded this coverage as UNCLOSABLE -- pandoc's RTF writer emits no list control words
+# at all, so `pandoc -t rtf` cannot produce the fixture. That was true and the conclusion
+# was wrong: LibreOffice writes them, and it is installed. Converting lists.odt gives an RTF
+# with 11 \ls, 13 \ilvl and 36 \levelnfc.
+#
+# So the only RTF list coverage was ordered_list.rtf, which I HAND-WROTE from the spec --
+# a fixture that proves the reader agrees with my reading of the format, not that it agrees
+# with a writer.
+query III
+SELECT element_type, level, attributes['list_type'] FROM read_rtf_blocks('test/fixtures/lists.rtf')
+WHERE element_type = 'list' ORDER BY element_order;
+----
+list	1	ordered
+list	3	bullet
+list	1	bullet
+
+query III
+SELECT element_type, level, content FROM read_rtf_blocks('test/fixtures/lists.rtf')
+WHERE element_type = 'list_item' ORDER BY element_order;
+----
+list_item	2	first
+list_item	2	second
+list_item	4	nested bullet
+list_item	4	nested two
+list_item	2	third
+list_item	2	plain bullet
+
+# The rendered bullet glyph must not reach an item's text -- {\listtext} is presentation,
+# and a real writer emits far more of it than a hand-written fixture does.
+query I
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/lists.rtf')
+WHERE element_type = 'list_item' AND (content LIKE '%' || chr(8226) || '%' OR content SIMILAR TO '%[0-9]\.%');
+----
+0

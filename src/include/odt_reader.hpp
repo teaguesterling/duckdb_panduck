@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,8 @@ namespace odt {
 struct OdtInline {
 	std::string element_type;
 	std::string content;
+	//! `image`: src.
+	std::map<std::string, std::string> attributes;
 };
 
 struct OdtBlock {

@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,8 +32,10 @@ namespace duckdb {
 namespace docx {
 
 struct DocxInline {
-	std::string element_type; //!< duck_block inline vocabulary: text, bold, italic, ...
+	std::string element_type; //!< duck_block inline vocabulary: text, bold, italic, image, note
 	std::string content;
+	//! `image`: src. `note`: nothing today, the body is the content.
+	std::map<std::string, std::string> attributes;
 };
 
 struct DocxBlock {

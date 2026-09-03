@@ -228,6 +228,11 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	// makes those paragraphs, and so does this reader.
 	std::string numbering_xml;
 	zip.Read("word/numbering.xml", numbering_xml);
+	// An image's <a:blip r:embed="rIdN"> names a RELATIONSHIP, not a file; the target lives
+	// in the rels part. A footnote's body lives in its own part too, keyed by w:id.
+	std::string rels_xml, footnotes_xml;
+	zip.Read("word/_rels/document.xml.rels", rels_xml);
+	zip.Read("word/footnotes.xml", footnotes_xml);
 	std::string styles_xml;
 	zip.Read("word/styles.xml", styles_xml); // optional: a minimal DOCX may omit it
 
@@ -291,6 +296,41 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 		return out;
 	};
+
+	// rId -> target path, so an image can report the file it actually points at rather than
+	// an opaque relationship id no consumer can resolve.
+	std::map<std::string, std::string> rels;
+	pugi::xml_document rels_doc;
+	if (!rels_xml.empty() && rels_doc.load_buffer(rels_xml.data(), rels_xml.size())) {
+		for (auto rel : rels_doc.child("Relationships").children("Relationship")) {
+			rels[rel.attribute("Id").value()] = rel.attribute("Target").value();
+		}
+	}
+
+	// footnote id -> flattened text.
+	std::map<std::string, std::string> footnotes;
+	pugi::xml_document fn_doc;
+	if (!footnotes_xml.empty() &&
+	    fn_doc.load_buffer(footnotes_xml.data(), footnotes_xml.size(), pugi::parse_default | pugi::parse_ws_pcdata)) {
+		for (auto fn : fn_doc.child("w:footnotes").children("w:footnote")) {
+			// SEPARATOR AND CONTINUATION footnotes are not content: Word stores the rule drawn
+			// above a footnote block as footnotes with w:type. Reading them would put a stray
+			// empty note in every document that has any footnote at all.
+			std::string type = fn.attribute("w:type").value();
+			if (!type.empty() && type != "normal") {
+				continue;
+			}
+			std::string text;
+			for (auto t : fn.select_nodes(".//w:t")) {
+				text += t.node().text().get();
+			}
+			size_t b = text.find_first_not_of(" \t\n");
+			if (b != std::string::npos) {
+				size_t e = text.find_last_not_of(" \t\n");
+				footnotes[fn.attribute("w:id").value()] = text.substr(b, e - b + 1);
+			}
+		}
+	}
 
 	std::vector<DocxBlock> blocks;
 	auto body = doc.child("w:document").child("w:body");
@@ -371,6 +411,11 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		struct Run {
 			RunFormat fmt;
 			std::string text;
+			//! Non-empty when this run is NOT a formatted text span -- an image or a
+			//! footnote reference, which carry an element_type of their own rather than one
+			//! derived from character formatting.
+			std::string special_type;
+			std::map<std::string, std::string> attrs;
 		};
 		std::vector<Run> runs;
 		bool any_format = false;
@@ -395,13 +440,51 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 					text += " ";
 				}
 			}
+
+			// AN IMAGE. <w:drawing> ... <a:blip r:embed="rIdN">, and rIdN is a RELATIONSHIP
+			// rather than a path -- resolved through document.xml.rels so the emitted src is
+			// a file a consumer can find, not an id only Word understands.
+			auto blip = run.select_node(".//a:blip").node();
+			if (blip) {
+				std::string rid = blip.attribute("r:embed").value();
+				if (rid.empty()) {
+					rid = blip.attribute("r:link").value();
+				}
+				auto rit = rels.find(rid);
+				Run img;
+				img.special_type = DuckBlockTypes::INLINE_IMAGE;
+				if (rit != rels.end()) {
+					img.attrs["src"] = rit->second;
+				}
+				// An image forces the paragraph to emit INLINES rather than flatten, or the
+				// image is dropped in favour of the surrounding text.
+				any_format = true;
+				runs.push_back(std::move(img));
+			}
+
+			// A FOOTNOTE REFERENCE. The body lives in footnotes.xml, keyed by w:id, so the
+			// note carries its TEXT rather than a number the reader would have to resolve.
+			auto fnref = run.child("w:footnoteReference");
+			if (fnref) {
+				std::string id = fnref.attribute("w:id").value();
+				auto fit = footnotes.find(id);
+				Run note;
+				note.special_type = DuckBlockTypes::INLINE_NOTE;
+				if (fit != footnotes.end()) {
+					note.text = fit->second;
+				}
+				any_format = true;
+				runs.push_back(std::move(note));
+			}
+
 			if (text.empty()) {
 				continue;
 			}
 			if (!fmt.Plain()) {
 				any_format = true;
 			}
-			if (!runs.empty() && runs.back().fmt.ElementType() == fmt.ElementType()) {
+			if (!runs.empty() && runs.back().special_type.empty() &&
+			    runs.back().fmt.ElementType() == fmt.ElementType()) {
 				runs.back().text += text;
 			} else {
 				runs.push_back(Run {fmt, text});
@@ -414,10 +497,24 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 		auto begin = all.find_first_not_of(" \t\n");
 		if (begin == std::string::npos) {
-			continue; // whitespace-only paragraph
+			// A paragraph whose ONLY content is an image has no text at all, and skipping
+			// whitespace-only paragraphs used to drop it. An image is content.
+			bool has_special = false;
+			for (auto &r : runs) {
+				if (!r.special_type.empty()) {
+					has_special = true;
+				}
+			}
+			if (!has_special) {
+				continue;
+			}
+			all.clear();
 		}
-		auto end = all.find_last_not_of(" \t\n");
-		std::string trimmed = all.substr(begin, end - begin + 1);
+		std::string trimmed;
+		if (begin != std::string::npos) {
+			auto end = all.find_last_not_of(" \t\n");
+			trimmed = all.substr(begin, end - begin + 1);
+		}
 
 		// Open and close lists around the run of items, so `list` wraps its `list_item`s the
 		// way every other panduck reader emits them.
@@ -463,7 +560,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			block.content = trimmed;
 		} else {
 			for (auto &r : runs) {
-				block.inlines.push_back(DocxInline {r.fmt.ElementType(), r.text});
+				block.inlines.push_back(
+				    DocxInline {r.special_type.empty() ? r.fmt.ElementType() : r.special_type, r.text, r.attrs});
 			}
 		}
 		blocks.push_back(std::move(block));
@@ -546,6 +644,7 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 			child.kind = DuckBlockTypes::KIND_INLINE;
 			child.element_type = inl.element_type;
 			child.content = inl.content;
+			child.attributes = inl.attributes;
 			child.has_level = true;
 			child.level = block_level + 1;
 			child.element_order = order++;

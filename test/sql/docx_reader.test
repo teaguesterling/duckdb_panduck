@@ -282,3 +282,38 @@ SELECT element_type, encoding, content FROM read_docx_blocks('test/fixtures/rich
 WHERE element_type = 'table';
 ----
 table	json	{"headers":["Name","Value"],"rows":[["a","1"],["b","2"]]}
+
+# ---------------------------------------------------------------------------
+# IMAGES AND FOOTNOTES.
+#
+# An image's <a:blip r:embed="rIdN"> names a RELATIONSHIP, not a path. Resolving it through
+# word/_rels/document.xml.rels is what makes the emitted src a file a consumer can find
+# rather than an id only Word understands.
+query III
+SELECT kind, element_type, attributes['src'] FROM read_docx_blocks('test/fixtures/rich.docx')
+WHERE element_type = 'image';
+----
+inline	image	media/rId20.png
+
+# A paragraph whose ONLY content is an image has no text at all, and the whitespace-only
+# skip used to drop it. An image is content.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/rich.docx') WHERE element_type = 'image';
+----
+1
+
+# A footnote carries its BODY, resolved from footnotes.xml by w:id -- not the reference
+# number, which is all the document body holds.
+query III
+SELECT kind, element_type, content FROM read_docx_blocks('test/fixtures/rich.docx')
+WHERE element_type = 'note';
+----
+inline	note	The footnote body.
+
+# ...and exactly ONE note. Word stores the separator rule drawn above a footnote block as
+# footnotes carrying w:type, so reading every w:footnote would put a stray empty note in
+# every document that has any footnote at all.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/rich.docx') WHERE element_type = 'note';
+----
+1

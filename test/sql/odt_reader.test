@@ -192,3 +192,21 @@ SELECT element_type, encoding, content FROM read_odt_blocks('test/fixtures/rich.
 WHERE element_type = 'table';
 ----
 table	json	{"headers":["Name","Value"],"rows":[["a","1"],["b","2"]]}
+
+# ---------------------------------------------------------------------------
+# IMAGES AND FOOTNOTES. ODF points straight at the file with xlink:href -- no relationship
+# indirection, unlike OOXML -- so the href IS the src.
+query III
+SELECT kind, element_type, attributes['src'] FROM read_odt_blocks('test/fixtures/rich.odt')
+WHERE element_type = 'image';
+----
+inline	image	Pictures/0.png
+
+# text:note-citation is the RENDERED marker -- the number a reader sees -- and
+# text:note-body is the note. Collecting the whole element puts the citation digit into the
+# note's text.
+query III
+SELECT kind, element_type, content FROM read_odt_blocks('test/fixtures/rich.odt')
+WHERE element_type = 'note';
+----
+inline	note	The footnote body.

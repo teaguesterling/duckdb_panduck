@@ -75,6 +75,10 @@ std::map<std::string, RunFormat> ParseAutomaticStyles(const pugi::xml_node &root
 struct Run {
 	RunFormat fmt;
 	std::string text;
+	//! Non-empty when this run is not a formatted text span -- an image or a footnote,
+	//! which carry an element_type of their own.
+	std::string special_type;
+	std::map<std::string, std::string> attrs;
 };
 
 //! Walk the mixed content of a text:p / text:h in document order. ODT interleaves raw
@@ -115,6 +119,31 @@ void CollectRuns(const pugi::xml_node &node, const RunFormat &inherited, const s
 			runs.push_back(Run {inherited, "\t"});
 		} else if (tag == "text:line-break") {
 			runs.push_back(Run {inherited, " "});
+		} else if (tag == "draw:frame" || tag == "draw:image") {
+			// AN IMAGE. ODF points straight at the file with xlink:href -- no relationship
+			// indirection, unlike OOXML -- so the href IS the src.
+			auto img = tag == "draw:image" ? child : child.child("draw:image");
+			if (img) {
+				Run r;
+				r.special_type = DuckBlockTypes::INLINE_IMAGE;
+				r.attrs["src"] = img.attribute("xlink:href").value();
+				runs.push_back(std::move(r));
+			}
+		} else if (tag == "text:note") {
+			// A FOOTNOTE. text:note-citation is the RENDERED marker -- the number a reader
+			// sees -- and text:note-body is the note itself. Collecting the whole element
+			// would put the citation digit into the note's text.
+			std::string body;
+			for (auto p : child.child("text:note-body").children("text:p")) {
+				if (!body.empty()) {
+					body += " ";
+				}
+				body += p.text().get();
+			}
+			Run r;
+			r.special_type = DuckBlockTypes::INLINE_NOTE;
+			r.text = body;
+			runs.push_back(std::move(r));
 		}
 		// text:bookmark-start / -end, text:sequence-decls and friends carry no content.
 	}
@@ -452,16 +481,30 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		bool any_format = false;
 		for (auto &r : runs) {
 			all += r.text;
-			if (!r.fmt.Plain()) {
+			if (!r.fmt.Plain() || !r.special_type.empty()) {
+				// An image or note forces the paragraph to emit INLINES rather than flatten,
+				// or it is dropped in favour of the surrounding text.
 				any_format = true;
 			}
 		}
 		auto begin = all.find_first_not_of(" \t\n");
+		std::string trimmed;
 		if (begin == std::string::npos) {
-			continue; // whitespace-only
+			// A paragraph whose ONLY content is an image has no text; skipping it as
+			// whitespace-only dropped the image.
+			bool has_special = false;
+			for (auto &r : runs) {
+				if (!r.special_type.empty()) {
+					has_special = true;
+				}
+			}
+			if (!has_special) {
+				continue;
+			}
+		} else {
+			auto end = all.find_last_not_of(" \t\n");
+			trimmed = all.substr(begin, end - begin + 1);
 		}
-		auto end = all.find_last_not_of(" \t\n");
-		std::string trimmed = all.substr(begin, end - begin + 1);
 
 		std::string style_name = node.attribute("text:style-name").value();
 		bool is_quote = !is_heading && entry.depth == 0 && quote_styles.count(style_name) > 0;
@@ -491,7 +534,8 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 			block.content = trimmed;
 		} else {
 			for (auto &r : runs) {
-				block.inlines.push_back(OdtInline {r.fmt.ElementType(), r.text});
+				block.inlines.push_back(
+				    OdtInline {r.special_type.empty() ? r.fmt.ElementType() : r.special_type, r.text, r.attrs});
 			}
 		}
 		blocks.push_back(std::move(block));
@@ -573,6 +617,7 @@ unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input,
 			child.kind = DuckBlockTypes::KIND_INLINE;
 			child.element_type = inl.element_type;
 			child.content = inl.content;
+			child.attributes = inl.attributes;
 			child.has_level = true;
 			child.level = block_level + 1;
 			child.element_order = order++;

@@ -55,11 +55,10 @@ int32_t Cp1252ToCodepoint(uint8_t byte) {
 //! skipped wholesale. `\*` ignorable destinations (bookmarks, footnote separators,
 //! generator stamps) are handled generically and need no entry here.
 bool IsSkippedDestination(const std::string &word) {
-	return word == "fonttbl" || word == "colortbl" || word == "info" || word == "pict" || word == "object" ||
-	       word == "header" || word == "footer" || word == "footnote" || word == "listtable" ||
-	       word == "listoverridetable" || word == "rsidtbl" || word == "generator" || word == "themedata" ||
-	       word == "colorschememapping" || word == "latentstyles" || word == "datastore" || word == "xmlnstbl" ||
-	       word == "upr" || word == "annotation";
+	return word == "fonttbl" || word == "colortbl" || word == "info" || word == "object" || word == "header" ||
+	       word == "footer" || word == "footnote" || word == "listtable" || word == "listoverridetable" ||
+	       word == "rsidtbl" || word == "generator" || word == "themedata" || word == "colorschememapping" ||
+	       word == "latentstyles" || word == "datastore" || word == "xmlnstbl" || word == "upr" || word == "annotation";
 }
 
 struct CharFormat {
@@ -297,6 +296,24 @@ private:
 			return;
 		}
 		if (g.skip) {
+			return;
+		}
+
+		if (word == "pict") {
+			// AN IMAGE. {\pict ...} holds the picture's BYTES as hex, which this reader does
+			// not decode -- but the picture itself is content, and dropping the group
+			// wholesale (as the ignorable-destination list used to) lost the fact that the
+			// document has an image at all. The bytes are skipped; the element is not.
+			//
+			// No src: RTF embeds rather than references, so there is no path to report. A
+			// consumer learns an image is HERE, which is more than nothing and is honest
+			// about being less than a filename.
+			RtfBlock img;
+			img.element_type = DuckBlockTypes::TYPE_IMAGE;
+			img.level = 1;
+			FlushParagraph();
+			blocks_.push_back(std::move(img));
+			g.skip = true;
 			return;
 		}
 

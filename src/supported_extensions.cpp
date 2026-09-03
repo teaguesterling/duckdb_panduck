@@ -46,7 +46,10 @@ const FormatReader FORMATS[] = {
      "numbering.xml -- numId 0 means NO numbering rather than numbering zero, and "
      "LibreOffice writes exactly that. Blockquotes from a quote pStyle or w:ind "
      "w:left>=720, which is how LibreOffice marks one with no style at all. Tables, "
-     "images and footnotes are not read yet. TABLES ARE read, into the spec 5.0 native "
+     "IMAGES resolve <a:blip r:embed> through document.xml.rels, so the src is a path "
+     "rather than a relationship id; FOOTNOTES carry their body from footnotes.xml, "
+     "skipping the separator/continuation notes Word stores alongside real ones. "
+     "Tables read, into the spec 5.0 native "
      "schema, with the header row taken from w:tblHeader and only from there"},
     {"odt", EXT_ODT, "read_odt_blocks", STATUS_IMPLEMENTED,
      "ZIP via miniz + content.xml via pugixml, sharing ZipContainer with docx. ODF has a "
@@ -55,7 +58,9 @@ const FormatReader FORMATS[] = {
      "LEVEL -- ODF declares all ten levels of a list style up front and routinely mixes "
      "bullet and number among them. Blockquotes from the Block_20_Text / Quotations "
      "styles, followed through style:parent-style-name. Tables, images and footnotes "
-     "are not read yet. TABLES ARE read, with header rows taken from ODF's structural "
+     "are read: images via xlink:href, which ODF points straight at the file, and "
+     "footnotes from text:note-body rather than the note-citation marker. Tables read "
+     "with header rows taken from ODF's structural "
      "table:table-header-rows rather than by promoting the first row"},
     {"epub", EXT_EPUB, "read_epub_blocks", STATUS_IMPLEMENTED,
      "ZIP via ZipContainer, then META-INF/container.xml -> the .opf package document -> the "
@@ -63,7 +68,10 @@ const FormatReader FORMATS[] = {
      "pugixml reads them directly and no HTML parser is needed. Headings, paragraphs, list "
      "items, blockquotes, divs, links and images; run formatting resolves through CSS "
      "classes because LibreOffice's export emits no semantic markup at all. Tables and "
-     "footnotes are not read yet. TABLES ARE read: RTF has no table element, so a table is "
+     "footnotes are not read -- pandoc's RTF path carries none either. An IMAGE is "
+     "reported with NO src: RTF embeds rather than references, so there is no path to "
+     "give, and {\\pict} bytes are skipped while the element is kept. Tables read: RTF has no table element, so a "
+     "table is "
      "a run of \\intbl paragraphs with \\cell and \\row as terminators, accumulated "
      "rather than descended into"},
     {"pandoc", EXT_PANDOC, "read_pandoc_blocks", STATUS_IMPLEMENTED,
@@ -141,7 +149,10 @@ const FormatReader FORMATS[] = {
      "{\\listtext} -- the RENDERED bullet glyph -- suppressed as the presentation it is. "
      "Orderedness is NOT read: it lives in the \\listtable, which this reader does not "
      "parse, so every list is bullet rather than a guessed ordered=true. Tables and "
-     "footnotes are not read yet. TABLES ARE read: RTF has no table element, so a table is "
+     "footnotes are not read -- pandoc's RTF path carries none either. An IMAGE is "
+     "reported with NO src: RTF embeds rather than references, so there is no path to "
+     "give, and {\\pict} bytes are skipped while the element is kept. Tables read: RTF has no table element, so a "
+     "table is "
      "a run of \\intbl paragraphs with \\cell and \\row as terminators, accumulated "
      "rather than descended into"},
 };

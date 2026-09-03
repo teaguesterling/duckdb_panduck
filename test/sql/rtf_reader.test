@@ -178,3 +178,24 @@ SELECT element_type, encoding, content FROM read_rtf_blocks('test/fixtures/rich.
 WHERE element_type = 'table';
 ----
 table	json	{"headers":[],"rows":[["Name","Value"],["a","1"],["b","2"]]}
+
+# ---------------------------------------------------------------------------
+# IMAGES. {\pict ...} was on the ignorable-destination list, so the reader did not merely
+# skip the picture's bytes -- it lost the fact that the document HAS an image.
+#
+# NO src, deliberately: RTF EMBEDS rather than references, so there is no path to report.
+# A consumer learns an image is here, which is more than nothing and is honest about being
+# less than a filename. Inventing one would be worse than the gap.
+query II
+SELECT kind, element_type FROM read_rtf_blocks('test/fixtures/rich.rtf')
+WHERE element_type = 'image';
+----
+block	image
+
+# The hex bytes must NOT reach the text. They are thousands of characters of picture data,
+# and the whole reason \pict was ignorable in the first place.
+query I
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/rich.rtf')
+WHERE content SIMILAR TO '%[0-9a-f]{40}%';
+----
+0

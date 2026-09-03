@@ -15,7 +15,7 @@ require panduck
 query IIIII
 SELECT format, extensions, reader, status, notes FROM panduck_supported_extensions() LIMIT 1;
 ----
-docx	[docx]	read_docx_blocks	implemented	ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. Lists come from w:numPr, but ONLY when the numId resolves in numbering.xml -- numId 0 means NO numbering rather than numbering zero, and LibreOffice writes exactly that. Blockquotes from a quote pStyle or w:ind w:left>=720, which is how LibreOffice marks one with no style at all. Tables, images and footnotes are not read yet. TABLES ARE read, into the spec 5.0 native schema, with the header row taken from w:tblHeader and only from there
+docx	[docx]	read_docx_blocks	implemented	ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. Lists come from w:numPr, but ONLY when the numId resolves in numbering.xml -- numId 0 means NO numbering rather than numbering zero, and LibreOffice writes exactly that. Blockquotes from a quote pStyle or w:ind w:left>=720, which is how LibreOffice marks one with no style at all. Tables, IMAGES resolve <a:blip r:embed> through document.xml.rels, so the src is a path rather than a relationship id; FOOTNOTES carry their body from footnotes.xml, skipping the separator/continuation notes Word stores alongside real ones. Tables read, into the spec 5.0 native schema, with the header row taken from w:tblHeader and only from there
 
 # Every row is one of the two defined states.
 query I

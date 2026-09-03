@@ -42,11 +42,19 @@ const FormatReader FORMATS[] = {
     {"docx", EXT_DOCX, "read_docx_blocks", STATUS_IMPLEMENTED,
      "ZIP via miniz + word/document.xml via pugixml. Headings from BOTH w:outlineLvl and a "
      "w:pStyle resolved through styles.xml -- pandoc writes one, LibreOffice the other. "
-     "Tables, lists, images and footnotes are not read yet"},
+     "Lists come from w:numPr, but ONLY when the numId resolves in "
+     "numbering.xml -- numId 0 means NO numbering rather than numbering zero, and "
+     "LibreOffice writes exactly that. Blockquotes from a quote pStyle or w:ind "
+     "w:left>=720, which is how LibreOffice marks one with no style at all. Tables, "
+     "images and footnotes are not read yet"},
     {"odt", EXT_ODT, "read_odt_blocks", STATUS_IMPLEMENTED,
      "ZIP via miniz + content.xml via pugixml, sharing ZipContainer with docx. ODF has a "
      "dedicated text:h element with text:outline-level, so unlike RTF and DOCX there is no "
-     "heading ambiguity. Lists, tables, images and footnotes are not read yet"},
+     "heading ambiguity. Lists come from text:list nesting with orderedness resolved PER "
+     "LEVEL -- ODF declares all ten levels of a list style up front and routinely mixes "
+     "bullet and number among them. Blockquotes from the Block_20_Text / Quotations "
+     "styles, followed through style:parent-style-name. Tables, images and footnotes "
+     "are not read yet"},
     {"epub", EXT_EPUB, "read_epub_blocks", STATUS_IMPLEMENTED,
      "ZIP via ZipContainer, then META-INF/container.xml -> the .opf package document -> the "
      "SPINE, which is the only statement of reading order. Content documents are XHTML, so "
@@ -125,7 +133,11 @@ const FormatReader FORMATS[] = {
      "mediawiki. A leading space is NOT preformatted, unlike mediawiki"},
     {"rtf", EXT_RTF, "read_rtf_blocks", STATUS_IMPLEMENTED,
      "headings via \\outlinelevel or a {\\stylesheet} \\sN reference; paragraphs and inline "
-     "bold/italic/underline/strikethrough. Lists, tables and footnotes are not read yet"},
+     "bold/italic/underline/strikethrough. Lists come from \\ls and \\ilvl, with "
+     "{\\listtext} -- the RENDERED bullet glyph -- suppressed as the presentation it is. "
+     "Orderedness is NOT read: it lives in the \\listtable, which this reader does not "
+     "parse, so every list is bullet rather than a guessed ordered=true. Tables and "
+     "footnotes are not read yet"},
 };
 
 const size_t FORMAT_COUNT = sizeof(FORMATS) / sizeof(FORMATS[0]);

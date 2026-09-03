@@ -37,9 +37,16 @@ WHERE element_type = 'heading' ORDER BY element_order;
 Heading One	1
 Heading Two	2
 
-# Both writers reduce to the same block skeleton. Content differs slightly because the
-# source documents differ -- LibreOffice's RTF->DOCX conversion kept a literal bullet
-# character -- so this compares STRUCTURE, which is the part that must agree.
+# Both writers reduce to the same block skeleton APART FROM THE LIST, and the exception is
+# a property of the documents rather than of the reader.
+#
+# The LibreOffice file carries w:numPr on its two bullet paragraphs and still has no list:
+# its numId is 0, which in OOXML means "no numbering" rather than "numbering zero", and the
+# package has no word/numbering.xml for it to reference. pandoc makes those paragraphs too
+# -- measured, its output for that file is all Para with one BlockQuote and no BulletList.
+#
+# So the two fixtures agree on every type except `list` and `list_item`, which only the
+# pandoc-generated one actually has.
 query I
 SELECT count(*) FROM (
   SELECT element_type, kind FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
@@ -47,7 +54,27 @@ SELECT count(*) FROM (
   SELECT element_type, kind FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
 );
 ----
-0
+2
+
+# ...and NAMING the two, so a future change that loses the blockquote or invents a list in
+# the LibreOffice file cannot satisfy this by coincidence.
+query I
+SELECT element_type FROM (
+  SELECT element_type, kind FROM read_docx_blocks('test/fixtures/pandoc_pstyle.docx')
+  EXCEPT
+  SELECT element_type, kind FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+) ORDER BY element_type;
+----
+list
+list_item
+
+# BOTH files have a blockquote, by different markings: the pandoc one via pStyle BlockText,
+# the LibreOffice one via w:ind w:left=720 with pStyle Normal and no quote style at all.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+WHERE element_type = 'blockquote';
+----
+1
 
 # ---------------------------------------------------------------------------
 # Inline runs become structured children; the block's own content is NULL.

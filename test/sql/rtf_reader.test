@@ -33,16 +33,42 @@ WHERE element_type = 'heading' ORDER BY element_order;
 Heading One	1
 Heading Two	2
 
-# Both writers must reduce to the SAME duck_blocks. This is the property that makes
-# the two code paths equivalent rather than merely both present.
+# THE TWO WRITERS NO LONGER REDUCE TO THE SAME BLOCKS, and the reason is a fact about the
+# writers rather than a regression in the reader.
+#
+# Only LibreOffice emits real list markup. Measured: libreoffice_stylesheet.rtf carries
+# \ls and \ilvl and a {\listtext} group, and panduck reads a bullet list from it.
+# pandoc's RTF WRITER emits no list control words at all -- it writes the bullet as a
+# literal `\bullet` character in an ordinary paragraph -- so pandoc_outlinelevel.rtf has
+# paragraphs beginning with a bullet glyph, and pandoc's own reader gives Para for them too.
+#
+# So what must still agree is the HEADING mechanism, which is what this pair exists to
+# prove equivalent: \outlinelevel and {\stylesheet} \sN reach the same result.
+query II
+SELECT content, attributes['heading_level'] FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	1
+Heading Two	2
+
+# And the LIST is present in exactly one of them, named rather than counted, so a change
+# that invented a list in the pandoc file or lost the one in the LibreOffice file cannot
+# pass by coincidence.
+query II
+SELECT
+  (SELECT count(*) FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf') WHERE element_type = 'list'),
+  (SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf') WHERE element_type = 'list');
+----
+1	0
+
+# THE RENDERED BULLET MUST NOT REACH THE TEXT of a real list item. {\listtext ...} holds the
+# glyph and its tab, written into the file so a non-list-aware renderer still shows
+# something. It is presentation, and including it puts a literal bullet at the front of
+# every item -- which is exactly what the pandoc-written file shows, since there the bullet
+# IS the content.
 query I
-SELECT count(*) FROM (
-  SELECT kind, element_type, content, element_order
-  FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
-  EXCEPT
-  SELECT kind, element_type, content, element_order
-  FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
-);
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/libreoffice_stylesheet.rtf')
+WHERE element_type = 'list_item' AND content LIKE '%' || chr(8226) || '%';
 ----
 0
 

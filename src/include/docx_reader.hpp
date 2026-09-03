@@ -43,9 +43,13 @@ struct DocxBlock {
 	//! `value` only: the ORIGINAL field spelling, marking this as format-derived rather
 	//! than pandoc-derived. See doc_metadata.hpp for why the marker is required.
 	std::string source_type;
-	std::string element_type; //!< "heading" or "paragraph"
+	std::string element_type; //!< "heading", "paragraph", "list", "list_item", "blockquote"
 	std::string content;      //!< flattened text; empty when inlines are populated
 	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
+	//! STRUCTURAL depth, 1 for a top-level block. This reader emits containers now.
+	int level = 1;
+	//! `list` only: DuckBlockTypes::LIST_TYPE_*
+	std::string list_type;
 	std::vector<DocxInline> inlines;
 };
 

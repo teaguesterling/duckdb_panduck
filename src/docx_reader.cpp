@@ -220,6 +220,12 @@ void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &ou
 std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	ZipContainer zip(path, "read_docx_blocks");
 	auto document_xml = zip.ReadRequired("word/document.xml");
+	// OPTIONAL. A document with no lists has no numbering part, and -- measured on
+	// test/fixtures/libreoffice_outlinelvl.docx -- a document CAN carry w:numPr and still
+	// have none, because numId 0 means "no numbering" rather than "numbering zero". Pandoc
+	// makes those paragraphs, and so does this reader.
+	std::string numbering_xml;
+	zip.Read("word/numbering.xml", numbering_xml);
 	std::string styles_xml;
 	zip.Read("word/styles.xml", styles_xml); // optional: a minimal DOCX may omit it
 
@@ -243,11 +249,65 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		                            parsed.description());
 	}
 
+	// numId -> per-ilvl orderedness, resolved through abstractNumId. A numId that does not
+	// resolve here is NOT a list -- see the numbering_xml comment above.
+	std::map<int, std::map<int, bool>> num_ordered;
+	pugi::xml_document num_doc;
+	if (!numbering_xml.empty() &&
+	    num_doc.load_buffer(numbering_xml.data(), numbering_xml.size(), pugi::parse_default)) {
+		auto num_root = num_doc.child("w:numbering");
+		std::map<int, std::map<int, bool>> abstract;
+		for (auto an : num_root.children("w:abstractNum")) {
+			int aid = an.attribute("w:abstractNumId").as_int(-1);
+			for (auto lvl : an.children("w:lvl")) {
+				int ilvl = lvl.attribute("w:ilvl").as_int(0);
+				std::string fmt = lvl.child("w:numFmt").attribute("w:val").value();
+				// Everything that is not a bullet is a numbering scheme -- decimal, lowerRoman,
+				// upperLetter and the rest -- so the test is against `bullet` rather than for a
+				// list of ordered spellings that would need extending per format.
+				abstract[aid][ilvl] = (fmt != "bullet" && !fmt.empty());
+			}
+		}
+		for (auto n : num_root.children("w:num")) {
+			int nid = n.attribute("w:numId").as_int(-1);
+			int aid = n.child("w:abstractNumId").attribute("w:val").as_int(-1);
+			auto it = abstract.find(aid);
+			if (nid > 0 && it != abstract.end()) {
+				num_ordered[nid] = it->second;
+			}
+		}
+	}
+
 	std::vector<DocxBlock> blocks;
 	auto body = doc.child("w:document").child("w:body");
+	int open_lists = 0;
 	for (auto para : body.children("w:p")) {
 		auto ppr = para.child("w:pPr");
 		int level = ParagraphHeadingLevel(ppr, styles);
+
+		// LIST MEMBERSHIP. A w:numPr whose numId resolves in numbering.xml; ilvl gives depth.
+		int list_depth = 0;
+		bool list_ordered = false;
+		auto numpr = ppr.child("w:numPr");
+		if (numpr && level == 0) {
+			int nid = numpr.child("w:numId").attribute("w:val").as_int(0);
+			int ilvl = numpr.child("w:ilvl").attribute("w:val").as_int(0);
+			auto it = num_ordered.find(nid);
+			if (nid > 0 && it != num_ordered.end()) {
+				list_depth = ilvl + 1;
+				auto lit = it->second.find(ilvl);
+				list_ordered = lit != it->second.end() && lit->second;
+			}
+		}
+
+		// BLOCKQUOTE. Either a quote paragraph style, or indentation with no numbering --
+		// which is how LibreOffice marks one, measured: w:ind w:left="720" and pStyle
+		// "Normal". 720 twentieths of a point is half an inch, Word's default quote indent.
+		std::string pstyle_name = ppr.child("w:pStyle").attribute("w:val").value();
+		bool quote_style = pstyle_name == "BlockText" || pstyle_name == "Quote" || pstyle_name == "IntenseQuote" ||
+		                   pstyle_name == "BlockQuote";
+		int ind_left = ppr.child("w:ind").attribute("w:left").as_int(0);
+		bool is_quote = level == 0 && list_depth == 0 && (quote_style || ind_left >= 720);
 
 		struct Run {
 			RunFormat fmt;
@@ -300,10 +360,34 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		auto end = all.find_last_not_of(" \t\n");
 		std::string trimmed = all.substr(begin, end - begin + 1);
 
+		// Open and close lists around the run of items, so `list` wraps its `list_item`s the
+		// way every other panduck reader emits them.
+		while (open_lists > list_depth) {
+			open_lists--;
+		}
+		while (open_lists < list_depth) {
+			DocxBlock l;
+			l.element_type = DuckBlockTypes::TYPE_LIST;
+			l.level = 2 * open_lists + 1;
+			l.list_type = list_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
+			blocks.push_back(std::move(l));
+			open_lists++;
+		}
+
 		DocxBlock block;
 		if (level > 0) {
 			block.element_type = DuckBlockTypes::TYPE_HEADING;
 			block.heading_level = level;
+		} else if (list_depth > 0) {
+			block.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			block.level = 2 * list_depth;
+		} else if (is_quote) {
+			DocxBlock q;
+			q.element_type = DuckBlockTypes::TYPE_BLOCKQUOTE;
+			q.level = 1;
+			blocks.push_back(std::move(q));
+			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+			block.level = 2;
 		} else {
 			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
@@ -375,10 +459,16 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.list_type.empty()) {
+			// Both spellings, as every panduck reader emits.
+			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
+			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
+			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
+		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
 		// of its block, so it is one deeper. This reader emits no containers, so every
 		// block sits at 1 and every inline at 2.
-		const int32_t block_level = 1;
+		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.has_level = true;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));

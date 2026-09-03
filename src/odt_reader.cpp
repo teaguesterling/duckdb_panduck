@@ -214,12 +214,88 @@ void CollectOdtMetadata(const std::string &meta_xml, std::vector<OdtBlock> &out)
 	}
 }
 
+//! Per-level orderedness for every `text:list-style`, keyed by style name.
+//!
+//! ODF defines ALL TEN levels of a list style up front, and a single style routinely mixes
+//! them -- the fixture's WWNum1001 declares both `bullet` and `number` levels. So "is this
+//! list ordered" is a question about a LEVEL, not about a style, and reading the style as a
+//! whole gets it wrong on any document whose nested levels differ from its first.
+std::map<std::string, std::map<int, bool>> ParseListStyles(const pugi::xml_node &root) {
+	std::map<std::string, std::map<int, bool>> out;
+	std::function<void(const pugi::xml_node &)> walk = [&](const pugi::xml_node &node) {
+		for (auto child : node.children()) {
+			if (std::string(child.name()) == "text:list-style") {
+				std::string name = child.attribute("style:name").value();
+				if (name.empty()) {
+					name = child.attribute("text:name").value();
+				}
+				for (auto lvl : child.children()) {
+					std::string tag = lvl.name();
+					if (tag.rfind("text:list-level-style-", 0) != 0) {
+						continue;
+					}
+					int level = lvl.attribute("text:level").as_int(1);
+					out[name][level] = (tag == "text:list-level-style-number");
+				}
+			}
+			walk(child);
+		}
+	};
+	walk(root);
+	return out;
+}
+
+//! Paragraph style names that mean BLOCKQUOTE, resolved through parent-style-name.
+//!
+//! LibreOffice writes `Block_20_Text` (display name "Block Text"); pandoc's own ODT writer
+//! uses `Quotations`. A document may also use an automatic style whose parent is one of
+//! them, so the chain is followed rather than the name matched.
+std::set<std::string> ParseBlockquoteStyles(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+	std::set<std::string> quote {"Block_20_Text", "Quotations"};
+	std::map<std::string, std::string> parent;
+	std::function<void(const pugi::xml_node &)> walk = [&](const pugi::xml_node &node) {
+		for (auto child : node.children()) {
+			if (std::string(child.name()) == "style:style" &&
+			    std::string(child.attribute("style:family").value()) == "paragraph") {
+				std::string name = child.attribute("style:name").value();
+				std::string par = child.attribute("style:parent-style-name").value();
+				if (!name.empty() && !par.empty()) {
+					parent[name] = par;
+				}
+			}
+			walk(child);
+		}
+	};
+	walk(content_root);
+	if (styles_root) {
+		walk(styles_root);
+	}
+	// Close over the parent chain. Bounded, because a cycle in a malformed document must
+	// not hang the reader.
+	for (int pass = 0; pass < 8; pass++) {
+		size_t before = quote.size();
+		for (auto &kv : parent) {
+			if (quote.count(kv.second)) {
+				quote.insert(kv.first);
+			}
+		}
+		if (quote.size() == before) {
+			break;
+		}
+	}
+	return quote;
+}
+
 std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	ZipContainer zip(path, "read_odt_blocks");
 	auto content_xml = zip.ReadRequired("content.xml");
 	// OPTIONAL: a missing meta.xml is a document that declared no metadata, not an error.
 	std::string meta_xml;
 	zip.Read("meta.xml", meta_xml);
+	// OPTIONAL like meta.xml: list styles and the blockquote style live here, and a document
+	// without it simply has neither.
+	std::string styles_xml;
+	zip.Read("styles.xml", styles_xml);
 
 	pugi::xml_document doc;
 	// parse_ws_pcdata for the same reason DOCX needs it: a whitespace-only text node
@@ -234,30 +310,78 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	auto styles = ParseAutomaticStyles(root);
 	auto body = root.child("office:body").child("office:text");
 
-	// ODF nests list content: text:list > text:list-item > text:p. Skipping text:list
-	// wholesale loses the TEXT, not just the list structure -- the differential validator
-	// caught exactly that, with pandoc reporting "bullet one bullet two" where panduck
-	// reported nothing. Flattening the paragraphs out preserves every word while leaving
-	// list structure unmodelled, which is the same position RTF and DOCX are in. Losing
-	// structure is a gap; losing text is a bug.
-	std::vector<pugi::xml_node> paragraphs;
-	std::function<void(const pugi::xml_node &)> collect = [&](const pugi::xml_node &parent) {
-		for (auto node : parent.children()) {
-			std::string tag = node.name();
-			if (tag == "text:h" || tag == "text:p") {
-				paragraphs.push_back(node);
-			} else if (tag == "text:list" || tag == "text:list-item" || tag == "text:list-header") {
-				collect(node);
-			}
-			// tables, sequence declarations and drawing frames are not read yet.
-		}
+	pugi::xml_document styles_doc;
+	pugi::xml_node styles_root;
+	if (!styles_xml.empty() &&
+	    styles_doc.load_buffer(styles_xml.data(), styles_xml.size(), pugi::parse_default | pugi::parse_ws_pcdata)) {
+		styles_root = styles_doc.child("office:document-styles");
+	}
+	auto list_styles = ParseListStyles(root);
+	for (auto &kv : ParseListStyles(styles_root)) {
+		list_styles[kv.first] = kv.second;
+	}
+	auto quote_styles = ParseBlockquoteStyles(root, styles_root);
+
+	// ODF nests list content: text:list > text:list-item > text:p, and this reader used to
+	// FLATTEN it -- every list paragraph came out as a top-level paragraph, so the words
+	// survived and the list did not. That was recorded as a declared gap rather than a
+	// defect, on the correct grounds that losing structure beats losing text.
+	//
+	// It is structure now. The depth is the nesting of text:list elements, and the list
+	// style travels down with it so each level can ask whether IT is ordered -- ODF defines
+	// all ten levels of a style up front and routinely mixes bullet and number among them.
+	struct Entry {
+		pugi::xml_node node;
+		int depth = 0;
+		std::string list_style;
 	};
-	collect(body);
+	std::vector<Entry> entries;
+	std::function<void(const pugi::xml_node &, int, const std::string &)> collect =
+	    [&](const pugi::xml_node &parent, int depth, const std::string &list_style) {
+		    for (auto node : parent.children()) {
+			    std::string tag = node.name();
+			    if (tag == "text:h" || tag == "text:p") {
+				    entries.push_back(Entry {node, depth, list_style});
+			    } else if (tag == "text:list") {
+				    // A nested text:list may restate the style or inherit the enclosing one.
+				    std::string style = node.attribute("text:style-name").value();
+				    collect(node, depth + 1, style.empty() ? list_style : style);
+			    } else if (tag == "text:list-item" || tag == "text:list-header") {
+				    collect(node, depth, list_style);
+			    }
+			    // tables, sequence declarations and drawing frames are not read yet.
+		    }
+	    };
+	collect(body, 0, "");
 
 	std::vector<OdtBlock> blocks;
-	for (auto node : paragraphs) {
+	int open_lists = 0;
+	for (auto &entry : entries) {
+		auto node = entry.node;
 		std::string tag = node.name();
 		bool is_heading = (tag == "text:h");
+
+		// OPEN AND CLOSE LISTS around the entries, so `list` wraps its `list_item`s the way
+		// every other panduck reader emits them. A heading inside a list closes it: ODF
+		// permits the nesting and no consumer expects a heading as a list item.
+		int want = is_heading ? 0 : entry.depth;
+		while (open_lists > want) {
+			open_lists--;
+		}
+		while (open_lists < want) {
+			OdtBlock l;
+			l.element_type = DuckBlockTypes::TYPE_LIST;
+			l.level = 2 * open_lists + 1;
+			auto sit = list_styles.find(entry.list_style);
+			bool ordered = false;
+			if (sit != list_styles.end()) {
+				auto lit = sit->second.find(open_lists + 1);
+				ordered = lit != sit->second.end() && lit->second;
+			}
+			l.list_type = ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
+			blocks.push_back(std::move(l));
+			open_lists++;
+		}
 
 		std::vector<Run> runs;
 		CollectRuns(node, RunFormat(), styles, runs);
@@ -277,11 +401,25 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		auto end = all.find_last_not_of(" \t\n");
 		std::string trimmed = all.substr(begin, end - begin + 1);
 
+		std::string style_name = node.attribute("text:style-name").value();
+		bool is_quote = !is_heading && entry.depth == 0 && quote_styles.count(style_name) > 0;
+
 		OdtBlock block;
 		if (is_heading) {
 			int level = node.attribute("text:outline-level").as_int(1);
 			block.element_type = DuckBlockTypes::TYPE_HEADING;
 			block.heading_level = (level >= 1 && level <= 6) ? level : 1;
+		} else if (entry.depth > 0) {
+			block.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			block.level = 2 * entry.depth;
+		} else if (is_quote) {
+			// A BLOCKQUOTE WRAPS A PARAGRAPH, which is what pandoc emits: BlockQuote [Para].
+			OdtBlock q;
+			q.element_type = DuckBlockTypes::TYPE_BLOCKQUOTE;
+			q.level = 1;
+			blocks.push_back(std::move(q));
+			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
+			block.level = 2;
 		} else {
 			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
@@ -349,10 +487,17 @@ unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input,
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
-		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
-		// of its block, so it is one deeper. This reader emits no containers, so every
-		// block sits at 1 and every inline at 2.
-		const int32_t block_level = 1;
+		if (!block.list_type.empty()) {
+			// BOTH SPELLINGS, as every panduck reader emits -- `ordered` is the v1 name and
+			// `list_type` the later alias, and a consumer written against either reads this.
+			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
+			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
+			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
+		}
+		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD of
+		// its block, so it is one deeper. This reader emits CONTAINERS now -- lists and
+		// blockquotes -- so the level comes from the block rather than being fixed at 1.
+		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.has_level = true;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));

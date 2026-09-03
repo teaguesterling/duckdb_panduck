@@ -82,13 +82,18 @@ EMDASH = (
     "the source document reads 'caf\u00e9 \u2014 em-dash'. panduck matches the source; pandoc does not.",
 )
 
-RTF_LISTS = (
-    NOT_IMPLEMENTED,
-    "two causes. (1) panduck does not read lists yet, so it emits the RTF \\bullet as "
-    "paragraph text where pandoc emits list_item -- panduck's gap, tracked in the "
-    "registry notes. (2) panduck resolves {\\stylesheet} \\sN and reports 'Heading One' "
-    "as heading/1, while pandoc reads it as Para[Strong[Span]] and detects no heading "
-    "at all -- panduck is the more faithful reader here, not the divergent one.",
+RTF_LO_HEADINGS = (
+    REFERENCE_WRONG,
+    "panduck resolves {\\stylesheet} \\sN and reports 'Heading One' as heading/1, while "
+    "pandoc reads it as Para[Strong[Span]] and detects NO HEADING AT ALL in a LibreOffice "
+    "RTF. panduck is the more faithful reader here, not the divergent one -- the same "
+    "situation as w:outlineLvl in a LibreOffice DOCX.\n\n"
+    "THIS ENTRY USED TO HAVE A SECOND CAUSE AND IT IS GONE. It read: 'panduck does not read "
+    "lists yet, so it emits the RTF \\bullet as paragraph text where pandoc emits "
+    "list_item'. Lists are read now, via \\ls and \\ilvl, and {\\listtext ...} -- the "
+    "RENDERED bullet glyph, written into the file so a non-list-aware renderer shows "
+    "something -- is suppressed as the presentation it is. The text level, which used to "
+    "carry that literal bullet character, now AGREES with pandoc exactly.",
 )
 
 DOCX_SCOPE = (
@@ -108,15 +113,6 @@ DOCX_LO = (
     "LibreOffice RTF. (2) panduck does not read blockquotes yet, which is panduck's gap.",
 )
 
-ODT_SCOPE = (
-    NOT_IMPLEMENTED,
-    "panduck flattens list items to paragraphs and does not read blockquotes, so pandoc's "
-    "list_item and blockquote markers have no counterpart and later positions shift. TEXT "
-    "AGREES EXACTLY on both fixtures -- nothing is lost, the structure around it is not "
-    "modelled. That distinction is why this is not-implemented rather than a defect: an "
-    "earlier version skipped text:list wholesale and lost the words themselves, which the "
-    "text level caught.",
-)
 
 RST_ADMONITION = (
     REFERENCE_WRONG,
@@ -271,7 +267,7 @@ CASES = [
         "test/fixtures/pandoc_pstyle.docx",
         "docx",
         "read_docx_blocks",
-        expect={"skeleton": DOCX_SCOPE, "marked": DOCX_SCOPE, "meta": OFFICE_META},  # text must AGREE
+        expect={"meta": OFFICE_META},  # text must AGREE
         note="pandoc-generated DOCX: headings via w:pStyle",
     ),
     Case(
@@ -285,14 +281,14 @@ CASES = [
         "test/fixtures/pandoc.odt",
         "odt",
         "read_odt_blocks",
-        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE, "meta": OFFICE_META},  # text must AGREE
+        expect={"meta": OFFICE_META},  # text must AGREE
         note="pandoc-generated ODT",
     ),
     Case(
         "test/fixtures/libreoffice.odt",
         "odt",
         "read_odt_blocks",
-        expect={"skeleton": ODT_SCOPE, "marked": ODT_SCOPE, "meta": OFFICE_META},  # text must AGREE
+        expect={"meta": OFFICE_META},  # text must AGREE
         note="LibreOffice-generated ODT",
     ),
     Case(
@@ -330,7 +326,7 @@ CASES = [
         "test/fixtures/libreoffice_stylesheet.rtf",
         "rtf",
         "read_rtf_blocks",
-        expect={"text": RTF_LISTS, "skeleton": RTF_LISTS, "marked": RTF_LISTS},
+        expect={"skeleton": RTF_LO_HEADINGS, "marked": RTF_LO_HEADINGS},
         note="LibreOffice-generated RTF: headings via {\\stylesheet} \\sN",
     ),
     Case(

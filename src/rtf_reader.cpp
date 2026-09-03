@@ -301,6 +301,10 @@ private:
 		} else if (word == "pard") {
 			style_id_ = -1;
 			outline_level_ = -1;
+			// \pard resets paragraph properties, INCLUDING list membership. Without this a
+			// single list turns every following paragraph into a list item.
+			list_id_ = 0;
+			list_level_ = 0;
 		} else if (word == "plain") {
 			g.fmt = CharFormat();
 		} else if (word == "b") {
@@ -317,6 +321,19 @@ private:
 			style_id_ = param;
 		} else if (word == "outlinelevel" && has_param) {
 			outline_level_ = param;
+		} else if (word == "ls" && has_param) {
+			// \lsN names the list this paragraph belongs to; \ilvlN its depth. Measured
+			// against pandoc, which makes a BulletList from exactly the paragraphs carrying
+			// these, and nothing from the fixture that has neither.
+			list_id_ = param;
+		} else if (word == "ilvl" && has_param) {
+			list_level_ = param;
+		} else if (word == "listtext") {
+			// {\listtext ...} is the RENDERED BULLET -- the glyph and its tab, written into
+			// the file so a non-list-aware renderer still shows something. It is presentation,
+			// not content, and including it puts a literal bullet character at the front of
+			// every list item's text. Suppressed like any other non-content destination.
+			g.skip = true;
 		} else if (word == "uc" && has_param) {
 			g.uc = param;
 		} else if (word == "u" && has_param) {
@@ -438,9 +455,35 @@ private:
 
 		RtfBlock block;
 		int level = HeadingLevel();
+		// A heading is never a list item, even when the paragraph carries \ls -- RTF permits
+		// the combination and no consumer expects a heading inside a list.
+		int list_depth = (level > 0 || list_id_ == 0) ? 0 : list_level_ + 1;
+
+		// Open and close `list` containers around the run of items, matching every other
+		// reader's shape.
+		while (open_lists_ > list_depth) {
+			open_lists_--;
+		}
+		while (open_lists_ < list_depth) {
+			RtfBlock l;
+			l.element_type = DuckBlockTypes::TYPE_LIST;
+			l.level = 2 * open_lists_ + 1;
+			// RTF's orderedness lives in the \listtable's level definitions, which this
+			// reader does not parse. BULLET is the safe default and the measured one: pandoc
+			// reports BulletList for the only fixture here that has a list, and a wrong
+			// `ordered=true` would be a claim the document does not support. Recorded as a
+			// gap rather than guessed.
+			l.list_type = DuckBlockTypes::LIST_TYPE_BULLET;
+			blocks_.push_back(std::move(l));
+			open_lists_++;
+		}
+
 		if (level > 0) {
 			block.element_type = DuckBlockTypes::TYPE_HEADING;
 			block.heading_level = level;
+		} else if (list_depth > 0) {
+			block.element_type = DuckBlockTypes::TYPE_LIST_ITEM;
+			block.level = 2 * list_depth;
 		} else {
 			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
@@ -492,6 +535,9 @@ private:
 
 	int style_id_ = -1;
 	int outline_level_ = -1;
+	int list_id_ = 0;    //!< \lsN -- 0 means this paragraph is not in a list
+	int list_level_ = 0; //!< \ilvlN -- depth within that list
+	int open_lists_ = 0; //!< how many `list` containers are currently open
 
 	std::map<int, std::string> styles_;
 	bool style_entry_open_ = false;
@@ -569,10 +615,15 @@ unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBind
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
+		if (!block.list_type.empty()) {
+			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
+			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
+			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
+		}
 		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
 		// of its block, so it is one deeper. This reader emits no containers, so every
 		// block sits at 1 and every inline at 2.
-		const int32_t block_level = 1;
+		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.has_level = true;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));

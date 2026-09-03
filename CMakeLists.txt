@@ -40,18 +40,73 @@ find_package(miniz CONFIG REQUIRED)
 # defined, and an unresolvable genexpr expands to the EMPTY STRING rather than
 # erroring -- which is precisely the silent success this block exists to prevent.
 if(WASM_LOADABLE_EXTENSIONS)
-    macro(_panduck_resolve_imported_lib OUT TGT)
-        get_target_property(${OUT} ${TGT} IMPORTED_LOCATION)
-        if(NOT ${OUT})
-            # A CONFIG package commonly sets only the config-specific location.
-            get_target_property(${OUT} ${TGT} IMPORTED_LOCATION_RELEASE)
+    # Resolve the ARCHIVE behind an imported target.
+    #
+    # The dependencies are not shaped alike, which is why one property read is not enough:
+    #   miniz::miniz      STATIC IMPORTED    -- archive on IMPORTED_LOCATION_<CONFIG>
+    #   pugixml::pugixml  INTERFACE IMPORTED -- NO location; forwards
+    #                                           INTERFACE_LINK_LIBRARIES to pugixml::static
+    # A $<TARGET_FILE:> genexpr is not a way out either: it is a hard error on an
+    # INTERFACE library.
+    function(_panduck_resolve_archive OUT TGT)
+        set(${OUT} "" PARENT_SCOPE)
+        if(NOT TARGET ${TGT})
+            return()
         endif()
-    endmacro()
-    _panduck_resolve_imported_lib(_panduck_pugixml_lib pugixml::pugixml)
-    _panduck_resolve_imported_lib(_panduck_miniz_lib miniz::miniz)
+        get_target_property(_type ${TGT} TYPE)
+        if(_type STREQUAL "INTERFACE_LIBRARY")
+            get_target_property(_deps ${TGT} INTERFACE_LINK_LIBRARIES)
+            if(_deps)
+                foreach(_d IN LISTS _deps)
+                    if(TARGET ${_d})
+                        _panduck_resolve_archive(_found ${_d})
+                        if(_found)
+                            set(${OUT} "${_found}" PARENT_SCOPE)
+                            return()
+                        endif()
+                    endif()
+                endforeach()
+            endif()
+            return()
+        endif()
+        get_target_property(_loc ${TGT} IMPORTED_LOCATION)
+        if(NOT _loc)
+            # Order matters. IMPORTED_CONFIGURATIONS commonly reads "DEBUG;RELEASE", so
+            # taking the first entry that resolves links the DEBUG archive into a release
+            # build -- which still links, still passes, and ships the wrong artifact.
+            # Try the active config first, then optimised ones, and only then whatever
+            # else the package happens to export.
+            set(_prefer "")
+            if(CMAKE_BUILD_TYPE)
+                string(TOUPPER "${CMAKE_BUILD_TYPE}" _bt)
+                list(APPEND _prefer ${_bt})
+            endif()
+            list(APPEND _prefer RELEASE RELWITHDEBINFO MINSIZEREL NOCONFIG)
+            get_target_property(_cfgs ${TGT} IMPORTED_CONFIGURATIONS)
+            if(_cfgs)
+                list(APPEND _prefer ${_cfgs})
+            endif()
+            list(REMOVE_DUPLICATES _prefer)
+            foreach(_c IN LISTS _prefer)
+                get_target_property(_loc ${TGT} IMPORTED_LOCATION_${_c})
+                if(_loc)
+                    break()
+                endif()
+            endforeach()
+        endif()
+        if(_loc)
+            set(${OUT} "${_loc}" PARENT_SCOPE)
+        endif()
+    endfunction()
+
+    _panduck_resolve_archive(_panduck_pugixml_lib pugixml::pugixml)
+    _panduck_resolve_archive(_panduck_miniz_lib miniz::miniz)
     if(_panduck_pugixml_lib AND _panduck_miniz_lib)
         set(DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS
             "${_panduck_pugixml_lib};${_panduck_miniz_lib}")
+        # Printed so the CI log shows WHICH archives were linked -- a debug archive
+        # resolves every symbol just as well as a release one, so the symbol check
+        # downstream cannot tell them apart. This line is the only place that can.
         message(STATUS "panduck WASM link libs: ${DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS}")
     else()
         # Fail the BUILD rather than emit a .wasm that loads and then throws.

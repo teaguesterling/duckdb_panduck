@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -88,6 +88,9 @@ check-conformance:
 # the second copy. Skips cleanly when upstream is unreachable; --require makes that a
 # failure.
 .PHONY: check-divergence
+check-wordloss:
+	python3 scripts/check_word_loss.py
+
 check-divergence:
 	python3 scripts/check_converter_divergence.py
 

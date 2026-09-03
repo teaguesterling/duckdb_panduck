@@ -43,6 +43,10 @@ struct Line {
 	std::string term;        //!< LIST_ITEM: the part before ` := `, when there is one
 	bool definition = false; //!< LIST_ITEM: had a ` := `, so `term` is populated
 	int level = 0;           //!< HEADING: 1-6. LIST_ITEM: marker run length.
+	//! The source line before any trimming. A code block's continuation lines carry their
+	//! INDENTATION as content, and `text` has already had it stripped -- reading "    return
+	//! 1" back as "return 1" changes the program.
+	std::string raw;
 };
 
 //! Classify every line of a Textile document. Never fails: an unrecognised line is TEXT.

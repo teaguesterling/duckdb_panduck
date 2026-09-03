@@ -257,7 +257,33 @@ public:
 				c.element_type = DuckBlockTypes::TYPE_CODE;
 				c.level = 1;
 				c.content = ln.text;
+				// A `bc.` BLOCK RUNS TO THE NEXT BLANK LINE. Taking only the marker's own
+				// line truncated every multi-line listing and let the rest leak out as
+				// PROSE -- `bc(python). def hello():` gave a code block holding the
+				// signature and a paragraph holding "return 1".
+				//
+				// python-textile 4.0.2 settles it:
+				//   bc(python). def hello():
+				//       return 1
+				// -> <pre class="python"><code class="python">def hello():
+				//    return 1</code></pre>
+				//
+				// `raw` rather than `text`, because the continuation's INDENTATION is
+				// content: "    return 1" read back as "return 1" is a different program.
+				while (i + 1 < lines.size() && lines[i + 1].kind != LineKind::BLANK) {
+					c.content += "\n" + lines[i + 1].raw;
+					i++;
+				}
 				AddBlockAttrs(c, ln);
+				// On a code block the class IS the language -- it is what the reference
+				// emits as <code class="python"> and what pandoc reads as a CodeBlock's
+				// first class. Recorded under the name a consumer looks for, rather than
+				// left as a generic class it would have to know to interpret.
+				auto cls = c.attributes.find("class");
+				if (cls != c.attributes.end()) {
+					c.attributes["language"] = cls->second;
+					c.attributes.erase(cls);
+				}
 				blocks_.push_back(std::move(c));
 				break;
 			}

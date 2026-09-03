@@ -39,7 +39,11 @@ struct Line {
 	bool ordered = false;
 	int start = 1;
 	bool header_sep = false; //!< GRID_SEP written with `=` -- promotes the rows above it
-	std::vector<int> spans;  //!< SIMPLE_SEP: the rule runs, giving column boundaries
+	std::vector<int> spans;  //!< SIMPLE_SEP: the rule runs' WIDTHS
+	//! SIMPLE_SEP: where each rule run STARTS. Widths alone are not enough to locate a
+	//! column: RST separates them by one or more spaces, so a reader accumulating
+	//! `width + gap` has to guess the gap and drifts further with every column.
+	std::vector<int> span_starts;
 };
 
 //! Classify every line. Never fails: an unrecognised line is TEXT.

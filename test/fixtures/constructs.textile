@@ -1,0 +1,65 @@
+h1(#heading-one). Heading One
+
+Paragraph with *bold*, _italic_, @inline code@, -struck-, and a "link":https://example.com.
+
+h2(#heading-two). Heading Two
+
+h3(#heading-three). Heading Three
+
+|_. Name|_. Value|_. Note|
+|<. a|>. 1|=. x|
+|<. b|>. 2|=. y|
+
+# first
+# second
+#* nested bullet
+#* nested two
+# third
+
+* plain bullet
+* second bullet
+
+<dl>
+<dt>Term</dt>
+<dd>The definition of the term.</dd>
+</dl>
+
+<blockquote>
+
+A quote.
+
+bq. A nested quote.
+
+
+
+</blockquote>
+
+bc(python). def hello():
+    return 1
+
+
+bc. an indented code block
+
+
+<hr />
+
+<figure>
+
+<figcaption>
+
+A caption
+
+</figcaption>
+
+!pic.png(A caption)!
+
+</figure>
+
+Text with a footnote.[1]
+
+H[~2~]O and E=mc[^2^].
+
+
+fn1. The footnote body.
+
+

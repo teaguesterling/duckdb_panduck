@@ -133,6 +133,7 @@ std::vector<Line> ScanTextile(const std::string &src) {
 		const std::string &raw = lines[li];
 		std::string t = Trim(raw);
 		Line ln;
+		ln.raw = raw;
 
 		if (t.empty()) {
 			ln.kind = LineKind::BLANK;

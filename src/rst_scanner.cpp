@@ -69,11 +69,12 @@ bool IsGridSep(const std::string &t, bool &header) {
 //! `=====  =====` -- runs of `=` separated by spaces. The run LENGTHS are the column
 //! widths, which is the only place RST cell extraction is positional rather than
 //! delimited.
-bool IsSimpleSep(const std::string &t, std::vector<int> &spans) {
+bool IsSimpleSep(const std::string &t, std::vector<int> &spans, std::vector<int> &starts) {
 	if (t.size() < 2 || t[0] != '=') {
 		return false;
 	}
 	spans.clear();
+	starts.clear();
 	size_t i = 0;
 	while (i < t.size()) {
 		if (t[i] == '=') {
@@ -82,6 +83,7 @@ bool IsSimpleSep(const std::string &t, std::vector<int> &spans) {
 				j++;
 			}
 			spans.push_back(static_cast<int>(j - i));
+			starts.push_back(static_cast<int>(i));
 			i = j;
 		} else if (t[i] == ' ') {
 			i++;
@@ -147,7 +149,7 @@ std::vector<Line> ScanRst(const std::string &src) {
 			out.push_back(std::move(line));
 			continue;
 		}
-		if (IsSimpleSep(t, line.spans)) {
+		if (IsSimpleSep(t, line.spans, line.span_starts)) {
 			line.kind = LineKind::SIMPLE_SEP;
 			out.push_back(std::move(line));
 			continue;

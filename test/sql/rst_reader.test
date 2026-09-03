@@ -193,3 +193,31 @@ SELECT kind, element_type, level, coalesce(content, '<NULL>') FROM read_rst_bloc
 block	heading	1	Bold title
 inline	bold	2	Bold
 inline	text	2	 title
+
+# ---------------------------------------------------------------------------
+# A SIMPLE TABLE'S COLUMNS ARE LOCATED, NOT PREDICTED.
+#
+# The rule row's runs give the column boundaries. The reader used to walk forward as
+# `at += width + 2`, assuming two spaces between columns; RST separates them by ONE OR
+# MORE, so on a single-space table the offset drifted a character per column and the
+# error accumulated:
+#
+#     ==== ===== ====        headers  ["Name", "alue", "te"]
+#     Name Value Note        rows     [["a", "", ""], ["b", "", ""]]
+#
+# The first column right, the second short a character, the third short two, and every
+# data row past column one EMPTY -- cell content silently gone. Found by asking which
+# words pandoc sees in a file that panduck does not.
+query I
+SELECT content FROM read_rst_blocks('test/fixtures/constructs.rst') WHERE element_type = 'table';
+----
+{"headers":["Name","Value","Note"],"rows":[["a","1","x"],["b","2","y"]]}
+
+# The same table with WIDER gaps must give the same cells -- the point is that the gap is
+# read rather than assumed, so varying it may not change the answer.
+query I
+SELECT content FROM read_rst_blocks_string(
+  E'====   =====    ====\n Name   Value    Note\n====   =====    ====\n a      1        x\n====   =====    ====')
+WHERE element_type = 'table';
+----
+{"headers":["Name","Value","Note"],"rows":[["a","1","x"]]}

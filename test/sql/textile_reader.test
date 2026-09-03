@@ -292,3 +292,38 @@ SELECT element_type, attributes['list_type'], attributes['ordered']
 FROM read_textile_blocks_string(E'# one\n# two') WHERE element_type = 'list';
 ----
 list	ordered	true
+
+# ---------------------------------------------------------------------------
+# A `bc.` BLOCK RUNS TO THE NEXT BLANK LINE.
+#
+# Taking only the marker's own line truncated every multi-line listing and let the rest
+# leak out as PROSE: `bc(python). def hello():` gave a code block holding the signature
+# and a separate PARAGRAPH holding "return 1".
+#
+# python-textile 4.0.2 settles it -- the block includes the continuation and the class
+# becomes the language:
+#   <pre class="python"><code class="python">def hello():
+#       return 1</code></pre>
+# The newline is rendered as a literal \n here: a sqllogictest value cannot span lines,
+# and the point of the assertion is that the newline and the indentation are BOTH present.
+query III
+SELECT element_type, replace(content, chr(10), '\n'), attributes['language']
+FROM read_textile_blocks_string(E'bc(python). def hello():\n    return 1');
+----
+code	def hello():\n    return 1	python
+
+# THE INDENTATION IS CONTENT. Trimming the continuation turns "    return 1" into
+# "return 1", which is a different program.
+query I
+SELECT contains(content, chr(10) || '    return 1')
+FROM read_textile_blocks('test/fixtures/constructs.textile') WHERE element_type = 'code'
+  AND attributes['language'] = 'python';
+----
+true
+
+# Nothing from the listing may escape into a paragraph.
+query I
+SELECT count(*) FROM read_textile_blocks('test/fixtures/constructs.textile')
+WHERE element_type = 'paragraph' AND content = 'return 1';
+----
+0

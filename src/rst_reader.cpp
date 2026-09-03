@@ -117,18 +117,32 @@ std::vector<std::string> GridCells(const std::string &row) {
 }
 
 //! A simple table's cells come from COLUMN POSITIONS, not delimiters -- the rule row's runs
-//! give the widths. This is the only positional extraction in the reader, and it is why the
-//! rule line's spans are carried on the Line.
-std::vector<std::string> SimpleCells(const std::string &row, const std::vector<int> &spans) {
+//! locate them. This is the only positional extraction in the reader, and it is why the
+//! rule line's offsets are carried on the Line.
+//!
+//! Each cell spans [start of its run, start of the NEXT run), and the last runs to the end
+//! of the line. Earlier this walked forward as `at += width + 2`, assuming two spaces
+//! between columns. RST separates them by ONE OR MORE, so on a single-space table the
+//! offset drifted by a character per column and the error accumulated:
+//!
+//!     ==== ===== ====        headers  ["Name", "alue", "te"]
+//!     Name Value Note        rows     [["a", "", ""], ["b", "", ""]]
+//!
+//! -- the first column right, the second short a character, the third short two, and every
+//! data row past column one empty. Reading the boundaries instead of predicting them means
+//! there is no gap to guess.
+std::vector<std::string> SimpleCells(const std::string &row, const std::vector<int> &starts) {
 	std::vector<std::string> cells;
-	size_t at = 0;
-	for (size_t c = 0; c < spans.size(); c++) {
-		size_t width = static_cast<size_t>(spans[c]);
-		std::string cell = at < row.size() ? row.substr(at, c + 1 == spans.size() ? std::string::npos : width) : "";
+	for (size_t c = 0; c < starts.size(); c++) {
+		size_t at = static_cast<size_t>(starts[c]);
+		size_t len = std::string::npos;
+		if (c + 1 < starts.size()) {
+			len = static_cast<size_t>(starts[c + 1]) - at;
+		}
+		std::string cell = at < row.size() ? row.substr(at, len) : "";
 		size_t b = cell.find_first_not_of(" \t");
 		size_t e = cell.find_last_not_of(" \t");
 		cells.push_back(b == std::string::npos ? std::string() : cell.substr(b, e - b + 1));
-		at += width + 2; // the two spaces between columns
 	}
 	return cells;
 }
@@ -472,7 +486,7 @@ private:
 			}
 			if (line.kind == LineKind::SIMPLE_SEP) {
 				if (spans.empty()) {
-					spans = line.spans;
+					spans = line.span_starts;
 				} else if (!ruled.empty()) {
 					ruled.back() = true;
 				}

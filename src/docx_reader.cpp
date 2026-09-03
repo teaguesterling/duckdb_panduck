@@ -280,7 +280,11 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 
 	std::vector<DocxBlock> blocks;
 	auto body = doc.child("w:document").child("w:body");
-	int open_lists = 0;
+	// The TYPE of each currently-open list, not merely how many are open. A bullet list
+	// following an ordered one at the SAME depth is a different list, and comparing depth
+	// alone silently swallows the second into the first -- measured on a generated fixture,
+	// where `- plain bullet` after `1. 2. 3.` became a fourth ordered item.
+	std::vector<bool> open_ordered;
 	for (auto para : body.children("w:p")) {
 		auto ppr = para.child("w:pPr");
 		int level = ParagraphHeadingLevel(ppr, styles);
@@ -362,16 +366,21 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 
 		// Open and close lists around the run of items, so `list` wraps its `list_item`s the
 		// way every other panduck reader emits them.
-		while (open_lists > list_depth) {
-			open_lists--;
+		// A type change at the innermost depth closes that list so a new one opens.
+		if (list_depth > 0 && open_ordered.size() == static_cast<size_t>(list_depth) &&
+		    open_ordered.back() != list_ordered) {
+			open_ordered.pop_back();
 		}
-		while (open_lists < list_depth) {
+		while (open_ordered.size() > static_cast<size_t>(list_depth)) {
+			open_ordered.pop_back();
+		}
+		while (open_ordered.size() < static_cast<size_t>(list_depth)) {
 			DocxBlock l;
 			l.element_type = DuckBlockTypes::TYPE_LIST;
-			l.level = 2 * open_lists + 1;
+			l.level = 2 * static_cast<int>(open_ordered.size()) + 1;
 			l.list_type = list_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
 			blocks.push_back(std::move(l));
-			open_lists++;
+			open_ordered.push_back(list_ordered);
 		}
 
 		DocxBlock block;

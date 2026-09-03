@@ -131,6 +131,21 @@ RST_ADMONITION = (
     "needing a vocabulary change per directive.",
 )
 
+PANDOC_ODT_LOOSENESS = (
+    REFERENCE_WRONG,
+    "pandoc's OWN TWO READERS disagree about this document. lists.odt and lists.docx are "
+    "generated from the SAME lists.source.md, and pandoc reads the ordered list's items as\n\n"
+    "    odt   ->  Plain, Para,  BulletList, Plain\n"
+    "    docx  ->  Plain, Plain, BulletList, Plain\n\n"
+    "so its ODT reader calls the second item LOOSE and its DOCX reader calls the same item "
+    "TIGHT. One document, two readers, two answers -- which makes this a fact about pandoc "
+    "rather than a difference panduck could resolve by choosing better.\n\n"
+    "panduck emits `list_item` consistently for every item in both, and duck_block does not "
+    "model tightness at the item level at all. NOTHING IS LOST: the text agrees exactly, and "
+    "only the Plain-versus-Para marker differs. Same class as LATEX_LOOSE_LISTS, where "
+    "pandoc's LaTeX reader calls every list loose regardless of the source.",
+)
+
 OFFICE_META = (
     REFERENCE_WRONG,
     "panduck recovers document metadata that pandoc drops. MEASURED: `pandoc file.docx "
@@ -369,6 +384,29 @@ CASES = [
         # fixture alone would never have found it.
         expect={},
         note="pandoc-generated Org: :PROPERTIES: drawers under every heading",
+    ),
+    Case(
+        "test/fixtures/lists.docx",
+        "docx",
+        "read_docx_blocks",
+        # The ONLY fixture in the tree with an ordered list or a nested one. Generated from
+        # lists.source.md, which is kept beside it so this can be rebuilt rather than
+        # trusted. It caught a real defect on its first run: a bullet list following an
+        # ordered one at the same depth was swallowed into it, because the open/close logic
+        # compared list DEPTH and never list TYPE.
+        expect={"meta": OFFICE_META},
+        note="ordered + nested lists and a blockquote -- paths no other fixture reached",
+    ),
+    Case(
+        "test/fixtures/lists.odt",
+        "odt",
+        "read_odt_blocks",
+        expect={
+            "skeleton": PANDOC_ODT_LOOSENESS,
+            "marked": PANDOC_ODT_LOOSENESS,
+            "meta": OFFICE_META,
+        },
+        note="ordered + nested lists and a blockquote, ODF side",
     ),
     Case(
         "test/fixtures/handwritten.textile",

@@ -152,3 +152,31 @@ WHERE kind = 'value' ORDER BY element_order;
 ----
 date	dc:date
 generator	meta:generator
+
+# ---------------------------------------------------------------------------
+# ORDERED AND NESTED LISTS. See docx_reader.test for why this fixture exists: every
+# binary-format fixture held one flat bullet list, so per-level orderedness resolution and
+# the nesting logic were both unexercised.
+#
+# ODF makes the ordered question specifically easy to get wrong: a list style declares ALL
+# TEN levels up front and routinely mixes bullet and number among them, so orderedness is a
+# property of the LEVEL. A reader asking the style as a whole is right on a uniform document
+# and wrong on this one.
+query III
+SELECT element_type, level, attributes['list_type'] FROM read_odt_blocks('test/fixtures/lists.odt')
+WHERE element_type = 'list' ORDER BY element_order;
+----
+list	1	ordered
+list	3	bullet
+list	1	bullet
+
+query III
+SELECT element_type, level, content FROM read_odt_blocks('test/fixtures/lists.odt')
+WHERE element_type = 'list_item' ORDER BY element_order;
+----
+list_item	2	first
+list_item	2	second
+list_item	4	nested bullet
+list_item	4	nested two
+list_item	2	third
+list_item	2	plain bullet

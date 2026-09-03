@@ -231,3 +231,38 @@ SELECT count(*) FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx
 WHERE kind = 'value' AND attributes['key'] IN ('title', 'author', 'subject', 'description');
 ----
 0
+
+# ---------------------------------------------------------------------------
+# ORDERED AND NESTED LISTS -- the paths that had NO fixture at all.
+#
+# Every DOCX, ODT and RTF fixture in this tree held one flat bullet list, so the numFmt
+# resolution that decides ordered-versus-bullet and the nesting logic were both written and
+# neither was exercised. They could have returned the wrong answer for every ordered list in
+# the world and this suite would have stayed green -- coverage measured by "a list is read"
+# where the property is "the RIGHT list is read".
+#
+# test/fixtures/lists.docx is generated from lists.source.md, kept beside it so the fixture
+# can be rebuilt rather than trusted.
+#
+# It found a real defect immediately: the bullet list following the ordered one was
+# SWALLOWED INTO IT, appearing as a fourth ordered item, because the open/close logic
+# compared list DEPTH and never list TYPE.
+query III
+SELECT element_type, level, attributes['list_type'] FROM read_docx_blocks('test/fixtures/lists.docx')
+WHERE element_type = 'list' ORDER BY element_order;
+----
+list	1	ordered
+list	3	bullet
+list	1	bullet
+
+# The nested list sits inside the ordered one and the items keep their depth.
+query III
+SELECT element_type, level, content FROM read_docx_blocks('test/fixtures/lists.docx')
+WHERE element_type = 'list_item' ORDER BY element_order;
+----
+list_item	2	first
+list_item	2	second
+list_item	4	nested bullet
+list_item	4	nested two
+list_item	2	third
+list_item	2	plain bullet

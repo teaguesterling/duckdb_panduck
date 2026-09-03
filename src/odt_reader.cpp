@@ -355,7 +355,10 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 	collect(body, 0, "");
 
 	std::vector<OdtBlock> blocks;
-	int open_lists = 0;
+	// See the DOCX reader: the TYPE of each open list, not just the count. A bullet list
+	// after an ordered one at the same depth must close and reopen, or the second is
+	// swallowed into the first.
+	std::vector<bool> open_ordered;
 	for (auto &entry : entries) {
 		auto node = entry.node;
 		std::string tag = node.name();
@@ -365,22 +368,29 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path) {
 		// every other panduck reader emits them. A heading inside a list closes it: ODF
 		// permits the nesting and no consumer expects a heading as a list item.
 		int want = is_heading ? 0 : entry.depth;
-		while (open_lists > want) {
-			open_lists--;
+		auto ordered_at = [&](int depth) {
+			auto sit = list_styles.find(entry.list_style);
+			if (sit == list_styles.end()) {
+				return false;
+			}
+			auto lit = sit->second.find(depth);
+			return lit != sit->second.end() && lit->second;
+		};
+		if (want > 0 && open_ordered.size() == static_cast<size_t>(want) && open_ordered.back() != ordered_at(want)) {
+			open_ordered.pop_back();
 		}
-		while (open_lists < want) {
+		while (open_ordered.size() > static_cast<size_t>(want)) {
+			open_ordered.pop_back();
+		}
+		while (open_ordered.size() < static_cast<size_t>(want)) {
+			int depth = static_cast<int>(open_ordered.size()) + 1;
+			bool ordered = ordered_at(depth);
 			OdtBlock l;
 			l.element_type = DuckBlockTypes::TYPE_LIST;
-			l.level = 2 * open_lists + 1;
-			auto sit = list_styles.find(entry.list_style);
-			bool ordered = false;
-			if (sit != list_styles.end()) {
-				auto lit = sit->second.find(open_lists + 1);
-				ordered = lit != sit->second.end() && lit->second;
-			}
+			l.level = 2 * (depth - 1) + 1;
 			l.list_type = ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
 			blocks.push_back(std::move(l));
-			open_lists++;
+			open_ordered.push_back(ordered);
 		}
 
 		std::vector<Run> runs;

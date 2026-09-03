@@ -1,0 +1,41 @@
+h1(#guide-title). Guide Title
+
+A paragraph with *strong* and _emphasis_ and @inline code@.
+
+h2(#lists). Lists
+
+* first bullet
+* second bullet
+** nested bullet
+
+# ordered one
+# ordered two
+
+<dl>
+<dt>term</dt>
+<dd>its definition</dd>
+</dl>
+
+h2(#other-blocks). Other Blocks
+
+bq. A quoted passage.
+
+
+
+bc. print("hello")
+
+
+|_. Name|_. Value|
+|alpha|1|
+|beta|2|
+
+A "link":http://example.com and an !pic.png! image.
+
+<div style="color:red;">
+
+A styled paragraph.
+
+
+</div>
+
+notextile. <b>passed through</b>

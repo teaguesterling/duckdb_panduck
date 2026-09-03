@@ -1,0 +1,280 @@
+# name: test/sql/textile_reader.test
+# description: read_textile_blocks() -- textile, one of the last two before the pandoc
+#              dependency can actually be removed
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# A BLOCK MARKER IS PARSED, NOT MATCHED, which is textile's one structural wrinkle.
+# Attributes sit BETWEEN the name and the dot, so `p{color:red}.` is a paragraph marker and
+# a fixed-prefix match on "p." never sees it.
+#
+# pandoc wraps an attributed block in a Div and puts the style there. panduck keeps the
+# block's OWN type and carries the attribute on it: a styled paragraph is still a paragraph,
+# and wrapping it in a container changes the document's shape to record a colour.
+query III
+SELECT element_type, content, attributes['style'] FROM read_textile_blocks_string(
+  E'p{color:red}. styled paragraph');
+----
+paragraph	styled paragraph	color:red
+
+query III
+SELECT element_type, content, attributes['class'] FROM read_textile_blocks_string(
+  E'p(warning). classed paragraph');
+----
+paragraph	classed paragraph	warning
+
+# `p.x` is NOT a marker -- a marker's dot is followed by a space or end of line. Without
+# that rule every sentence ending in an abbreviation becomes a block.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'p.x is not a marker');
+----
+paragraph	p.x is not a marker
+
+# ---------------------------------------------------------------------------
+# DIVERGENCE 1: A LIST ADJACENT TO A DIFFERENT LIST TYPE IS STILL A LIST.
+#
+# Measured on `* bullet` followed by `# ordered` with no blank line between:
+#
+#   python-textile 4.0.2  ->  a list
+#   pandoc 3.1.3          ->  Para [Str "*", Space, Str "bullet"] then OrderedList
+#
+# pandoc loses the bullet list entirely and leaves its marker in the document as a literal
+# asterisk. That is the leaked-as-prose failure the Org drawers and MediaWiki's <span>
+# anchors each produced, and it is why this row is in the ledger as reference-wrong.
+#
+# panduck emits SIBLING lists where the reference NESTS the second inside the first. A
+# deliberate departure: the reference's own output places an <ol> as a direct child of a
+# <ul> rather than inside an <li>, which is invalid HTML, so it is a quirk of that
+# implementation rather than a statement about the format.
+query IIII
+SELECT element_type, level, content, attributes['list_type'] FROM read_textile_blocks_string(
+  E'* bullet\n# ordered') ORDER BY element_order;
+----
+list	1	NULL	bullet
+list_item	2	bullet	NULL
+list	1	NULL	ordered
+list_item	2	ordered	NULL
+
+# The marker must not survive into the text, which is the specific thing pandoc gets wrong.
+query I
+SELECT count(*) FROM read_textile_blocks_string(E'* bullet\n# ordered')
+WHERE content LIKE '%*%';
+----
+0
+
+# Nesting is the marker run's LENGTH, as in MediaWiki.
+query III
+SELECT element_type, level, content FROM read_textile_blocks_string(
+  E'* one\n** deep') ORDER BY element_order;
+----
+list	1	NULL
+list_item	2	one
+list	3	NULL
+list_item	4	deep
+
+# ---------------------------------------------------------------------------
+# DIVERGENCE 2: notextile. MEANS "DO NOT PROCESS THIS".
+#
+# Measured: `notextile. <b>raw</b>` gives pandoc a paragraph whose FIRST WORD is the literal
+# string "notextile.", with the body parsed as textile regardless -- so it both advertises
+# the marker to the reader and does the one thing the construct exists to prevent.
+# python-textile strips the marker and passes the body through.
+query IIII
+SELECT element_type, content, encoding, attributes['source_type'] FROM read_textile_blocks_string(
+  E'notextile. <b>raw</b>');
+----
+raw	<b>raw</b>	html	notextile
+
+# The marker must not appear anywhere in the output.
+query I
+SELECT count(*) FROM read_textile_blocks_string(E'notextile. <b>raw</b>')
+WHERE content LIKE '%notextile%';
+----
+0
+
+# ---------------------------------------------------------------------------
+# INLINE MARKUP. `*` and `**` BOTH become bold; `_` and `__` both italic. Textile's
+# distinction is <strong> versus <b> -- semantic versus presentational emphasis -- and
+# duck_block has one `bold`. Declared in the ledger rather than modelled, exactly as Org's
+# =code= / ~verbatim~ pair was.
+#
+# The DOUBLE forms must be tested first in the parser: matching `*` before `**` consumes one
+# character of the double marker and strands the other in the text.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'a **bold** b')
+WHERE kind = 'inline' AND element_type <> 'text';
+----
+bold	bold
+
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'a __ital__ b')
+WHERE kind = 'inline' AND element_type <> 'text';
+----
+italic	ital
+
+# Textile's full inline set, every member of which already existed in the vocabulary -- no
+# new element_type was needed for this format, the fourth in a row.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(
+  E'x -del- +ins+ ^sup^ ~sub~ ??cite?? %spn% @cd@ y')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+strikethrough	del
+underline	ins
+superscript	sup
+subscript	sub
+cite	cite
+span	spn
+code	cd
+
+# A link's trailing sentence punctuation is NOT part of the URL. Textile's own rule, and
+# without it every link ending a sentence keeps the full stop.
+query III
+SELECT element_type, content, attributes['href'] FROM read_textile_blocks_string(
+  E'see "docs":http://example.com/a. done') WHERE kind = 'inline' AND element_type = 'link';
+----
+link	docs	http://example.com/a
+
+query II
+SELECT element_type, attributes['src'] FROM read_textile_blocks_string(E'an !pic.png! image')
+WHERE kind = 'inline' AND element_type = 'image';
+----
+image	pic.png
+
+# ---------------------------------------------------------------------------
+# BLOCKS. `pre.` and `bc.` both yield a code block -- measured, pandoc gives CodeBlock for
+# both with no language.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'bc. print(1)');
+----
+code	print(1)
+
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'pre. literal text');
+----
+code	literal text
+
+query III
+SELECT element_type, level, content FROM read_textile_blocks_string(E'bq. quoted')
+ORDER BY element_order;
+----
+blockquote	1	NULL
+paragraph	2	quoted
+
+# Headings carry a slugified id, which is what makes doc_toc work. NOTE THE SEPARATOR: a
+# HYPHEN here, where MediaWiki's slugs use an underscore. That is a difference between the
+# two formats' conventions, not a choice either reader made.
+query III
+SELECT content, attributes['heading_level'], attributes['id'] FROM read_textile_blocks_string(
+  E'h3. Third Level Heading');
+----
+Third Level Heading	3	third-level-heading
+
+# `###.` is a comment and not content -- and it must not be mistaken for an ordered list,
+# since `#` opens one.
+query I
+SELECT count(*) FROM read_textile_blocks_string(E'###. a comment');
+----
+0
+
+# ---------------------------------------------------------------------------
+# TABLES use the spec 5.0 native schema. `_.` marks a header cell.
+query III
+SELECT element_type, encoding, content FROM read_textile_blocks_string(
+  E'|_. H1 |_. H2 |\n| a | b |');
+----
+table	json	{"headers":["H1","H2"],"rows":[["a","b"]]}
+
+query I
+SELECT content FROM read_textile_blocks_string(E'| a | b |\n| c | d |');
+----
+{"headers":[],"rows":[["a","b"],["c","d"]]}
+
+# ---------------------------------------------------------------------------
+# A DEFINITION LIST, the same shape org, rst, epub and mediawiki all produce.
+query IIII
+SELECT element_type, level, content, attributes['role'] FROM read_textile_blocks_string(
+  E'- term := definition') ORDER BY element_order;
+----
+list	1	NULL	NULL
+list_item	2	term	term
+list_item	2	definition	definition
+
+# ---------------------------------------------------------------------------
+# A LEADING SPACE IS NOT PREFORMATTED, which is worth pinning because MediaWiki's IS and
+# these two readers sit next to each other. Measured against python-textile: ` indented`
+# renders as an ordinary paragraph.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E' indented line');
+----
+paragraph	indented line
+
+# ---------------------------------------------------------------------------
+# NO DOCUMENT METADATA. The third format after RST and MediaWiki with none -- pandoc
+# returns an empty meta for every textile input tried.
+query I
+SELECT count(*) FROM read_textile_blocks_string(
+  E'h1. Title\n\nBody with *emphasis*.') WHERE kind = 'value';
+----
+0
+
+# ---------------------------------------------------------------------------
+# DISPATCH: .textile routes here, and the registry no longer has a planned format at all.
+query I
+SELECT panduck_format_for('doc.textile');
+----
+textile
+
+query II
+SELECT format, reader FROM panduck_supported_extensions() WHERE format = 'textile';
+----
+textile	read_textile_blocks
+
+# ---------------------------------------------------------------------------
+# `(...)` HOLDS A CLASS, AN #ID, OR BOTH -- and the pandoc-generated fixture is what found
+# this. `pandoc -t textile` writes `h1(#guide-title).` for every heading, which a person
+# never types. Treating the whole group as a class put the string "#guide-title" into
+# attributes['class'], and the id survived only because the slugifier happened to derive the
+# same value from the heading text. An author's explicit id, differing from its slug, was
+# silently lost.
+query III
+SELECT element_type, attributes['id'], attributes['class'] FROM read_textile_blocks_string(
+  E'h1(#anchor-name). Title');
+----
+heading	anchor-name	NULL
+
+query III
+SELECT element_type, attributes['id'], attributes['class'] FROM read_textile_blocks_string(
+  E'h2(warn#top). Title');
+----
+heading	top	warn
+
+# AN EXPLICIT ID WINS over the derived slug -- the two agree by luck, not by rule.
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1(#custom). Some Other Words');
+----
+custom
+
+# ---------------------------------------------------------------------------
+# BLOCK HTML IS CONSUMED WHOLE, not line by line.
+#
+# pandoc's textile WRITER emits `<dl>` for a definition list, because `- term := def` is not
+# in its writer -- so this arrives in every pandoc-generated document and no hand-written
+# one. Matching only the OPENING line was worse than not handling it: the first line became
+# raw HTML and the body still leaked into a paragraph, so half the markup was hidden and
+# half of it on show.
+query III
+SELECT element_type, replace(content, chr(10), ' '), encoding FROM read_textile_blocks_string(
+  E'<dl>\n<dt>term</dt>\n<dd>def</dd>\n</dl>');
+----
+raw	<dl> <dt>term</dt> <dd>def</dd> </dl>	html
+
+# Nothing may reach a paragraph as literal markup -- the failure three earlier readers paid
+# for, asserted here on the generated fixture itself.
+query I
+SELECT count(*) FROM read_textile_blocks('test/fixtures/pandoc.textile')
+WHERE element_type = 'paragraph' AND content LIKE '%<%';
+----
+0

@@ -21,6 +21,7 @@ static const char *const EXT_IPYNB[] = {"ipynb", nullptr};
 static const char *const EXT_PANDOC[] = {nullptr};
 static const char *const EXT_ORG[] = {"org", nullptr};
 static const char *const EXT_MEDIAWIKI[] = {"wiki", "mediawiki", nullptr};
+static const char *const EXT_TEXTILE[] = {"textile", nullptr};
 static const char *const EXT_RTF[] = {"rtf", nullptr};
 
 // The formats panduck claims. `format` is pandoc's own name for it, so a reader added
@@ -111,6 +112,17 @@ const FormatReader FORMATS[] = {
      "a `code` block, because MediaWiki renders it <pre> -- measured against "
      "maintenance/parse.php, where pandoc approximates it as inline Code inside a "
      "paragraph. No document metadata: like RST, this format has none"},
+    {"textile", EXT_TEXTILE, "read_textile_blocks", STATUS_IMPLEMENTED,
+     "a pure line scanner -- textile has no construct whose interior changes how a later "
+     "line is read, so unlike mediawiki it needs no brace balancing. A block marker is "
+     "PARSED rather than matched, since attributes sit between the name and the dot: "
+     "p{color:red}. and h2(cls). are markers. `*` and `**` both map to bold and `_`/`__` "
+     "both to italic -- textile distinguishes <strong> from <b> and duck_block does not. "
+     "TWO DIVERGENCES from pandoc, both settled against python-textile: a bullet list "
+     "adjacent to an ordered one stays a LIST here, where pandoc turns it into a paragraph "
+     "containing a literal asterisk; and notextile. is honoured, where pandoc keeps the "
+     "marker as prose and parses the body anyway. No document metadata, like rst and "
+     "mediawiki. A leading space is NOT preformatted, unlike mediawiki"},
     {"rtf", EXT_RTF, "read_rtf_blocks", STATUS_IMPLEMENTED,
      "headings via \\outlinelevel or a {\\stylesheet} \\sN reference; paragraphs and inline "
      "bold/italic/underline/strikethrough. Lists, tables and footnotes are not read yet"},

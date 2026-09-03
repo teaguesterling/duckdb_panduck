@@ -19,15 +19,15 @@ SELECT level, title FROM doc_toc('report.docx');  -- table of contents, by path
 | | |
 |---|---|
 | [Architecture](architecture.md) | The layering, and why nothing depends upward |
-| [Readers](readers.md) | All nine formats, the Pandoc AST reader, and what real writers actually emit |
+| [Readers](readers.md) | All ten formats, the Pandoc AST reader, and what real writers actually emit |
 | [Dispatch](dispatch.md) | The derived registry and runtime reader registration |
 | [The doc_ namespace](doc_namespace.md) | Path-taking sugar over `db_*` |
 | [Validation](validation.md) | How the pandoc-compatibility claim is tested |
 
 ## Status
 
-Nine native readers — **RTF**, **DOCX**, **ODT**, **EPUB**, **LaTeX**, **Org**, **RST**,
-**ipynb** and **MediaWiki** — plus a **Pandoc AST reader** that reaches every format pandoc
+Ten native readers — **RTF**, **DOCX**, **ODT**, **EPUB**, **LaTeX**, **Org**, **RST**,
+**ipynb**, **MediaWiki** and **Textile** — plus a **Pandoc AST reader** that reaches every format pandoc
 can read, a **write direction** back out to pandoc JSON, document metadata across all of
 them, full path dispatch, runtime reader registration, and a differential validator that
 checks panduck against a real pandoc on every run.

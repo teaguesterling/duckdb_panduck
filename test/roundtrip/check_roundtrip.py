@@ -179,6 +179,31 @@ EPUB_LO_CSS = (
     "size is evidence for a heading rather than a statement of one.",
 )
 
+TEXTILE_ADJACENT_LISTS = (
+    REFERENCE_WRONG,
+    "a bullet list ADJACENT to an ordered one stays a list. MEASURED on `* bullet` followed "
+    "by `# ordered` with no blank line, against python-textile 4.0.2 -- the format's "
+    "reference implementation, installed for this -- which yields a list. pandoc yields "
+    "`Para [Str \"*\", Space, Str \"bullet\"]` and then an OrderedList: the bullet list is "
+    "GONE and its marker is left in the document as a literal asterisk.\n\n"
+    "That is the leaked-as-prose failure the Org drawers and MediaWiki's <span> anchors each "
+    "produced, and the third format in a row to produce it. panduck emits SIBLING lists "
+    "where the reference NESTS the second inside the first -- a deliberate departure, "
+    "because the reference's own output there places an <ol> as a direct child of a <ul> "
+    "rather than inside an <li>, which is invalid HTML and therefore a quirk of that "
+    "implementation rather than a statement about the format.",
+)
+
+TEXTILE_NOTEXTILE = (
+    REFERENCE_WRONG,
+    "`notextile.` means DO NOT PROCESS THIS, and pandoc processes it. MEASURED: "
+    "`notextile. <b>raw</b>` gives pandoc a paragraph whose first word is the literal string "
+    "\"notextile.\", with the body parsed as textile regardless -- so it both advertises the "
+    "marker to the reader and does the one thing the construct exists to prevent. "
+    "python-textile strips the marker and passes the body through, which is what panduck "
+    "does: `raw` with format='html'.",
+)
+
 MEDIAWIKI_PREFORMATTED = (
     REFERENCE_WRONG,
     "a LEADING SPACE is a code block, and this one is settled by MediaWiki rather than by "
@@ -348,6 +373,32 @@ CASES = [
         # fixture alone would never have found it.
         expect={},
         note="pandoc-generated Org: :PROPERTIES: drawers under every heading",
+    ),
+    Case(
+        "test/fixtures/handwritten.textile",
+        "textile",
+        "read_textile_blocks",
+        expect={
+            "text": TEXTILE_NOTEXTILE,
+            "skeleton": TEXTILE_ADJACENT_LISTS,
+            "marked": TEXTILE_ADJACENT_LISTS,
+        },
+        note="hand-written Textile: adjacent lists and a notextile. block",
+    ),
+    Case(
+        "test/fixtures/pandoc.textile",
+        "textile",
+        "read_textile_blocks",
+        # PANDOC'S OWN TEXTILE WRITER emits `h1(#guide-title).` for every heading and a raw
+        # `<dl>` for a definition list, neither of which a person types. That pair caught two
+        # real defects the moment it existed: the `(#id)` group was read as a CLASS, and the
+        # <dl> leaked into a paragraph as literal markup.
+        expect={
+            "text": TEXTILE_NOTEXTILE,
+            "skeleton": TEXTILE_NOTEXTILE,
+            "marked": TEXTILE_NOTEXTILE,
+        },
+        note="pandoc-generated Textile: (#id) anchors and a raw <dl>",
     ),
     Case(
         "test/fixtures/handwritten.wiki",

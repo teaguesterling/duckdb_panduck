@@ -44,6 +44,8 @@ set(EXTENSION_SOURCES
     src/org_reader.cpp
     src/org_scanner.cpp
     src/rst_reader.cpp
+    src/textile_reader.cpp
+    src/textile_scanner.cpp
     src/rst_scanner.cpp
     src/ipynb_reader.cpp
     src/pandoc_block_convert.cpp

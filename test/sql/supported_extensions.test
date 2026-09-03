@@ -50,6 +50,7 @@ org	read_org_blocks
 pandoc	read_pandoc_blocks
 rst	read_rst_blocks
 rtf	read_rtf_blocks
+textile	read_textile_blocks
 
 # reader is NULL exactly when the format is not implemented, and never otherwise. A
 # consumer that forgets to filter on status therefore builds a CASE branch naming NULL
@@ -91,6 +92,7 @@ org
 pandoc
 rst
 rtf
+textile
 
 # DELEGATION. Markdown and HTML are read into duck_block by duckdb_markdown and
 # duckdb_webbed. Panduck does not claim them here even though pandoc reads both: this

@@ -11,6 +11,7 @@
 #include "pandoc_block_convert.hpp"
 #include "pandoc_reader.hpp"
 #include "rst_reader.hpp"
+#include "textile_reader.hpp"
 #include "latex_tokenizer.hpp"
 #include "odt_reader.hpp"
 #include "pandoc_ast_map.hpp"
@@ -78,6 +79,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	rst::RegisterRstReader(loader);
 	ipynb::RegisterIpynbReader(loader);
 	mediawiki::RegisterMediaWikiReader(loader);
+	textile::RegisterTextileReader(loader);
 	RegisterPandocReader(loader);
 	// The WRITE direction -- panduck_blocks_to_pandoc_ast and friends. Registered here
 	// rather than from RegisterPandocReader because the two are independent surfaces: the

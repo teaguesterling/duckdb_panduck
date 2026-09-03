@@ -1,7 +1,7 @@
 # Readers
 
-panduck has nine native readers — RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb and
-MediaWiki — plus a reader for pandoc's own JSON AST that reaches every format pandoc can
+panduck has ten native readers — RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki
+and Textile — plus a reader for pandoc's own JSON AST that reaches every format pandoc can
 read. All were
 written against **real writer output** rather than the format specification, and together
 they say something no one of them said alone.
@@ -15,7 +15,7 @@ The three plain-text formats each turned on a rule that could not be guessed:
 | **ipynb** | a markdown cell is held **raw**: it is a document, not data, and parsing it here would violate the isolation that keeps `.toml` verbatim |
 | **MediaWiki** | a `\|` at line start is a table cell, a `\|` inside `{{…}}` is an argument separator — so the scanner cannot be line-local, and templates *nest*, making it brace balancing rather than matching |
 
-RST and MediaWiki are the only two with **no document metadata**: a `:Author:` field
+RST, MediaWiki and Textile are the only three with **no document metadata**: a `:Author:` field
 list is a definition list, which is what pandoc makes of it too, and a `.wiki` file has no
 metadata anywhere — an article's title lives in the page name. The opposite reading is the
 obvious one in both cases, and nothing in the vocabulary would object to a reader that got
@@ -343,6 +343,36 @@ argument:
 The first is the only *structural* divergence in the format. The tell that pandoc is
 approximating: its own writer never **produces** leading-space preformatted, emitting
 `<pre>` instead, so its reader and writer disagree about the construct.
+
+## `read_textile_blocks(path)`
+
+Textile has an unusually wide inline set — `-del-`, `+ins+`, `^sup^`, `~sub~`, `??cite??`,
+`%span%` — and **every member of it already existed** in the vocabulary. Four formats running
+have now needed no new `element_type`.
+
+`*` and `**` both become `bold`; `_` and `__` both become `italic`. Textile's distinction is
+`<strong>` versus `<b>` — semantic against presentational — and duck_block has one `bold`.
+
+**A block marker is parsed, not matched.** Attributes sit *between* the marker name and its
+dot, so `p{color:red}.` and `h2(cls#id).` are markers and a fixed-prefix match on `"p."`
+never sees them. Where pandoc wraps an attributed block in a `Div`, panduck keeps the
+block's own type and carries the attribute on it — a styled paragraph is still a paragraph,
+and wrapping it changes the document's shape to record a colour.
+
+Two divergences, both settled against **python-textile 4.0.2** rather than argued:
+
+| | reference | pandoc | panduck |
+|---|---|---|---|
+| `* bullet` then `# ordered` | a list | `Para` with a **literal `*`** — list lost | two sibling lists |
+| `notextile. <b>x</b>` | marker stripped, body passed through | marker kept as **prose**, body parsed anyway | `raw` + `format='html'` |
+
+For the first, panduck emits *sibling* lists where the reference *nests* — a deliberate
+departure, because the reference's own output places an `<ol>` as a direct child of a `<ul>`
+rather than inside an `<li>`. That is invalid HTML, so it is a quirk of that implementation
+rather than a statement about the format.
+
+**A leading space is not preformatted** — worth stating because MediaWiki's *is*, and these
+two readers sit next to each other.
 
 ## `read_pandoc_blocks(path)` — every format pandoc reads
 

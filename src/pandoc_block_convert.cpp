@@ -3176,39 +3176,51 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	// no readable blocks exporting as a valid empty AST is a usable answer; a NULL makes
 	// the caller's own write fail further downstream, where the cause is no longer visible.
 	// Now is the moment to settle it -- these names have no callers yet.
+	// ALL THREE ARE FALLIBLE. DuckDB v2.0 checks that a scalar function which throws at
+	// execution time has declared that it can; one that has not gets its error replaced by
+	//
+	//     INTERNAL Error: Scalar function "..." threw an execution error, but the function
+	//     is not marked as fallible
+	//
+	// Enforcement is an assertion, so it fires only on assertion-enabled builds -- which is
+	// why a release build shows nothing and it surfaces on one CI arch.
+	//
+	// WHICH functions was decided by following the throwing HELPERS, not by reading the
+	// registration sites. Two independent throw paths reach these three:
+	//
+	//   1. WritePandocAstFun raises IOException directly on a path it cannot open.
+	//   2. All three go through BuildBlocksJson, whose recursion calls CheckPandocDepth
+	//      (ConvertDivToPandocVal, ConvertBlockquoteToPandocVal, ConvertFigureToPandocVal),
+	//      raising InvalidInputException past 128 levels of nesting.
+	//
+	// (2) is the reason the two pure converters are marked as well, and it matters more
+	// than it looks: that guard exists specifically so a pathological document produces a
+	// clean DuckDB error instead of exhausting the call stack -- see the comment on
+	// PANDOC_MAX_NESTING_DEPTH. Undeclared, v2.0 turns that clean error into an internal
+	// one, which defeats the only thing the guard was written to do.
+	//
+	// Not shimmed: SetFallible() exists unchanged on the pinned v1.5.5 (function.hpp) and
+	// on main (scalar_function.hpp), so one spelling covers both. Set BEFORE each function
+	// reaches the loader, because v2.0's function sets no longer hand out mutable
+	// references to their members.
+	//
+	// On v1.5.5 this is NOT a no-op, and the change is deliberate: the flag reaches
+	// BoundFunctionExpression::CanThrow(), which stops the optimizer treating the call as
+	// safe to evaluate speculatively. For functions that write a file or reject malformed
+	// input, that is the accurate description; the default asserted they could not throw.
 	auto to_ast = ScalarFunction("panduck_blocks_to_pandoc_ast", {blocks_type}, ast_type, DuckBlocksToPandocAstFun);
 	panduck::SetNullHandling(to_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	to_ast.SetFallible();
 	loader.RegisterFunction(to_ast);
 
-	loader.RegisterFunction(ScalarFunction("panduck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
-	                                       PandocBlockConvert::DuckBlocksToPandocBlocksFun));
+	auto to_blocks = ScalarFunction("panduck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
+	                                PandocBlockConvert::DuckBlocksToPandocBlocksFun);
+	to_blocks.SetFallible();
+	loader.RegisterFunction(to_blocks);
 
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
-	// FALLIBLE, because this is the one scalar function in panduck that throws at
-	// EXECUTION time: an unopenable path raises IOException from inside the loop.
-	//
-	// DuckDB v2.0 enforces the declaration. A function that throws without having called
-	// SetFallible() has its error rewritten as
-	//
-	//     INTERNAL Error: Scalar function "panduck_write_pandoc_ast" threw an execution
-	//     error, but the function is not marked as fallible
-	//
-	// which replaces a message naming the unwritable path with one that reads as a DuckDB
-	// bug. Enforcement is an assertion, so it fires only on assertion-enabled builds --
-	// which is why this is invisible on a release build and shows up on exactly one CI
-	// arch. Declared here rather than shimmed: SetFallible() exists unchanged on the
-	// pinned v1.5.5 (function.hpp) and on main (scalar_function.hpp), so one spelling
-	// covers both.
-	//
-	// It has to be set BEFORE the function is handed to the loader, because v2.0's
-	// function sets no longer hand out mutable references to their members.
-	//
-	// On v1.5.5 this is not a no-op but it is strictly conservative: the flag reaches
-	// BoundFunctionExpression::CanThrow(), which stops the optimizer treating the call as
-	// safe to evaluate speculatively. For a function that WRITES A FILE, being told it can
-	// throw is the accurate description; the previous default asserted it could not.
 	write_ast.SetFallible();
 	loader.RegisterFunction(write_ast);
 }

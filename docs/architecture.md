@@ -33,7 +33,7 @@ SELECT duck_blocks_to_md(html_to_duck_blocks(content)) FROM read_text('page.html
 
 -- and blocks built by hand, with only duck_block_utils
 LOAD duck_block_utils;
-SELECT db_blocks_to_text(db_paragraph([db_text('hello '), db_bold('world')]));
+SELECT duck_blocks_to_text(duck_block_paragraph([duck_block_text('hello '), duck_block_bold('world')]));
 --  hello world
 ```
 

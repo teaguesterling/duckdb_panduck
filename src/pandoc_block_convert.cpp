@@ -3180,10 +3180,17 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	// execution time has declared that it can; one that has not gets its error replaced by
 	//
 	//     INTERNAL Error: Scalar function "..." threw an execution error, but the function
-	//     is not marked as fallible
+	//     is not marked as fallible - the function must call SetFallible(). Error: <original>
 	//
-	// Enforcement is an assertion, so it fires only on assertion-enabled builds -- which is
-	// why a release build shows nothing and it surfaces on one CI arch.
+	// This is NOT assertion-gated, which is worth stating because the opposite is easy to
+	// assume: BaseScalarFunction::Execute wraps every call in try/catch unconditionally
+	// (scalar_function.hpp:316) and rethrows through ThrowNonFallibleFunctionError
+	// (scalar_function.cpp:8). Release builds included. So this is a live defect on v2.0
+	// for any user who reaches one of these paths, not a debug-only diagnostic.
+	//
+	// The declaration is also more than an error message on v2.0: upstream lists dictionary
+	// expression caching, filter pushdown and TRY as relying on it, so a function that
+	// wrongly claims it cannot throw is telling the optimizer something load-bearing.
 	//
 	// WHICH functions was decided by following the throwing HELPERS, not by reading the
 	// registration sites. Two independent throw paths reach these three:

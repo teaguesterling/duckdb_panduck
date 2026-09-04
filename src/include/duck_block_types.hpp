@@ -42,12 +42,13 @@
 // reports it in sync, not that the sha is the newest.
 //
 // WHAT THIS COPY DOES NOT COVER. It is a COMPILE-TIME dependency on constant names, and
-// nothing more. The functions panduck calls at runtime -- db_blocks_toc and friends, used
-// by the doc_* macros -- come from whatever duck_block_utils is INSTALLED, which is the
-// community build. duck_block_utils has renamed those to duck_blocks_* on main, so this
-// header being current says NOTHING about whether those calls still resolve. They are two
-// independent clocks, and reading one as evidence about the other is exactly the
-// "fixed upstream is not fixed installed" mistake.
+// nothing more. The functions panduck calls at runtime -- duck_blocks_toc and friends,
+// used by the doc_* macros -- come from whatever duck_block_utils is INSTALLED, which is
+// the community build. So this header being current says NOTHING about whether those
+// calls still resolve. They are two independent clocks, and reading one as evidence about
+// the other is exactly the "fixed upstream is not fixed installed" mistake -- demonstrated
+// on 2026-09-04, when the community build renamed db_blocks_* to duck_blocks_* and broke
+// doc_toc and doc_render at runtime while this header, and the whole compile, stayed green.
 #include "duck_block_vocabulary.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/types.hpp"

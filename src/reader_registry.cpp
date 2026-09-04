@@ -345,15 +345,26 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 //
 // LIMITED TO WHAT IS ACTUALLY REACHABLE. duck_block_utils exposes two shapes:
 //
-//   C++ scalars, available at LOAD    db_blocks_toc, db_blocks_to_text   -> usable here
-//   macros behind PRAGMA duck_block_* db_toc, db_section, db_ansi        -> NOT usable
+//   C++ scalars, available at LOAD    duck_blocks_toc, duck_blocks_to_text -> usable here
+//   macros behind PRAGMA duck_block_* duck_block_ansi and friends          -> NOT usable
 //
 // A macro created by a pragma cannot be reached from a panduck macro: it is invisible to
 // the statement that loads the extension, and panduck cannot invoke a pragma from inside
-// a macro. So doc_section and doc_sections_like are absent until duck_block_utils
-// registers db_* at LOAD (DefaultTableMacro) rather than behind its pragma -- the same
-// change panduck made for its own registry. Likewise doc_render has no 'ansi' arm yet;
-// db_ansi is a macro.
+// a macro. So doc_section and doc_sections_like are absent, and doc_render has no 'ansi'
+// arm, until the pieces they need are reachable at LOAD.
+//
+// THE SPELLING HERE IS duck_*, NOT db_*, AND THAT CHANGED UNDER US. duck_block_utils
+// renamed its whole surface (db_ reads as DATABASE everywhere else in SQL) and published
+// it. Measured in an empty extension_directory, so the shared ~/.duckdb profile could not
+// colour the result: community build 3f2a0f0 exports 0 db_* and 174 duck_*, with no
+// back-compat aliases. These are RUNTIME name lookups against whatever build is
+// installed, so they broke the moment that landed -- see doc_namespace.test, which is the
+// alarm for exactly this and must be flipped in the same commit as these call sites.
+//
+// PARTLY UNBLOCKED, recorded as a measurement and not acted on: that same build registers
+// duck_blocks_render_ansi and duck_block_section as C++ SCALARS at LOAD. Wiring doc_render
+// 'ansi' or doc_section to them means checking their signatures against what those macros
+// need, which is a separate change from this rename.
 
 const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
                                          "doc_toc",
@@ -364,7 +375,7 @@ SELECT * FROM query(
     CASE WHEN panduck_ensure_extension('duck_block_utils')
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(db_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
+         'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
     ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
     END
@@ -419,8 +430,8 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // doc_render(src, format) -- render a document to a FORMAT. duck_block_utils deleted
     // its doc_render when it stopped depending on format extensions; panduck is the right
     // home because rendering to md/html IS format IO. 'text' delegates to
-    // db_blocks_to_text, which is a C++ scalar and therefore reachable; 'ansi' cannot be
-    // added until db_ansi registers at LOAD instead of behind a pragma.
+    // duck_blocks_to_text, which is a C++ scalar and therefore reachable; 'ansi' is not
+    // wired up -- see the reachability note above the doc_toc macro.
     {DEFAULT_SCHEMA,
      "doc_render",
      {"src", "output_format", nullptr},
@@ -434,7 +445,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(src) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      "    WHEN output_format = 'text' AND panduck_ensure_extension('duck_block_utils')"
-     "      THEN 'SELECT db_blocks_to_text(panduck_read_blocks(' || panduck_quote(src) ||"
+     "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(src) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      "    ELSE error('panduck: doc_render supports md, html and text; ' || output_format ||"
      "               ' is unsupported or its extension is not installed')"

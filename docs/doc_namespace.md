@@ -67,51 +67,73 @@ remains available directly:
 SELECT duck_blocks_toc(panduck_read_blocks('report.docx'));
 ```
 
+## `doc_section(src, section, format := 'auto')`
+
+The blocks under one heading, still as `duck_blocks`. Matches a heading by its **text or
+its `id`** — a heading's text is what a person names, its `id` is what a link names, and
+an HTML document has both:
+
+```sql
+SELECT * FROM doc_section('report.docx', 'Methods');
+SELECT * FROM doc_section('page.html', 'methods');   -- by id
+```
+
+The boundary is **the next heading at the same level or higher**, not the next heading — a
+section contains its subsections, which is what makes `doc_section('Chapter 2')` mean what
+a reader expects. A section that is not present returns no rows rather than an error.
+
+It slices panduck's own block stream rather than wrapping `duck_block_utils`, and that was
+a measurement rather than a preference. On build `3f2a0f0`, `duck_blocks_get_section`
+returns `VARCHAR` — rendered text — for *every* `output_format` including `'blocks'`, and
+`duck_blocks_sections_like` returns `(section, start_order, content)`, also rendered. Both
+are useful; neither hands back `duck_blocks`. Wrapping either would make `doc_section` the
+only `doc_*` that takes a path and returns text instead of a queryable table. Slicing
+locally also needs no `json` extension, which those functions do.
+
+`doc_sections_like` is deliberately absent: it is a **search** returning rendered text — a
+different shape and a different job. Use `duck_block_utils`' version directly.
+
+## `read_pdf_blocks(src, pages := '')`
+
+PDF into `duck_blocks`, with page selection that works:
+
+```sql
+SELECT * FROM read_pdf_blocks('report.pdf', pages := '2');
+SELECT * FROM read_pdf_blocks('report.pdf', pages := '3-7');
+```
+
+`pages` accepts `N` or `N-M` and **rejects anything else** rather than ignoring it. It was
+previously declared on `read_panduck_doc` and never referenced in the macro body, so
+`pages := 'utter nonsense'` returned the whole document. Formats that have no pages now
+say so:
+
+```
+read_panduck_doc('report.odt', pages := '2')
+Invalid Input Error: panduck: pages applies only to paginated formats (pdf); odt has no pages
+```
+
+This goes through `read_pdf_elements`, not `pdf_to_markdown`, because `pdf_to_markdown`
+takes a path and nothing else and therefore cannot select pages at all. The trade is
+measured and real: the elements route **keeps list structure** that the markdown route
+flattens into one paragraph, and **loses inline emphasis** that the markdown route keeps.
+Neither dominates. Heading levels are ranked over the whole document before the content is
+sliced, so a section cut from the middle keeps the depth it has in the full document
+instead of being promoted to level 1 — which costs a full-document scan, so `pages` selects
+content rather than saving work.
+
+Requires the `pdf` extension, which declares excluded platforms (wasm, windows
+mingw/rtools/arm64). `test/sql/pdf_reader.test` is gated on `PANDUCK_TEST_PDF` for that
+reason and runs via `make check-pdf`; until it is wired into a platform-restricted CI job
+the pdf path is verified locally and nowhere else.
+
 ## What is missing, and why
 
-`doc_section` and `doc_sections_like` do not exist yet, and `doc_render` has no `ansi` arm.
-Not an oversight — their counterparts in `duck_block_utils` are **macros created by a
-pragma**, and such a macro is unreachable from a panduck macro: invisible to the statement
-that loads the extension, and panduck cannot invoke a pragma from inside a macro.
+`doc_render` has no `ansi` arm. `duck_block_utils` build `3f2a0f0` does register
+`duck_blocks_render_ansi` as a scalar at LOAD, so the old pragma blocker is gone and this
+is now only unwired — adding it means checking that signature against what `doc_render`
+needs.
 
-| `duck_block_utils` exposes | reachable from panduck |
-|---|---|
-| C++ scalars at LOAD — `duck_blocks_toc`, `duck_blocks_to_text` | yes |
-| macros behind a PRAGMA — the render/section family, historically | no |
-
-`doc_toc` is therefore built on the **scalar** `duck_blocks_toc`, not on a table macro.
-
-### Both blockers have now cleared upstream — one is followed here, one is not
-
-`duck_block_utils` did two things, and as of the community build **3f2a0f0** both are in
-the published extension, not just on its `main`:
-
-1. **Everything is renamed.** `db_*` reads as *database* everywhere else in SQL, so the
-   surface moved to `duck_block_*` (one element) and `duck_blocks_*` (a collection) —
-   `db_blocks_toc` → `duck_blocks_toc`, `db_block_types` → `duck_block_type_names`.
-2. **The pragma blocker is gone.** The query surface is registered at LOAD rather than
-   behind `PRAGMA duck_block_render`, so `doc_section` and `doc_sections_like` become
-   possible.
-
-**panduck has followed (1) and not (2).** The rename was not optional: `doc_*` names these
-functions at runtime, so they follow whatever is `INSTALL`ed, not panduck's vendored
-vocabulary header — that copy is a compile-time dependency on constant names and says
-nothing about the function surface. Two independent clocks, and when the second one moved
-`doc_toc` and `doc_render('…','text')` broke on installs that had nothing wrong with them.
-(2) is an opportunity rather than a break, so it is recorded here and left for its own
-change.
-
-Measured into an empty `extension_directory`, so the shared `~/.duckdb` profile could not
-colour the result:
-
-| name | kind at LOAD | what it unblocks |
-|---|---|---|
-| `duck_blocks_sections_like` | `table_macro` | `doc_sections_like` |
-| `duck_blocks_get_section` | `macro` | `doc_section` |
-| `duck_blocks_render_ansi` | `scalar` | `doc_render(…, 'ansi')` |
-
-Wiring any of them up means checking its signature against what the `doc_*` macro needs,
-which is why none of it rode along with the rename.
+`doc_toc` is built on the **scalar** `duck_blocks_toc`, not on a table macro.
 
 `test/sql/doc_namespace.test` asserts which spelling the installed build has, so the day
 that changes the suite says so by name rather than failing three assertions later with

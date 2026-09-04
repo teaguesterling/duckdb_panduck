@@ -13,6 +13,8 @@ LOAD panduck;
 SELECT * FROM read_panduck_doc('report.docx');   -- any document -> duck_blocks
 SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
+SELECT * FROM doc_section('report.docx', 'Methods');  -- one section, as duck_blocks
+SELECT * FROM read_pdf_blocks('report.pdf', pages := '2-5');  -- PDF, by page
 ```
 
 **Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki,

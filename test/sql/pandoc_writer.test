@@ -268,6 +268,11 @@ true
 # them. It passes on the pinned v1.5.5 either way -- enforcement is an assertion and the
 # shipped build has assertions off -- which is exactly why the missing declaration was
 # invisible until something built against main.
+#
+# All three write functions are marked, not just this one: they share BuildBlocksJson,
+# whose recursion raises InvalidInputException past 128 levels of nesting. The right
+# question was which throwing HELPERS the registered functions reach, not which
+# registration sites have a `throw` next to them.
 statement error
 SELECT panduck_write_pandoc_ast('__TEST_DIR__/no_such_directory/written.json', list(struct_pack(
     kind := kind, element_type := element_type, content := content, level := level,

@@ -554,9 +554,8 @@ const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {
 WITH lvl AS (
     SELECT font_size, dense_rank() OVER (ORDER BY font_size DESC) AS hl
     FROM (SELECT DISTINCT font_size FROM read_pdf_elements(src) WHERE element_type = 'heading')
-), e AS (
-    SELECT page_number, element_idx, element_type, text, font_size,
-           row_number() OVER (ORDER BY page_number, element_idx) - 1 AS ord
+), raw AS (
+    SELECT page_number, element_idx, element_type, text, font_size
     FROM read_pdf_elements(
         src,
         first_page := CASE WHEN pages = '' THEN 1
@@ -568,16 +567,48 @@ WITH lvl AS (
                           WHEN regexp_matches(pages, '^[0-9]+-[0-9]+$')
                               THEN split_part(pages, '-', 2)::INTEGER
                           ELSE error('panduck: pages must be N or N-M, got ' || pages) END)
+), e AS (
+    -- A page_break BLOCK opens each page, which is how duck_block_utils models pagination:
+    -- duck_blocks_get_pages and duck_blocks_page_rows scan for element_type='page_break'
+    -- and read page_number OFF THE BREAK (doc_macros.cpp:201, :324), treating everything
+    -- between breaks as that page's content. Blocks do not carry their own page there.
+    --
+    -- This shipped without breaks first, and duck_blocks_page_rows returned 0 rows for a
+    -- two-page PDF -- the pagination function could not see the pagination. Renaming the
+    -- per-block key from 'page' to 'page_number' did not fix it either, because the
+    -- mismatch was never the key: it was two different MODELS of the same concept.
+    -- TYPE_PAGE = "page_break" is canonical vocabulary and panduck's own EPUB reader
+    -- already emits it (epub_reader.cpp:629), so this reader was the outlier.
+    --
+    -- The per-block page_number is KEPT as well, because filtering rows by page directly is
+    -- what a caller reaches for first. It is NOT canonical -- the vocabulary publishes no
+    -- ATTR_ constant for it, which is exactly why the original divergence was invisible to
+    -- check-vocabulary -- so it is a panduck convention pending a ruling from
+    -- duck_block_utils rather than something to rely on across extensions.
+    SELECT page_number, element_idx, element_type, text, font_size,
+           row_number() OVER (ORDER BY page_number, element_idx) - 1 AS ord
+    FROM (SELECT page_number, -1 AS element_idx, 'page_break' AS element_type,
+                 NULL AS text, NULL::DOUBLE AS font_size
+          FROM (SELECT DISTINCT page_number FROM raw)
+          UNION ALL SELECT page_number, element_idx, element_type, text, font_size FROM raw)
 )
 SELECT 'block' AS kind,
        CASE e.element_type WHEN 'heading' THEN 'heading'
                            WHEN 'list_item' THEN 'list_item'
+                           WHEN 'page_break' THEN 'page_break'
                            ELSE 'paragraph' END AS element_type,
        regexp_replace(e.text, '^\s*(•|\d+\.)\s+', '') AS content,
        1 AS level,
        'text' AS encoding,
+       -- 'page_number', NOT 'page'. duck_block_utils' duck_blocks_get_pages and
+       -- duck_blocks_page_rows both read attributes['page_number'] (doc_macros.cpp:201,
+       -- :324). This shipped as 'page' first and duck_blocks_page_rows returned 0 rows for
+       -- a two-page PDF -- the pagination function could not see the pagination. Nothing
+       -- caught it: the vocabulary publishes no ATTR_ constant for this, so check-vocabulary
+       -- has nothing to compare against, and every arm of that check is about constants that
+       -- ARE published rather than keys a producer invented.
        map_from_entries(list_filter([
-           {k: 'page', v: e.page_number::VARCHAR},
+           {k: 'page_number', v: e.page_number::VARCHAR},
            {k: 'heading_level', v: CASE WHEN e.element_type = 'heading' THEN lvl.hl::VARCHAR END},
            {k: 'list_type', v: CASE WHEN e.element_type = 'list_item'
                                     THEN CASE WHEN regexp_matches(e.text, '^\s*\d+\.')

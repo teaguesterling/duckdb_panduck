@@ -48,7 +48,7 @@ true
 
 # Every row of a page-2 slice really is from page 2.
 query I
-SELECT bool_and(attributes['page'] = '2')
+SELECT bool_and(attributes['page_number'] = '2')
 FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2');
 ----
 true
@@ -123,3 +123,49 @@ ORDER BY element_order;
 ----
 one	ordered
 two	ordered
+
+# ---------------------------------------------------------------------------
+# PAGINATION IS VISIBLE TO duck_block_utils, which is a different claim from "the rows
+# know their page" and is the one that was wrong.
+#
+# This reader first shipped putting page_number on every block and no page_break anywhere.
+# Every assertion above passed. duck_blocks_page_rows returned ZERO rows for this two-page
+# fixture -- the pagination function could not see the pagination -- and renaming the
+# per-block key from 'page' to 'page_number' did not help, because the mismatch was never
+# the key. duck_block_utils models pages as page_break BLOCKS carrying page_number, with
+# everything between breaks belonging to that page (doc_macros.cpp:201, :324). Two
+# different models of one concept.
+#
+# Nothing could have caught it from inside panduck: the vocabulary publishes no ATTR_
+# constant for page numbering, so check-vocabulary has nothing to compare against, and all
+# three of its arms are about constants that ARE published rather than keys a producer
+# invented. The only detector is calling the consumer, which is what this does.
+#
+# TYPE_PAGE = "page_break" is canonical and panduck's own EPUB reader already emitted it
+# (epub_reader.cpp:629), so this reader was the outlier rather than the pioneer.
+statement ok
+INSTALL json;
+
+statement ok
+LOAD json;
+
+statement ok
+INSTALL duck_block_utils;
+
+statement ok
+LOAD duck_block_utils;
+
+query I
+SELECT count(*) FROM duck_blocks_page_rows(
+    (SELECT list(b ORDER BY b.element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b));
+----
+2
+
+# The breaks are real blocks in the stream, one per page, each naming its number.
+query II
+SELECT content IS NULL, attributes['page_number']
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
+WHERE element_type = 'page_break' ORDER BY element_order;
+----
+true	1
+true	2

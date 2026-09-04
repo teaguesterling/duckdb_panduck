@@ -1,0 +1,125 @@
+# name: test/sql/pdf_reader.test
+# description: read_pdf_blocks -- PDF into duck_blocks, with page selection that works
+# group: [sql]
+
+#
+# WHY THIS FILE IS ENV-GATED, stated plainly rather than buried: the `pdf` community
+# extension statically links Poppler and Tesseract and DECLARES excluded platforms --
+# wasm_mvp, wasm_eh, wasm_threads, windows_amd64_mingw, windows_amd64_rtools,
+# windows_arm64. An unconditional `INSTALL pdf` would therefore fail on CI jobs that are
+# otherwise green, so this file runs only when PANDUCK_TEST_PDF is set. `make check-pdf`
+# sets it.
+#
+# THAT IS A REAL COVERAGE GAP AND IT IS NAMED, NOT PAPERED OVER. Until this file is wired
+# into a platform-restricted CI job, panduck's pdf path is verified locally and nowhere
+# else. It is still strictly better than what preceded it: BEFORE this file, the pdf read
+# path had ZERO behavioural coverage. Both existing mentions of pdf in the suite are
+# registry-metadata assertions that explicitly exclude it from the "actually read it"
+# checks -- reader_registry.test:273 has `format NOT IN (..., 'pdf', ...)`. Nothing ever
+# read a PDF. That is why nobody noticed pdf_to_markdown cannot select pages.
+require-env PANDUCK_TEST_PDF
+
+require panduck
+
+statement ok
+INSTALL pdf;
+
+statement ok
+LOAD pdf;
+
+# ---------------------------------------------------------------------------
+# PAGE SELECTION ACTUALLY SELECTS. This is the assertion the whole function exists for.
+#
+# The parameter it replaces was a LIE: read_panduck_doc has declared `pages` since it was
+# written and never referenced it in the macro body, so `pages := '2'` and
+# `pages := 'utter nonsense'` both returned the full document -- measured, 8 rows each.
+# A parameter that accepts anything and does nothing is worse than one that does not
+# exist, because it reads as a feature at the call site.
+#
+# The fixture is two pages by CONSTRUCTION, not by luck: two_pages.source.md carries 34
+# filler paragraphs whose only job is to push the second heading onto page 2. A one-page
+# fixture would let a broken `pages` pass by returning everything.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) > (SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2'))
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+true
+
+# Every row of a page-2 slice really is from page 2.
+query I
+SELECT bool_and(attributes['page'] = '2')
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2');
+----
+true
+
+# A range covering both pages is the whole document.
+query I
+SELECT (SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '1-2'))
+     = (SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf'));
+----
+true
+
+# Garbage is REJECTED, not ignored. This is the assertion that the old parameter could
+# never have passed, and the reason it is written as a separate case rather than folded
+# into the one above: a silently-ignored parameter and a working one are indistinguishable
+# on valid input, and differ only here.
+statement error
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := 'utter nonsense');
+----
+pages must be N or N-M
+
+# ---------------------------------------------------------------------------
+# HEADING LEVELS ARE DOCUMENT-WIDE, AND SLICING DOES NOT PROMOTE THEM.
+#
+# PDF has no heading levels, only font sizes, so level is dense_rank over distinct heading
+# font sizes. Rank within the SLICE and a mid-document section comes back with its
+# headings promoted to 1, because it is the largest thing in its own slice. Measured on
+# this fixture while building it: ranked per-slice, "Page Two Heading" read heading_level=1
+# alone and 2 in the full document -- the same heading changing depth depending on what
+# you asked for.
+# ---------------------------------------------------------------------------
+query I
+SELECT attributes['heading_level']
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2')
+WHERE element_type = 'heading';
+----
+2
+
+# ---------------------------------------------------------------------------
+# THE OUTPUT IS duck_blocks, NOT A LOOKALIKE. Asserted by handing it to consumers that
+# bind the canonical seven-field struct structurally -- if the column order or types
+# drifted, these are binder errors rather than wrong answers.
+# ---------------------------------------------------------------------------
+query I
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+true
+
+query I
+SELECT (SELECT length(panduck_blocks_to_pandoc_ast(
+            list(b ORDER BY b.element_order))::VARCHAR)
+        FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b) > 0;
+----
+true
+
+# ---------------------------------------------------------------------------
+# LIST STRUCTURE SURVIVES -- which is the reason this function uses read_pdf_elements
+# rather than pdf_to_markdown. Measured on the same document through both routes:
+# pdf_to_markdown flattens a list into ONE paragraph reading "• bullet one • bullet two",
+# while the elements route keeps discrete list_items. The markers are stripped from the
+# content and re-expressed as list_type, which is duck_block's spelling for it.
+#
+# The trade is inline emphasis, which the markdown route keeps and this one loses. That is
+# recorded as a divergence rather than hidden; it is not asserted here because asserting
+# an absence would pin a limitation in place.
+# ---------------------------------------------------------------------------
+query II
+SELECT content, attributes['list_type']
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2')
+WHERE element_type = 'list_item'
+ORDER BY element_order;
+----
+one	ordered
+two	ordered

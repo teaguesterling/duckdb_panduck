@@ -247,6 +247,59 @@ g++ -fsyntax-only -std=c++17 -I src/include -I /tmp/duckdb20/src/include \
 
 It reproduces the CI errors exactly, in seconds.
 
+## Verifying against a sibling you cannot load — the `.parquet_duck_blocks` bridge
+
+Extensions in this portfolio pin different DuckDB commits. webbed pins `b155d6f63c`
+(`v1.5.5-dev154`); panduck is on released `v1.5.5`. An extension built for one **refuses
+to load** in the other:
+
+```
+Invalid Input Error: Failed to load '.../webbed.duckdb_extension', the file was built
+specifically for DuckDB version 'b155d6f63c' and can only be loaded with that version
+```
+
+So "does panduck work with webbed's new output" cannot be answered by loading both, and
+waiting for a published build is the wrong order — publishing is what the verification is
+supposed to gate.
+
+Parquet crosses that boundary, because neither extension is needed to read it:
+
+```sql
+-- in the SIBLING's binary, with its unsigned local build
+LOAD '.../webbed.duckdb_extension';
+COPY (SELECT * FROM read_html_blocks('page.html')) TO 'bridge.parquet_duck_blocks' (FORMAT parquet);
+```
+
+```sql
+-- in panduck's binary
+SELECT * FROM panduck_register_doc_reader('parquet', 'read_parquet', ['.parquet_duck_blocks']);
+SELECT * FROM doc_section('bridge.parquet_duck_blocks', 'Methods');
+```
+
+The registration is what makes it ergonomic rather than merely possible: the suffix
+becomes a first-class panduck format, so `read_panduck_doc`, `doc_toc`, `doc_section` and
+`doc_container` all work over the sibling's output with no special-casing, and the
+verification asks its question in the same vocabulary a user would.
+
+This is how webbed#143 was verified before it published — the fixed emitter's blocks were
+written from webbed's binary, read back in panduck's, and `doc_section` matched a heading
+by an `id` that exists only because of that fix.
+
+**What it does not prove.** The bridge establishes **data** compatibility, not linkage.
+Parquet carries rows across regardless of whether the two `.so` files could ever coexist,
+so an ABI-level problem is invisible to it. For duck_block semantics it is sufficient; for
+linkage, only aligned DuckDB pins would do.
+
+`test/sql/register_reader.test` exercises this end to end, and is also the only test of
+`panduck_register_doc_reader` actually dispatching — registering a suffix panduck's C++
+has never heard of, then reading a document through it.
+
+**One property worth knowing before you use it:** the reader registry is a **process-wide
+singleton**. Registrations persist across connections and across test files in a single
+`unittest` run, so an assertion of the form `WHERE source = 'user'` with no further filter
+is really asserting "no other file has ever registered anything". Scope such assertions to
+the extensions the file itself registers.
+
 ## A note on writing assertions
 
 Three failure modes surfaced building this, each one passing while the property it named

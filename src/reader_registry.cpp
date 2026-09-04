@@ -70,8 +70,18 @@ ReaderRegistry::ReaderRegistry() {
 	static const Seed SEEDS[] = {
 	    {".md", "markdown", "markdown", "read_markdown_blocks", KIND_DOC},
 	    {".markdown", "markdown", "markdown", "read_markdown_blocks", KIND_DOC},
-	    {".html", "html", "webbed", "", KIND_DOC},
-	    {".htm", "html", "webbed", "", KIND_DOC},
+	    // webbed shipped read_html_blocks + parse_html_blocks in v2.8.1 (2026-08-30),
+	    // measured against community build 093856b. Until then it exposed only the SCALAR
+	    // html_to_duck_blocks(html), which returns a LIST and so needed unpacking in a
+	    // special-case branch of READ_DOC_MACRO. That branch is gone and these rows now
+	    // name a function, so html takes the same generic path markdown does.
+	    //
+	    // This row was stale for five days and nothing noticed, which is the same
+	    // two-clocks failure as the db_* -> duck_* rename: the registry is a COMPILE-TIME
+	    // claim about a sibling's RUNTIME surface. check-vocabulary catches drift in the
+	    // vendored constants and nothing catches drift here.
+	    {".html", "html", "webbed", "read_html_blocks", KIND_DOC},
+	    {".htm", "html", "webbed", "read_html_blocks", KIND_DOC},
 	    {".pdf", "pdf", "pdf", "", KIND_DOC},
 	    // A .zim is a CORPUS, not a document -- an archive of many articles, closer to a
 	    // .zip than to a .docx. It is declared here so it stops FALLING THROUGH to `code`
@@ -538,6 +548,15 @@ const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
                                           R"SQL(
 SELECT * FROM query(
     CASE
+        -- `pages` WAS ACCEPTED AND IGNORED BY EVERY FORMAT. It has been declared here
+        -- since this macro was written and was never referenced in the body, so
+        -- pages := '2' and pages := 'utter nonsense' both returned the whole document.
+        -- PDF now honours it; nothing else has pages to honour, and saying so is the
+        -- point -- silently ignoring a parameter is how it came to read as a feature.
+        WHEN pages <> '' AND panduck_resolved_format(src, format) <> 'pdf'
+            THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
+                       panduck_resolved_format(src, format) || ' has no pages')
+
         WHEN panduck_resolved_format(src, format) = 'data'
             THEN error('panduck: ' || src || ' is a data format, not a document. ' ||
                        'Use read_panduck_table instead.')
@@ -562,19 +581,15 @@ SELECT * FROM query(
             THEN 'SELECT * FROM read_pandoc_blocks(' || panduck_quote(src) || ')'
 
         -- LIST-producing branches: these unpack BY NAME.
-        WHEN panduck_resolved_format(src, format) = 'html'
-            THEN CASE WHEN panduck_ensure_extension('webbed')
-                 THEN 'SELECT ' || panduck_block_cols() ||
-                      ' FROM (SELECT unnest(html_to_duck_blocks(html)) AS b FROM read_html_objects(' ||
-                      panduck_quote(src) || '))'
-                 ELSE error('panduck: html needs the webbed extension') END
-
+        -- PDF delegates to read_pdf_blocks, which is where `pages` actually means
+        -- something. The gate stays here so dispatch keeps its named error; the function
+        -- itself cannot carry one, because a guard would have to run before the binder
+        -- resolves read_pdf_elements.
         WHEN panduck_resolved_format(src, format) = 'pdf'
-            THEN CASE WHEN panduck_ensure_extension('pdf') AND panduck_ensure_extension('markdown')
-                 THEN 'SELECT ' || panduck_block_cols() ||
-                      ' FROM (SELECT unnest(parse_markdown_to_duck_blocks(pdf_to_markdown(' ||
-                      panduck_quote(src) || '))) AS b)'
-                 ELSE error('panduck: pdf needs the pdf and markdown extensions') END
+            THEN CASE WHEN panduck_ensure_extension('pdf')
+                 THEN 'SELECT * FROM read_pdf_blocks(' || panduck_quote(src) ||
+                      ', pages := ' || panduck_quote(pages) || ')'
+                 ELSE error('panduck: pdf needs the pdf extension') END
 
         -- A config tree is entirely document metadata, so it becomes ONE metadata block.
         --

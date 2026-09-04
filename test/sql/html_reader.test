@@ -1,0 +1,73 @@
+# name: test/sql/html_reader.test
+# description: html reaches duck_blocks through the GENERIC registry path, not a special case
+# group: [sql]
+
+#
+# WHY THIS FILE EXISTS AT ALL. Until it was written, panduck had ZERO html coverage --
+# no fixture, and no test that read a .html file. The registry row for html therefore
+# claimed a reader nobody ever exercised, and it was stale for five days without anything
+# noticing: webbed shipped read_html_blocks in v2.8.1 (2026-08-30) while panduck's row
+# still said NULL and dispatch still unpacked the html_to_duck_blocks SCALAR in a
+# special-case branch.
+#
+# That is the same two-clocks failure as the db_* -> duck_* rename earlier the same day:
+# the registry is a COMPILE-TIME claim about a sibling's RUNTIME surface, and nothing
+# measures it. check-vocabulary covers the vendored constants and stops there.
+#
+# UNGATED, unlike pdf_reader.test. webbed declares no excluded_platforms, and the
+# PUBLISHED community build was measured to carry read_html_blocks before this row was
+# changed -- so this runs on every CI platform rather than being locally-only coverage.
+
+require panduck
+
+statement ok
+INSTALL webbed;
+
+statement ok
+LOAD webbed;
+
+# ---------------------------------------------------------------------------
+# THE GENERIC PATH RESOLVES. If the registry row were still NULL this would fall through
+# to the removed special case and fail; if webbed renamed the function, this is where it
+# goes red, naming what moved.
+# ---------------------------------------------------------------------------
+query I
+SELECT panduck_reader_function_for('test/fixtures/constructs.html');
+----
+read_html_blocks
+
+query I
+SELECT panduck_reader_extension_for('test/fixtures/constructs.html');
+----
+webbed
+
+# The dispatcher actually reads the file, and what comes back is duck_blocks.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.html');
+----
+true
+
+query I
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM read_panduck_doc('test/fixtures/constructs.html');
+----
+true
+
+# Structure survives the trip -- asserted as presence of the constructs the fixture has,
+# rather than as an exact row count, which would pin webbed's internal choices in place.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.html')
+WHERE element_type = 'heading';
+----
+true
+
+# ---------------------------------------------------------------------------
+# `pages` IS REJECTED HERE, NOT IGNORED. It was accepted and silently discarded by every
+# format until now -- pages := 'utter nonsense' returned the whole document. HTML has no
+# pages, and saying so is the point: silently swallowing a parameter is how it came to
+# read as a working feature at the call site.
+# ---------------------------------------------------------------------------
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.html', pages := '2');
+----
+pages applies only to paginated formats

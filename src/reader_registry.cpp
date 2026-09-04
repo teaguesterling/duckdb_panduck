@@ -498,6 +498,53 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 // "panduck: pdf needs the pdf and markdown extensions"; calling this function directly
 // without pdf installed gives a catalog error, exactly as calling webbed's
 // read_html_blocks or markdown's read_markdown_blocks directly would.
+// doc_section(src, section, format := 'auto') -- the blocks under one heading.
+//
+// PATH IN, BLOCKS OUT, which is why this does not wrap duck_block_utils' section
+// functions even though they exist and this file's docs said it would. Measured on
+// build 3f2a0f0: duck_blocks_get_section(blocks, pattern, output_format) returns VARCHAR
+// -- a RENDERED string -- for every output_format including 'blocks', and
+// duck_blocks_sections_like returns (section, start_order, content), also rendered. Both
+// are useful and neither gives back duck_blocks, so wrapping either would make doc_section
+// the only doc_* that reads a path and hands back text instead of a queryable table.
+// Slicing panduck's own stream keeps the composition -- the result feeds doc_toc, the
+// pandoc writer, and every duck_block consumer, because it IS duck_blocks. It also drops
+// a dependency: those functions need the json extension loaded, and this needs nothing.
+//
+// THE BOUNDARY IS "the next heading at the same level or higher", not "the next heading".
+// A section CONTAINS its subsections, which is what makes doc_section('Chapter 2') mean
+// what a reader expects rather than stopping at the first sub-heading. Verified against a
+// fixture built for exactly this: sections.html is h1/h2/h1/h2 so a slice must actually
+// STOP. The first fixture tried had every section running to end-of-document, which would
+// have let a missing boundary pass -- 41 and 40 rows out of 54, both simply the tail.
+//
+// MATCHES CONTENT OR id, because a heading's TEXT is what a person names and its id is
+// what a link names, and an HTML document has both. try_cast on heading_level rather than
+// a cast: the attribute is absent on non-headings and need not be numeric, and a hard cast
+// would turn a malformed attribute into an error for the whole document.
+const DefaultTableMacro DOC_SECTION_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_section",
+    {"src", "section", nullptr},
+    {{"format", "'auto'"}, {nullptr, nullptr}},
+    R"SQL(
+WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+h AS (SELECT element_order AS o,
+             coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl
+      FROM b
+      WHERE element_type = 'heading' AND (content = section OR attributes['id'] = section)
+      ORDER BY element_order LIMIT 1),
+stop AS (SELECT min(b.element_order) AS o
+         FROM b, h
+         WHERE b.element_type = 'heading' AND b.element_order > h.o
+           AND coalesce(try_cast(b.attributes['heading_level'] AS INTEGER), 1) <= h.lvl)
+SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order
+FROM b, h
+WHERE b.element_order >= h.o
+  AND (b.element_order < (SELECT o FROM stop) OR (SELECT o FROM stop) IS NULL)
+ORDER BY b.element_order
+)SQL"};
+
 const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {
     DEFAULT_SCHEMA,
     "read_pdf_blocks",
@@ -786,7 +833,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO,
+	                 &DOC_SECTION_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

@@ -171,14 +171,18 @@ heading	Heading Two
 # and when it went red on one platform the failure said only "the count is not zero" -- not
 # which row, which kind, or which encoding. A count cannot describe what it rejected, so a
 # red result carried no diagnosis and could not be acted on without another CI round-trip.
-# Selecting the offending values costs nothing when the set is empty, which is the case
-# every check here is asserting.
-query III
-SELECT DISTINCT kind, element_type, coalesce(encoding, '<NULL>')
+# An AGGREGATE rather than a row set: it always returns exactly one row, the same shape the
+# count had. A zero-row expectation is spelled differently across sqllogictest versions --
+# this job runs the harness from `main`, not the pinned one -- and the first attempt at this
+# fix used one and went red on platforms that had been green, which is a diagnostic making
+# things worse rather than clearer.
+query I
+SELECT coalesce(string_agg(DISTINCT kind || '/' || element_type || '/' ||
+                           coalesce(encoding, '<NULL>'), ', '), '(none)')
 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL
-ORDER BY 1, 2, 3;
+WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL;
 ----
+(none)
 
 # An explicit format overrides extension sniffing.
 query I

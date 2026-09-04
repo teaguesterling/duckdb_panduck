@@ -26,27 +26,34 @@ statement ok
 LOAD duck_block_utils;
 
 # ---------------------------------------------------------------------------
-# WHICH SPELLING THE INSTALLED BUILD USES. duck_block_utils has renamed its whole surface
-# on main -- db_blocks_toc -> duck_blocks_toc, and so on -- because `db_` reads as DATABASE
-# everywhere else in SQL. The community build has NOT been republished yet, measured:
+# WHICH SPELLING THE INSTALLED BUILD USES. duck_block_utils renamed its whole surface --
+# db_blocks_toc -> duck_blocks_toc, and so on -- because `db_` reads as DATABASE
+# everywhere else in SQL. As of 2026-09-04 that rename IS in the community build. Measured
+# into an EMPTY extension_directory, so the shared ~/.duckdb profile could not colour it:
 #
-#   INSTALL duck_block_utils FROM community; LOAD duck_block_utils;
-#   SELECT function_name FROM duckdb_functions() WHERE function_name LIKE 'db_%';
-#     -> db_blocks_toc, db_blocks_to_text, ... (155 rows, all still db_*)
+#   SET extension_directory='<empty dir>';
+#   INSTALL duck_block_utils FROM community;   -- extension_version 3f2a0f0
+#   LOAD duck_block_utils;
+#   SELECT count(*) FILTER (WHERE function_name LIKE 'db\_%' ESCAPE '\'),
+#          count(*) FILTER (WHERE function_name LIKE 'duck\_%' ESCAPE '\')
+#     FROM duckdb_functions();
+#     -> 0 db_*, 174 duck_*.  No back-compat aliases; both names panduck calls are gone.
 #
 # doc_toc and doc_render call those BY NAME at runtime, so they follow the INSTALLED build,
 # not panduck's submodule pin -- the pin is a compile-time dependency on constant names and
-# says nothing about this. Two independent clocks.
+# says nothing about this. Two independent clocks, and this is the day the second one
+# moved: CI passed this file on the db_* spelling at 05:03 UTC and the local suite failed
+# it on the duck_* one hours later, from the same commit and the same source tree.
 #
-# This assertion is the alarm. It goes red HERE, naming exactly what moved, instead of
-# doc_toc failing with a bare "function db_blocks_toc does not exist" three assertions
-# further down -- but a red result has AT LEAST TWO causes, not one, because this reads
-# whatever build is currently INSTALLED, not necessarily a published one:
+# This assertion is the alarm, and it tracks whichever spelling reader_registry.cpp
+# currently calls. It goes red HERE, naming exactly what moved, instead of doc_toc failing
+# with a bare "function does not exist" three assertions further down -- but a red result
+# has AT LEAST TWO causes, not one, because this reads whatever build is currently
+# INSTALLED, not necessarily a published one:
 #
-#   1. duck_block_utils actually published the rename upstream. Re-run the measurement
-#      above against `FROM community` to confirm, then rename the call sites in
-#      reader_registry.cpp (db_blocks_toc -> duck_blocks_toc, db_blocks_to_text ->
-#      duck_blocks_to_text) and flip this expectation.
+#   1. duck_block_utils renamed the surface again. Re-run the measurement above against
+#      `FROM community` IN AN EMPTY extension_directory to confirm, then rename the call
+#      sites in reader_registry.cpp and flip this expectation in the same commit.
 #   2. Someone locally replaced the installed build -- e.g. `FORCE INSTALL duck_block_utils
 #      FROM '<local repo>'` -- which mutates the shared ~/.duckdb extension profile in
 #      place. Nothing has been published; the fix is restoring the community build, not
@@ -54,9 +61,11 @@ LOAD duck_block_utils;
 #      briefly sat in that profile, this assertion correctly went red, and an implementer
 #      who read only the old wording here concluded upstream had published when it had not.
 #
-# Check which one actually happened before acting on a red result.
+# WHAT DOES NOT TELL THEM APART: duckdb_extensions().installed_from. It read `community`
+# throughout the 2026-09-04 red, which is consistent with both causes and settles neither.
+# The empty-directory re-install is the measurement that does.
 query I
-SELECT count(*) > 0 FROM duckdb_functions() WHERE function_name = 'db_blocks_toc';
+SELECT count(*) > 0 FROM duckdb_functions() WHERE function_name = 'duck_blocks_toc';
 ----
 true
 
@@ -129,7 +138,7 @@ SELECT count(*) FROM (
   (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
   EXCEPT
   (SELECT (t).level, (t).title
-   FROM (SELECT unnest(db_blocks_toc(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
+   FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
 );
 ----
 0
@@ -160,9 +169,12 @@ SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
 ----
 doc_render supports md, html and text
 
-# 'ansi' is deliberately absent, not forgotten: db_ansi is a macro behind
+# 'ansi' is deliberately absent, not forgotten: duck_block_ansi is a macro behind
 # PRAGMA duck_block_render, and a macro created by a pragma cannot be reached from a
-# panduck macro. It returns the same named error until db_ansi registers at LOAD.
+# panduck macro. That blocker may have lifted -- duck_block_utils 3f2a0f0 does register a
+# duck_blocks_render_ansi SCALAR at LOAD -- but wiring it up means checking its signature
+# against what doc_render needs, which is a separate change from the db_ -> duck_ rename.
+# Until then it returns the same named error.
 statement error
 SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'ansi');
 ----

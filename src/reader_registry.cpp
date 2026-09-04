@@ -522,6 +522,56 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 // what a link names, and an HTML document has both. try_cast on heading_level rather than
 // a cast: the attribute is absent on non-headings and need not be numeric, and a hard cast
 // would turn a malformed attribute into an error for the whole document.
+// doc_container(src, id, format := 'auto') -- the blocks inside one identified container.
+//
+// SIBLING OF doc_section, DIFFERENT AXIS. doc_section walks HEADINGS and its boundary is
+// heading_level, so it answers "the prose under this title". doc_container walks the
+// STRUCTURAL nesting in `level` and answers "what is inside this box" -- a div, a section,
+// an article, a list, a blockquote. Those are different questions and a document can
+// disagree about them: a <div> can hold three headings, and a heading's section can run
+// across several divs.
+//
+// THE BOUNDARY IS `level`, WHICH READERS ALREADY MAINTAIN. A container at depth N owns the
+// blocks after it while depth > N, ending at the next block whose depth is <= N. Nothing
+// format-specific is involved, so this works for any reader that nests -- it is HTML today
+// only because HTML is where ids come from.
+//
+// MATCHES ANY BLOCK CARRYING THE id, not only containers, and that is deliberate: a caller
+// naming an id should get what that id labels, whether the emitter called it a div, a
+// section or a figure. A leaf with an id yields just itself, which is the correct answer
+// rather than an empty one.
+//
+// `id` IS NOT CANONICAL VOCABULARY -- measured: the duck_block vocabulary publishes seven
+// ATTR_ constants (role, key, heading_level, list_type, source_type, pandoc_ast, ordered)
+// and identity is not among them, though the spec's per-element attribute table does
+// describe id. A proposal to publish ATTR_ID is with duck_block_utils. Until it lands this
+// reads a key by literal, exactly as webbed writes it by literal, and the two agree by
+// convention rather than by contract. doc_section already carries the same exposure.
+//
+// WHICH BLOCKS CARRY AN id DEPENDS ON THE INSTALLED webbed, not on panduck. Before
+// webbed#142/#143 only div, section/article and heading kept it, so <ul id="steps"> was
+// unaddressable; after, every block keeps it. This macro is correct either way and simply
+// finds more.
+const DefaultTableMacro DOC_CONTAINER_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_container",
+    {"src", "id", nullptr},
+    {{"format", "'auto'"}, {nullptr, nullptr}},
+    R"SQL(
+WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+c AS (SELECT element_order AS o, level AS lv
+      FROM b WHERE attributes['id'] = id
+      ORDER BY element_order LIMIT 1),
+stop AS (SELECT min(b.element_order) AS o
+         FROM b, c
+         WHERE b.element_order > c.o AND b.level <= c.lv)
+SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order
+FROM b, c
+WHERE b.element_order >= c.o
+  AND (b.element_order < (SELECT o FROM stop) OR (SELECT o FROM stop) IS NULL)
+ORDER BY b.element_order
+)SQL"};
+
 const DefaultTableMacro DOC_SECTION_MACRO = {
     DEFAULT_SCHEMA,
     "doc_section",
@@ -865,7 +915,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	loader.RegisterFunction(reg_doc);
 
 	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO,
-	                 &DOC_SECTION_MACRO}) {
+	                 &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

@@ -71,3 +71,70 @@ statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.html', pages := '2');
 ----
 pages applies only to paginated formats
+
+# ---------------------------------------------------------------------------
+# doc_section: THE BLOCKS UNDER ONE HEADING, still as duck_blocks.
+#
+# sections.html exists specifically to exercise the STOP boundary, and that is not
+# incidental. The first fixture tried (constructs.odt) had every section running to
+# end-of-document -- 41 and 40 rows out of 54, both simply the tail -- so a slice with NO
+# boundary logic at all would have passed. h1/h2/h1/h2 is the smallest shape where a
+# section must actually stop before something.
+#
+# The boundary is "the next heading at the same level OR HIGHER", not "the next heading",
+# because a section CONTAINS its subsections. Alpha therefore includes Alpha One and
+# excludes Beta.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/sections.html');
+----
+9
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha');
+----
+4
+
+# The subsection is INSIDE its parent, and nothing from the next h1 leaks in.
+query I
+SELECT bool_and(content IS NULL OR content NOT LIKE 'beta%')
+FROM doc_section('test/fixtures/sections.html', 'Alpha');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM doc_section('test/fixtures/sections.html', 'Alpha')
+WHERE element_type = 'heading' AND content = 'Alpha One';
+----
+true
+
+# Matched BY id, not only by heading text -- a heading's text is what a person names and
+# its id is what a link names, and an HTML document has both.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'alpha-one');
+----
+2
+
+# A section that is not there is EMPTY, not an error. Asking for a heading a document does
+# not have is a legitimate question with the answer "nothing".
+query I
+SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'no such heading');
+----
+0
+
+# STILL duck_blocks -- the reason this slices panduck's own stream rather than wrapping
+# duck_block_utils' section functions, which return rendered VARCHAR for every
+# output_format including 'blocks'. A doc_* that reads a path should hand back a queryable
+# table, and this one composes with every duck_block consumer because it IS one.
+query I
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM doc_section('test/fixtures/sections.html', 'Alpha');
+----
+true
+
+# FORMAT-AGNOSTIC: doc_section works over any format panduck reads, because it slices
+# duck_blocks rather than anything HTML-specific.
+query I
+SELECT count(*) > 0 FROM doc_section('test/fixtures/constructs.odt', 'Heading Two');
+----
+true

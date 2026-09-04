@@ -138,3 +138,63 @@ query I
 SELECT count(*) > 0 FROM doc_section('test/fixtures/constructs.odt', 'Heading Two');
 ----
 true
+
+# ---------------------------------------------------------------------------
+# doc_container: WHAT IS INSIDE THIS BOX, a different axis from doc_section.
+#
+# doc_section walks HEADINGS and bounds on heading_level -- "the prose under this title".
+# doc_container walks the STRUCTURAL nesting in `level` -- "what is inside this box". A
+# document can disagree about the two: a <div> can hold three headings, and a heading's
+# section can run across several divs. Neither is a special case of the other.
+#
+# THESE ASSERTIONS ARE DELIBERATELY LIMITED TO WHAT THE PUBLISHED webbed EMITS TODAY, which
+# is div, section/article and heading. On community build 093856b a <p id="loose"> comes
+# back with attributes {} -- the id is dropped -- so doc_container('loose') correctly finds
+# nothing, and asserting otherwise would go red on every machine except one that had built
+# webbed from source. webbed#142/#143 widens this to every block; when it publishes, the
+# same macro simply finds more, with no change here. That is why the file asserts
+# containers and a heading and stops there.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/containers.html');
+----
+12
+
+# A div owns its children and stops at the next thing at its own depth.
+query I
+SELECT count(*) FROM doc_container('test/fixtures/containers.html', 'intro');
+----
+2
+
+# An article carries its heading and its body, and does not run into the next block.
+query I
+SELECT count(*) FROM doc_container('test/fixtures/containers.html', 'art');
+----
+3
+
+query I
+SELECT bool_and(content IS NULL OR content NOT LIKE 'loose%')
+FROM doc_container('test/fixtures/containers.html', 'art');
+----
+true
+
+# A LEAF carrying an id yields just itself -- the correct answer, not an empty one. This is
+# why the macro matches ANY block with the id rather than only container types: a caller
+# naming an id should get what that id labels, whatever the emitter called it.
+query I
+SELECT count(*) FROM doc_container('test/fixtures/containers.html', 'h');
+----
+1
+
+# An id the document does not carry is empty, not an error -- same contract as doc_section.
+query I
+SELECT count(*) FROM doc_container('test/fixtures/containers.html', 'no-such-id');
+----
+0
+
+# Still duck_blocks, so the slice composes with every consumer.
+query I
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM doc_container('test/fixtures/containers.html', 'art');
+----
+true

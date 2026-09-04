@@ -120,3 +120,16 @@ test_pandoc_alignment:
 .PHONY: test_roundtrip
 test_roundtrip:
 	python3 test/roundtrip/check_roundtrip.py
+
+# check-pdf -- the PDF read path, which the default suite cannot run.
+#
+# The `pdf` community extension statically links Poppler and Tesseract and declares
+# excluded platforms (wasm x3, windows mingw/rtools/arm64), so an unconditional
+# `INSTALL pdf` in the default suite would fail CI jobs that are otherwise green.
+# test/sql/pdf_reader.test is therefore gated on PANDUCK_TEST_PDF and this target is what
+# sets it. Until the file is wired into a platform-restricted CI job, this is the only
+# place panduck's pdf path is exercised -- which is still a strict improvement on what
+# preceded it, where nothing read a PDF at all.
+.PHONY: check-pdf
+check-pdf:
+	PANDUCK_TEST_PDF=1 ./build/release/test/unittest "test/sql/pdf_reader.test"

@@ -453,6 +453,84 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
 
+// read_pdf_blocks(src, pages := '') -- PDF into duck_blocks, with real page selection.
+//
+// WHY THE ELEMENTS ROUTE AND NOT pdf_to_markdown. read_panduck_doc's pdf branch goes
+// through parse_markdown_to_duck_blocks(pdf_to_markdown(src)), and pdf_to_markdown takes
+// a PATH AND NOTHING ELSE -- measured: [col0] VARCHAR. So that route cannot select pages
+// at all. pdf_pages(src, dest, spec) can, but it WRITES A NEW PDF and returns its path,
+// which is a filesystem side effect inside a SELECT and does not belong in a read path.
+// read_pdf_elements takes first_page/last_page natively, so it is the only route where
+// `pages` can mean anything.
+//
+// THE TRADE IS REAL AND MEASURED, NOT HIDDEN. Against the same document read as ODT:
+// the elements route KEEPS list structure that pdf_to_markdown flattens (two list_items
+// vs "• bullet one • bullet two" jammed into one paragraph), and LOSES inline emphasis
+// that pdf_to_markdown keeps (**bold** survives markdown, not elements). Neither route
+// dominates. Page selection is the thing a caller asked for by name, so it wins here;
+// the emphasis loss is a divergence, recorded as one.
+//
+// HEADING LEVELS ARE RANKED OVER THE WHOLE DOCUMENT, THEN THE CONTENT IS SLICED, and the
+// order matters. PDF has no heading levels -- only font sizes -- so level is dense_rank
+// over distinct heading font sizes. Rank within the SLICE and a section cut out of the
+// middle of a document comes back with its headings promoted to level 1, because it is
+// the largest thing in its own slice. Measured on a two-page fixture: ranked per-slice,
+// "Page Two Heading" reads heading_level=1 alone and 2 in the full document -- the same
+// heading changing depth depending on what you asked for. Ranked document-wide it stays
+// 2 either way. The cost is that the level scan reads the whole document even when one
+// page is wanted, so `pages` selects CONTENT rather than saving work.
+//
+// NO ensure_extension GATE HERE, deliberately. A guard would have to run before the
+// binder resolves read_pdf_elements, which it cannot, so the only way to keep the named
+// error is to build the whole body as a query() string -- and this body has enough
+// quoting in it that doing so trades a clear error message for a real chance of a subtly
+// wrong regex. read_panduck_doc keeps its gate and delegates here, so dispatch still says
+// "panduck: pdf needs the pdf and markdown extensions"; calling this function directly
+// without pdf installed gives a catalog error, exactly as calling webbed's
+// read_html_blocks or markdown's read_markdown_blocks directly would.
+const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {
+    DEFAULT_SCHEMA,
+    "read_pdf_blocks",
+    {"src", nullptr},
+    {{"pages", "''"}, {nullptr, nullptr}},
+    R"SQL(
+WITH lvl AS (
+    SELECT font_size, dense_rank() OVER (ORDER BY font_size DESC) AS hl
+    FROM (SELECT DISTINCT font_size FROM read_pdf_elements(src) WHERE element_type = 'heading')
+), e AS (
+    SELECT page_number, element_idx, element_type, text, font_size,
+           row_number() OVER (ORDER BY page_number, element_idx) - 1 AS ord
+    FROM read_pdf_elements(
+        src,
+        first_page := CASE WHEN pages = '' THEN 1
+                           WHEN regexp_matches(pages, '^[0-9]+(-[0-9]+)?$')
+                               THEN split_part(pages, '-', 1)::INTEGER
+                           ELSE error('panduck: pages must be N or N-M, got ' || pages) END,
+        last_page := CASE WHEN pages = '' THEN 2147483647
+                          WHEN regexp_matches(pages, '^[0-9]+$') THEN pages::INTEGER
+                          WHEN regexp_matches(pages, '^[0-9]+-[0-9]+$')
+                              THEN split_part(pages, '-', 2)::INTEGER
+                          ELSE error('panduck: pages must be N or N-M, got ' || pages) END)
+)
+SELECT 'block' AS kind,
+       CASE e.element_type WHEN 'heading' THEN 'heading'
+                           WHEN 'list_item' THEN 'list_item'
+                           ELSE 'paragraph' END AS element_type,
+       regexp_replace(e.text, '^\s*(•|\d+\.)\s+', '') AS content,
+       1 AS level,
+       'text' AS encoding,
+       map_from_entries(list_filter([
+           {k: 'page', v: e.page_number::VARCHAR},
+           {k: 'heading_level', v: CASE WHEN e.element_type = 'heading' THEN lvl.hl::VARCHAR END},
+           {k: 'list_type', v: CASE WHEN e.element_type = 'list_item'
+                                    THEN CASE WHEN regexp_matches(e.text, '^\s*\d+\.')
+                                              THEN 'ordered' ELSE 'bullet' END END}
+       ], lambda x: x.v IS NOT NULL)) AS attributes,
+       e.ord::INTEGER AS element_order
+FROM e LEFT JOIN lvl ON e.font_size = lvl.font_size
+ORDER BY e.ord
+)SQL"};
+
 const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
                                           "read_panduck_doc",
                                           {"src", nullptr},
@@ -693,7 +771,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

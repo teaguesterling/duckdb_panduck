@@ -249,3 +249,30 @@ SELECT (panduck_blocks_to_pandoc_ast(list(struct_pack(
 FROM read_ipynb_blocks('test/fixtures/notebook.ipynb');
 ----
 true
+
+# ---------------------------------------------------------------------------
+# AN UNWRITABLE PATH MUST STILL SAY SO.
+#
+# panduck_write_pandoc_ast is the only scalar function in the extension that throws at
+# execution time, and DuckDB v2.0 checks that a function which throws has DECLARED that it
+# can. One that has not gets its error rewritten as
+#
+#     INTERNAL Error: Scalar function "panduck_write_pandoc_ast" threw an execution error,
+#     but the function is not marked as fallible
+#
+# -- so the message naming the unwritable path is replaced by one that reads as a DuckDB
+# bug. The declaration is SetFallible(), set at registration.
+#
+# This assertion is written against the MESSAGE rather than merely "it errored", because
+# both the correct and the broken build raise an error here and only the text separates
+# them. It passes on the pinned v1.5.5 either way -- enforcement is an assertion and the
+# shipped build has assertions off -- which is exactly why the missing declaration was
+# invisible until something built against main.
+statement error
+SELECT panduck_write_pandoc_ast('__TEST_DIR__/no_such_directory/written.json', list(struct_pack(
+    kind := kind, element_type := element_type, content := content, level := level,
+    encoding := encoding, attributes := attributes, element_order := element_order)
+  ORDER BY element_order))
+FROM read_org_blocks_string('Body.');
+----
+Could not open file for writing

@@ -3186,6 +3186,30 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	// FALLIBLE, because this is the one scalar function in panduck that throws at
+	// EXECUTION time: an unopenable path raises IOException from inside the loop.
+	//
+	// DuckDB v2.0 enforces the declaration. A function that throws without having called
+	// SetFallible() has its error rewritten as
+	//
+	//     INTERNAL Error: Scalar function "panduck_write_pandoc_ast" threw an execution
+	//     error, but the function is not marked as fallible
+	//
+	// which replaces a message naming the unwritable path with one that reads as a DuckDB
+	// bug. Enforcement is an assertion, so it fires only on assertion-enabled builds --
+	// which is why this is invisible on a release build and shows up on exactly one CI
+	// arch. Declared here rather than shimmed: SetFallible() exists unchanged on the
+	// pinned v1.5.5 (function.hpp) and on main (scalar_function.hpp), so one spelling
+	// covers both.
+	//
+	// It has to be set BEFORE the function is handed to the loader, because v2.0's
+	// function sets no longer hand out mutable references to their members.
+	//
+	// On v1.5.5 this is not a no-op but it is strictly conservative: the flag reaches
+	// BoundFunctionExpression::CanThrow(), which stops the optimizer treating the call as
+	// safe to evaluate speculatively. For a function that WRITES A FILE, being told it can
+	// throw is the accurate description; the previous default asserted it could not.
+	write_ast.SetFallible();
 	loader.RegisterFunction(write_ast);
 }
 

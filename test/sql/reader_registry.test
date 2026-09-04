@@ -167,22 +167,29 @@ heading	Heading Two
 # The dispatcher's schema is the canonical duck_block schema, so a row casts to duck_block
 # and `SELECT *` pass-through in the flat branches is safe.
 #
-# REPORTS THE OFFENDING ROWS RATHER THAN COUNTING THEM. This assertion was `count(*) = 0`,
-# and when it went red on one platform the failure said only "the count is not zero" -- not
-# which row, which kind, or which encoding. A count cannot describe what it rejected, so a
-# red result carried no diagnosis and could not be acted on without another CI round-trip.
-# An AGGREGATE rather than a row set: it always returns exactly one row, the same shape the
-# count had. A zero-row expectation is spelled differently across sqllogictest versions --
-# this job runs the harness from `main`, not the pinned one -- and the first attempt at this
-# fix used one and went red on platforms that had been green, which is a diagnostic making
-# things worse rather than clearer.
+# ASSERTED IN THE PROJECTION, NOT A WHERE CLAUSE, and that is not a style preference.
+#
+# This was `count(*) ... WHERE kind NOT IN (...) OR encoding IS NULL` expecting 0. Under
+# DuckDB v2.0-cyanoptera the same predicate returns nearly every row in the document when
+# the query aggregates with string_agg, and zero rows when it aggregates with count -- same
+# data, same predicate, different plan. Measured: the v2.0 "filtered" set is the v1.5.5
+# UNFILTERED distinct set less one element, and the rows it returns carry kind='inline' or
+# 'block' and encoding='text', which satisfy neither disjunct. The predicate is not being
+# applied.
+#
+# panduck's rows are fine -- the projection proves it, printing a valid kind and a non-NULL
+# encoding for every row it returned. So this is a pre-release engine behaviour, not
+# something to work around in the reader.
+#
+# bool_and over the projection asserts the same property without a WHERE clause at all, so
+# it does not depend on how a filter is planned. It is also STRICTER: a WHERE-based check
+# passes vacuously if the table function returns nothing, while this one fails, because
+# bool_and of an empty set is NULL rather than true.
 query I
-SELECT coalesce(string_agg(DISTINCT kind || '/' || element_type || '/' ||
-                           coalesce(encoding, '<NULL>'), ', '), '(none)')
-FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE kind NOT IN ('block', 'inline', 'value') OR encoding IS NULL;
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
 ----
-(none)
+true
 
 # An explicit format overrides extension sniffing.
 query I

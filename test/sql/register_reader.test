@@ -1,0 +1,108 @@
+# name: test/sql/register_reader.test
+# description: panduck_register_doc_reader end to end, via the .parquet_duck_blocks bridge
+# group: [sql]
+
+#
+# TWO THINGS AT ONCE, and both were untested before this file.
+#
+# FIRST, runtime reader registration. panduck_register_doc_reader has always been
+# registered and its registry ROW was asserted, but nothing ever registered a reader and
+# then READ THROUGH IT. A registry entry that dispatch cannot actually use would have
+# passed every existing assertion.
+#
+# SECOND, and the reason the format is parquet: this is how duck_blocks cross a DuckDB ABI
+# BOUNDARY. Extensions in this portfolio pin different DuckDB commits -- webbed pins
+# b155d6f63c (v1.5.5-dev154) while panduck is on released v1.5.5 -- and an extension built
+# for one refuses to load in the other, so "does panduck work with webbed's new output"
+# cannot be answered by loading both. Writing one side's blocks to parquet and reading them
+# from the other side answers it, because parquet is understood by both without either
+# extension.
+#
+# That is how webbed#143 was verified before it published: its fixed emitter wrote blocks
+# from webbed's binary, panduck's binary read them back, and doc_section matched headings
+# by an id that only exists because of that fix. Without the bridge that verification would
+# have had to wait for a published build -- which is the wrong order, since publishing is
+# what it was meant to gate.
+#
+# WHAT THE BRIDGE DOES NOT PROVE, stated so nobody over-reads it: it establishes DATA
+# compatibility, not linkage. Parquet carries rows across regardless of whether the two
+# .so files could ever coexist, so an ABI-level problem would be invisible to it. For
+# duck_block semantics it is sufficient; for linkage only aligned DuckDB pins would do.
+
+require panduck
+
+# parquet is explicitly installed rather than assumed: the unittest binary is built with
+# ENABLE_EXTENSION_AUTOLOADING=0, so a COPY ... (FORMAT parquet) fails with a catalog error
+# instead of quietly autoloading, exactly as duck_block_utils does in doc_namespace.test.
+statement ok
+INSTALL parquet;
+
+statement ok
+LOAD parquet;
+
+# A duck_block stream from any panduck reader, written out as parquet. Self-contained on
+# purpose -- no second extension is needed to demonstrate the mechanism, and using a real
+# reader means the columns are the canonical seven rather than something hand-built.
+statement ok
+COPY (SELECT * FROM read_odt_blocks('test/fixtures/constructs.odt') ORDER BY element_order)
+  TO '__TEST_DIR__/bridge.parquet_duck_blocks' (FORMAT parquet);
+
+# The extension is claimed at RUNTIME. Nothing in panduck's C++ knows this suffix exists.
+query IIII
+SELECT * FROM panduck_register_doc_reader('parquet', 'read_parquet', ['.parquet_duck_blocks']);
+----
+.parquet_duck_blocks	parquet	read_parquet	doc
+
+# The registry answers for it exactly as it does for a builtin reader.
+query I
+SELECT panduck_format_for('__TEST_DIR__/bridge.parquet_duck_blocks');
+----
+parquet
+
+query I
+SELECT panduck_can_read('__TEST_DIR__/bridge.parquet_duck_blocks');
+----
+true
+
+query I
+SELECT panduck_reader_function_for('__TEST_DIR__/bridge.parquet_duck_blocks');
+----
+read_parquet
+
+# DISPATCH ACTUALLY GOES THERE. This is the assertion the registry row could not make:
+# read_panduck_doc resolves the suffix, calls the registered function, and returns the same
+# document that went in.
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks'))
+     = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
+----
+true
+
+# And what comes back is duck_blocks, not merely rows with the right column names.
+query I
+SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
+FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks');
+----
+true
+
+# The doc_* family works over a registered reader with no special-casing, which is what
+# makes the bridge useful rather than merely possible -- doc_toc and doc_section are how a
+# verification actually asks its question.
+query I
+SELECT (SELECT count(*) FROM doc_toc('__TEST_DIR__/bridge.parquet_duck_blocks'))
+     = (SELECT count(*) FROM doc_toc('test/fixtures/constructs.odt'));
+----
+true
+
+query I
+SELECT count(*) > 0 FROM doc_section('__TEST_DIR__/bridge.parquet_duck_blocks', 'Heading Two');
+----
+true
+
+# Round-trip through the pandoc writer, so the bridged blocks are provably still writable.
+query I
+SELECT length(panduck_blocks_to_pandoc_ast(
+    (SELECT list(b ORDER BY b.element_order)
+     FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks') b))::VARCHAR) > 0;
+----
+true

@@ -283,8 +283,20 @@ statement ok
 CALL panduck_register_doc_reader('panduck', 'read_rtf_blocks', ['.fixture', 'DOTLESS']);
 
 # Both spellings normalise: dot-prefixed and bare, upper and lower.
+#
+# SCOPED TO THE TWO EXTENSIONS THIS FILE REGISTERS, not to every user row. The registry is
+# a PROCESS-WIDE SINGLETON -- runtime registrations persist across connections and across
+# test FILES in one unittest run -- so `WHERE source = 'user'` alone asserted "no other
+# file has ever registered anything", which is a hidden coupling rather than a property of
+# normalisation. register_reader.test made that false by registering
+# .parquet_duck_blocks, and this assertion failed in the full suite while passing in
+# isolation, which is the signature of exactly that coupling.
+#
+# The property under test is that '.fixture' and 'DOTLESS' both normalise to a dot-prefixed
+# lowercase key. That is what the filter now says.
 query II
-SELECT ext, function FROM panduck_reader_registry() WHERE source = 'user' ORDER BY ext;
+SELECT ext, function FROM panduck_reader_registry()
+WHERE source = 'user' AND ext IN ('.fixture', '.dotless') ORDER BY ext;
 ----
 .dotless	read_rtf_blocks
 .fixture	read_rtf_blocks

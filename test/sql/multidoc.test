@@ -14,11 +14,28 @@ SELECT len(panduck_glob('test/fixtures/*.odt')) > 1;
 ----
 true
 
-# Sorted, so a UNION ALL built from it is deterministic across runs and platforms.
+# Sorted, so a UNION ALL built from it is deterministic across runs and platforms. This
+# `= list_sort(...)` form is necessary but NOT sufficient: LocalFileSystem's glob does not
+# sort internally, and on a checkout where the directory's natural enumeration order
+# already happens to be alphabetical, this assertion passes whether or not panduck_glob
+# sorts at all -- it would not catch a regression that deleted the sort. Kept anyway as a
+# structural check, but see the next assertion for the one that actually pins the order.
 query I
 SELECT panduck_glob('test/fixtures/*.odt') = list_sort(panduck_glob('test/fixtures/*.odt'));
 ----
 true
+
+# A concrete, order-pinning assertion. Narrowed to the "constructs.*" prefix (six files,
+# one per format-under-test) rather than "*.odt" or all fixtures, so it does not need
+# updating every time an unrelated fixture is added elsewhere in the directory -- only a
+# change to the constructs.* set itself would touch this list. The expected order below
+# was produced by running panduck_glob itself and pasting its output, not hand-derived,
+# so this test fails if sorting is removed even on a filesystem whose natural enumeration
+# order happens to already be alphabetical (see the note above).
+query I
+SELECT panduck_glob('test/fixtures/constructs.*');
+----
+[test/fixtures/constructs.docx, test/fixtures/constructs.html, test/fixtures/constructs.odt, test/fixtures/constructs.rst, test/fixtures/constructs.source.md, test/fixtures/constructs.textile]
 
 # An exact path that exists resolves to itself.
 query I
@@ -33,3 +50,16 @@ query I
 SELECT len(panduck_glob('test/fixtures/*.nothing_matches_this'));
 ----
 0
+
+# NULL in, NULL out -- ordinary scalar-function NULL propagation, not "no match".
+query I
+SELECT panduck_glob(NULL) IS NULL;
+----
+true
+
+# NULL (unknown pattern) and empty list (known pattern, zero matches) are two different
+# outcomes a caller could otherwise confuse; assert they stay distinguishable.
+query I
+SELECT panduck_glob(NULL) IS NULL AND len(panduck_glob('test/fixtures/*.no_such')) = 0;
+----
+true

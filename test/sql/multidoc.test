@@ -795,3 +795,108 @@ query I
 SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/*.odt', filename := true));
 ----
 8
+
+# ---------------------------------------------------------------------------
+# THE ESCAPE HATCH. panduck has no intent for `ignore_errors` and should never grow one --
+# there are dozens of such parameters across the readers panduck dispatches to, and a
+# vocabulary entry per sibling option is a maintenance burden with no upside.
+#
+# Same identifier discipline as the registry mapping: a key that is not a bare identifier is
+# rejected, so there is still no path from caller input to arbitrary SQL.
+# ---------------------------------------------------------------------------
+query I
+SELECT panduck_render_params(MAP{'ignore_errors': 'true'});
+----
+, ignore_errors := 'true'
+
+query I
+SELECT panduck_render_params(MAP{});
+----
+(empty)
+
+statement error
+SELECT panduck_render_params(MAP{'x := 1) UNION SELECT': 'y'});
+----
+must be an identifier
+
+# A NULL VALUE for a key is not one, the same ruling panduck_reader_option_for makes for an
+# option value: silently dropping the entry is the parameter accepted and ignored, and
+# rendering the bare word NULL would emit `key := NULL` -- syntactically a value, not what a
+# caller who never asked for that keyword meant.
+statement error
+SELECT panduck_render_params(MAP{'ignore_errors': NULL});
+----
+must name a value
+
+# THE OPTION REACHES DISPATCH, through the ONE builder both the plural and generic branches
+# of read_panduck_doc share -- panduck_read_arms_opt -- exactly the way `attributes` does.
+# Positive control: a legitimate reader_params call still renders correctly, appended AFTER
+# the Task 6 option in the same reader call.
+query I
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'all',
+                              reader_params := MAP{'ignore_errors': 'true'});
+----
+SELECT * FROM read_html_blocks('x.htmltest', capture_attributes := 'classes', ignore_errors := 'true')
+
+# reader_params ALONE, no Task 6 option requested -- still appends, and the comma it carries
+# is the only one in the call.
+query I
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'default',
+                              reader_params := MAP{'ignore_errors': 'true'});
+----
+SELECT * FROM read_html_blocks('x.htmltest', ignore_errors := 'true')
+
+# THE DEFAULT (an empty MAP) RENDERS NOTHING, which is what keeps every call in this file
+# that never mentions reader_params byte-identical to what it generated before this task --
+# the same property `attributes := 'default'` holds for Task 6's option.
+query I
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'default')
+     = panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'default', reader_params := MAP{});
+----
+true
+
+# NULL IS NOT THE EMPTY MAP, and DuckDB core is the standard: read_csv('a.csv',
+# filename := NULL) raises rather than defaulting. Without this guard,
+# panduck_render_params's own null-propagation would turn the argument into a NULL
+# rendering, which concatenates through the whole reader call and silently produces NULL
+# SQL text for query() -- accepted, then destroyed before dispatch could see it, the same
+# shape `attributes` and `filename` were already found in.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', reader_params := NULL);
+----
+cannot use NULL as argument for "reader_params"
+
+# panduck_read_arms_opt is directly callable and directly tested, so the same NULL refusal
+# is repeated there rather than left to dispatch alone -- otherwise a caller going straight
+# to the builder would reach panduck_render_params with no guard in front of it.
+statement error
+SELECT panduck_read_arms_opt(['a.odt'], false, 'attributes', 'default', reader_params := NULL);
+----
+cannot use NULL as argument for "reader_params"
+
+# EVERY SPECIAL-CASED BRANCH REFUSES TOO, the same ruling `attributes` got: pdf, zim,
+# toml/yaml and the text and code fallbacks build their own SQL rather than going through
+# panduck_read_arms_opt, so a reader_params entry would otherwise be ACCEPTED AND SILENTLY
+# IGNORED on exactly the branches that cannot thread it.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', reader_params := MAP{'ignore_errors': 'true'});
+----
+reader_params is not supported for
+
+# A default (empty) reader_params on the SAME special-cased branch still works -- the guard
+# above must not refuse a call that names nothing, only one that names something the branch
+# cannot honour.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf'));
+----
+7
+
+# AND THE FORMAT THAT DOES HONOUR IT STILL DOES, end to end through dispatch rather than
+# only through panduck_read_arms_opt's own test -- the positive control that no guard above
+# swallowed a working case. constructs.odt reaches the generic branch, which threads
+# reader_params through; an empty one is the default every other read in this file relies
+# on, asserted here explicitly rather than only implicitly.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', reader_params := MAP{});
+----
+54

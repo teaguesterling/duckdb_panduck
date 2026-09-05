@@ -213,10 +213,13 @@ SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'all');
 --  SELECT * FROM read_html_blocks('x.htmltest', capture_attributes := 'classes')
 ```
 
-That is the generated SQL, and it also runs: with `.htmltest` registered against `webbed`
-**093856b** and a real page at that extension,
-`read_panduck_doc('page.htmltest', attributes := 'all')` reads the document with the
-option threaded, rather than the option existing only inside its own assertion.
+That is the generated SQL, and it is all panduck promises: the mapping is threaded into the
+call it emits. Whether the *read* then succeeds is the sibling's business. With that
+registration against `webbed` **093856b** and a real page at that extension,
+`read_panduck_doc('page.htmltest', attributes := 'all')` raises
+`Binder Error: Invalid named parameter "capture_attributes" for function read_html_blocks`
+— from webbed, because that build has no such parameter. See "No built-in reader ships an
+`attributes` mapping today" below.
 
 `'default'` is a sentinel that renders to nothing **without consulting the registry**, so an
 unchanged call generates byte-identical SQL to what it generated before options existed.

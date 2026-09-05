@@ -291,3 +291,41 @@ SELECT panduck_write_pandoc_ast('__TEST_DIR__/no_such_directory/written.json', l
 FROM read_org_blocks_string('Body.');
 ----
 IO Error: Could not open file for writing
+
+# ---------------------------------------------------------------------------
+# CODE AND MATH INLINES SURVIVE THE PANDOC AST BRIDGE, IN BOTH DIRECTIONS.
+#
+# duck_block_utils issue #21 is that THEIR pandoc_ast_to_blocks drops Code and Math inline
+# content -- silent data loss, which is release-blocking on its own. panduck reads and
+# writes the other end of the same bridge, so the question worth answering is not "do we
+# have their bug" but "would our tests NOTICE if we did".
+#
+# Measured: we do not have it -- Code and Math both round-trip byte-exactly. But the only
+# assertions that mentioned math were the LaTeX reader's, and nothing pinned EITHER inline
+# across the pandoc path. A reader could have started dropping Math and this suite would
+# have stayed green, which is exactly the condition that lets that class of bug live.
+#
+# The payloads are deliberately unique strings rather than plausible content: if a
+# conversion drops them and substitutes something reasonable-looking, an eyeball check
+# passes and this does not.
+query II
+SELECT element_type, content
+FROM read_pandoc_blocks_string('{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"before"},{"t":"Space"},{"t":"Code","c":[["",[],[]],"CODE_PAYLOAD"]},{"t":"Space"},{"t":"Math","c":[{"t":"InlineMath"},"MATH_PAYLOAD"]},{"t":"Space"},{"t":"Str","c":"after"}]}]}')
+WHERE element_type IN ('code', 'math') ORDER BY element_order;
+----
+code	CODE_PAYLOAD
+math	MATH_PAYLOAD
+
+# ...AND BACK OUT AGAIN. The write direction is the half panduck owns: blocks in, pandoc
+# AST out. Asserted on the rendered JSON rather than on a block count, because a count
+# survives an inline being emitted with its content emptied -- which is precisely the shape
+# of the upstream bug.
+query II
+WITH b AS (
+  SELECT list(x ORDER BY x.element_order) AS bl
+  FROM read_pandoc_blocks_string('{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Para","c":[{"t":"Code","c":[["",[],[]],"CODE_PAYLOAD"]},{"t":"Math","c":[{"t":"InlineMath"},"MATH_PAYLOAD"]}]}]}') x
+)
+SELECT contains(panduck_blocks_to_pandoc_ast((SELECT bl FROM b)).blocks::VARCHAR, '"Code","c":[["",[],[]],"CODE_PAYLOAD"]'),
+       contains(panduck_blocks_to_pandoc_ast((SELECT bl FROM b)).blocks::VARCHAR, '"Math","c":[{"t":"InlineMath"},"MATH_PAYLOAD"]');
+----
+true	true

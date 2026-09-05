@@ -748,7 +748,6 @@ namespace {
 struct DocxRow {
 	std::string kind, element_type, content;
 	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
-	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
 	int32_t element_order = 0;
@@ -810,7 +809,6 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 		// of its block, so it is one deeper. This reader emits no containers, so every
 		// block sits at 1 and every inline at 2.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
-		row.has_level = true;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));
 
@@ -820,7 +818,6 @@ unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input
 			child.element_type = inl.element_type;
 			child.content = inl.content;
 			child.attributes = inl.attributes;
-			child.has_level = true;
 			child.level = block_level + 1;
 			child.element_order = order++;
 			result->rows.push_back(std::move(child));
@@ -838,7 +835,7 @@ void DocxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(0, count, Value(row.kind));
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
-		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
+		output.SetValue(3, count, Value::INTEGER(row.level));
 		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));

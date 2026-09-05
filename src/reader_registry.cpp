@@ -1022,7 +1022,35 @@ const DefaultTableMacro DOC_CONTAINER_MACRO = {DEFAULT_SCHEMA,
                                                {"src", "id", nullptr},
                                                {{"format", "'auto'"}, {nullptr, nullptr}},
                                                R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+WITH b AS (SELECT * FROM read_panduck_doc(
+    -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
+    -- element_order, which RESTARTS per document, so a glob or a list does not widen the
+    -- section -- it stacks several documents at the same element_order values with no
+    -- filename to separate them. Measured before this guard: '*.html' returned 12 rows at
+    -- element_order 0,0,0,1,1,1,... from three different documents.
+    --
+    -- THE TEST IS HOW MANY DOCUMENTS THE SOURCE RESOLVES TO, not what shape it is written
+    -- in. An earlier version tested the shape -- typeof(src) LIKE '%[]' OR
+    -- panduck_is_glob(...) -- and refused three things that cannot interleave: a glob
+    -- matching exactly one file, a single-element list, and a REAL FILE whose NAME contains
+    -- `[` or `?`, which is an ordinary shape for a downloaded file and read fine before the
+    -- guard existed. Interleaving needs two documents; one document is one document however
+    -- it is spelled.
+    --
+    -- panduck_source_list is the same expansion read_panduck_doc performs, so the two agree
+    -- on OUTCOMES rather than merely on a predicate. A glob matching nothing raises
+    -- panduck's own "no files matched" from inside that call, which is the message it would
+    -- have raised anyway. The message names the alternative, because a caller who globbed
+    -- wanted provenance and read_panduck_doc(..., filename := true) is what gives it.
+    CASE WHEN len(panduck_source_list(src)) > 1
+         THEN error('panduck: doc_container takes a single document; element_order restarts '
+                    'per document, so a glob or list interleaves them. Use '
+                    'read_panduck_doc(src, filename := true) for multiple documents')
+         -- The RESOLVED path, not src::VARCHAR: a single-element list would otherwise
+         -- stringify to '[path]' and fail to open. Resolving also normalises the three
+         -- spellings of one document -- plain path, one-match glob, one-element list -- to
+         -- the identical string, measured.
+         ELSE panduck_source_list(src)[1] END, format := format)),
 c AS (SELECT element_order AS o, level AS lv
       FROM b WHERE attributes['id'] = id
       ORDER BY element_order LIMIT 1),
@@ -1041,7 +1069,35 @@ const DefaultTableMacro DOC_SECTION_MACRO = {DEFAULT_SCHEMA,
                                              {"src", "section", nullptr},
                                              {{"format", "'auto'"}, {nullptr, nullptr}},
                                              R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+WITH b AS (SELECT * FROM read_panduck_doc(
+    -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
+    -- element_order, which RESTARTS per document, so a glob or a list does not widen the
+    -- section -- it stacks several documents at the same element_order values with no
+    -- filename to separate them. Measured before this guard: '*.html' returned 12 rows at
+    -- element_order 0,0,0,1,1,1,... from three different documents.
+    --
+    -- THE TEST IS HOW MANY DOCUMENTS THE SOURCE RESOLVES TO, not what shape it is written
+    -- in. An earlier version tested the shape -- typeof(src) LIKE '%[]' OR
+    -- panduck_is_glob(...) -- and refused three things that cannot interleave: a glob
+    -- matching exactly one file, a single-element list, and a REAL FILE whose NAME contains
+    -- `[` or `?`, which is an ordinary shape for a downloaded file and read fine before the
+    -- guard existed. Interleaving needs two documents; one document is one document however
+    -- it is spelled.
+    --
+    -- panduck_source_list is the same expansion read_panduck_doc performs, so the two agree
+    -- on OUTCOMES rather than merely on a predicate. A glob matching nothing raises
+    -- panduck's own "no files matched" from inside that call, which is the message it would
+    -- have raised anyway. The message names the alternative, because a caller who globbed
+    -- wanted provenance and read_panduck_doc(..., filename := true) is what gives it.
+    CASE WHEN len(panduck_source_list(src)) > 1
+         THEN error('panduck: doc_section takes a single document; element_order restarts '
+                    'per document, so a glob or list interleaves them. Use '
+                    'read_panduck_doc(src, filename := true) for multiple documents')
+         -- The RESOLVED path, not src::VARCHAR: a single-element list would otherwise
+         -- stringify to '[path]' and fail to open. Resolving also normalises the three
+         -- spellings of one document -- plain path, one-match glob, one-element list -- to
+         -- the identical string, measured.
+         ELSE panduck_source_list(src)[1] END, format := format)),
 h AS (SELECT element_order AS o,
              coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl
       FROM b

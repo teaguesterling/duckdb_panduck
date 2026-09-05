@@ -140,9 +140,15 @@ For each resolved path, dispatch emits one arm and `UNION ALL`s them:
 SELECT *, '<path>' AS filename FROM <reader_function>('<path>'<options>)
 ```
 
-with `filename` present only when provenance is on (§3.4) and `<options>` supplied by the
-registry (§3.6). Arms are joined in the order `panduck_glob` returns, which is sorted, so
-the result is deterministic across runs and platforms.
+with `filename` present only when requested (§3.4), and `<options>` **rendered by panduck**
+from structured registry data — never interpolated from a stored SQL string (§3.6). Arms are
+joined in the order `panduck_glob` returns, which is sorted, so the result is deterministic
+across runs and platforms.
+
+Every literal in a generated arm comes from one of exactly three places: a path panduck
+resolved itself, an identifier validated against `^[A-Za-z_][A-Za-z0-9_]*$` at registration,
+or a value rendered by its declared type. That enumeration is the security argument, and it
+is short on purpose — a longer one would mean the design had a hole to explain.
 
 `element_order` is **per document**, not global. It is the position of a block within its
 own document, and making it global would break every existing consumer that uses it to
@@ -216,82 +222,53 @@ message should name the pattern, as core's does.
 The nicer-sounding rule is available later if anyone wants it fleet-wide, but panduck is not
 the place to introduce a divergence from core's file-resolution behaviour unilaterally.
 
-### 3.6 Reader options: intent in, spelling from the registry
+### 3.6 Reader options: structured, never a SQL fragment
 
-Dispatch must not hardcode a sibling's parameter names. Three separate defects in this
-repo's recent history were exactly that shape — a compile-time claim about a sibling's
-runtime surface (the `db_*` → `duck_*` rename, the stale html registry row, the
-`page`/`page_number` model divergence). So:
+Dispatch must not hardcode a sibling's parameter names — three defects in this repo in two
+days were exactly that shape, a compile-time claim about a sibling's runtime surface that
+only a rebuild could fix. But the first draft solved that by storing a **raw SQL fragment**
+on the registry row, and that is rejected. Ruled 2026-09-05: *"that's a dangerous approach.
+either use a structured parameter (map, json, etc) or just pass through."*
 
-**panduck exposes an intent vocabulary, and the registry row carries the spelling.**
+**The rejection is right and the draft's own security note said why**, then talked itself
+out of it: registrations are process-wide and persistent, so a fragment stored by one caller
+is executed inside every later `read_panduck_doc` — including other sessions' calls in a
+shared process. The draft answered that with "registration is already privileged", which is
+a rationalisation, not a mitigation. A design that requires a paragraph explaining why its
+injection vector is acceptable should not have the vector.
 
-The initial vocabulary is deliberately two entries. Both have a consumer today; nothing else
-does.
+#### The mechanism: a structured mapping, rendered by panduck
 
-| intent | values | why |
-|---|---|---|
-| `filename` | `true` / `false` | §3.4 |
-| `attributes` | `'default'` / `'all'` | webbed drops `class` by default, and panduck writes `class` into Pandoc's `Attr` at four sites in `pandoc_block_convert.cpp` |
+`ReaderEntry` carries a list of structs, not a string:
 
-`ReaderEntry` gains one field:
-
-```cpp
-std::string options;  //!< SQL fragment appended inside the reader call, from registration
+```
+options : LIST(STRUCT(intent VARCHAR, value VARCHAR,
+                      param  VARCHAR, arg   VARCHAR, arg_type VARCHAR))
 ```
 
-populated per intent, not free-form. `panduck_register_doc_reader` gains an optional
-argument so a third-party or corrected registration supplies its own mapping:
+`panduck_register_doc_reader` takes it as structured data:
 
 ```sql
-panduck_register_doc_reader('webbed', 'read_html_blocks', ['.html'],
-                            attributes_all := 'capture_attributes := ''classes''');
+SELECT * FROM panduck_register_doc_reader(
+    'webbed', 'read_html_blocks', ['.html', '.htm'],
+    options := [{intent: 'attributes', value: 'all',
+                 param:  'capture_attributes', arg: 'classes', arg_type: 'VARCHAR'}]);
 ```
 
-**This is the point of the design.** When webbed renames `capture_attributes`, a user
-re-registers the row at runtime and nothing rebuilds. Every alternative bakes the sibling's
-spelling into panduck's binary.
+Dispatch renders one argument from a matching row, and **nothing in it is caller- or
+registrant-supplied SQL**:
+
+- `param` must match `^[A-Za-z_][A-Za-z0-9_]*$` — a bare identifier. Anything else is
+  rejected at registration time, not at query time, so a bad row cannot be stored.
+- `arg` is rendered **by `arg_type`**: `VARCHAR` through `panduck_quote`, `BOOLEAN` as
+  `true`/`false`, `INTEGER` as digits after a `try_cast` check, `LIST` as a bracketed list
+  of quoted elements. An unrecognised `arg_type` is rejected at registration.
+
+So the worst a hostile registration can produce is a well-formed `identifier := literal`
+with a silly name, which the reader rejects as an unknown parameter. There is no path from
+registration data to arbitrary SQL.
 
 #### Worked examples
-
-**A. One file, nothing requested — today's behaviour, unchanged.**
-
-```sql
-SELECT * FROM read_panduck_doc('report.docx');
-```
-```sql
--- generated
-SELECT * FROM read_docx_blocks('report.docx')
-```
-Seven columns. No provenance, no options, no `UNION ALL`. Every existing query keeps working
-and generates the same SQL it does now.
-
-**B. A glob with provenance.**
-
-```sql
-SELECT * FROM read_panduck_doc('docs/*.odt', filename := true);
-```
-```sql
--- generated, arms in sorted path order
-SELECT *, 'docs/a.odt' AS filename FROM read_odt_blocks('docs/a.odt')
-UNION ALL
-SELECT *, 'docs/b.odt' AS filename FROM read_odt_blocks('docs/b.odt')
-```
-Eight columns, `filename` trailing by construction. `element_order` restarts per document
-(§3.3), so `ORDER BY filename, element_order` is the global order.
-
-**C. A mixed list — two formats, one call, one block stream.**
-
-```sql
-SELECT * FROM read_panduck_doc(['notes.odt', 'page.html'], filename := true);
-```
-```sql
--- generated: the registry resolves each path independently
-SELECT *, 'notes.odt' AS filename FROM read_odt_blocks('notes.odt')
-UNION ALL
-SELECT *, 'page.html' AS filename FROM read_html_blocks('page.html')
-```
-Note the second arm calls **webbed's** reader. Nothing in the design special-cases this; it
-falls out of per-path registry resolution.
 
 **D. An intent reaching a sibling's parameter.**
 
@@ -299,28 +276,23 @@ falls out of per-path registry resolution.
 SELECT * FROM read_panduck_doc('page.html', attributes := 'all');
 ```
 ```sql
--- generated: 'all' looked up in the html row's options mapping
+-- generated: 'attributes'/'all' matched in the html row, rendered by type
 SELECT * FROM read_html_blocks('page.html', capture_attributes := 'classes')
 ```
-panduck's caller never types `capture_attributes`. That spelling lives in the registry row,
-not in the query and not in panduck's binary.
+The caller never types `capture_attributes`; that spelling lives in the registry row, not in
+the query and not in panduck's binary.
 
-**E. The rename, survived at runtime.** Suppose webbed renames the parameter to
-`attribute_capture` in some future release. Today that breaks panduck until a new binary
-ships. Under this design:
+**E. The rename, survived at runtime — structured this time.**
 
 ```sql
 SELECT * FROM panduck_register_doc_reader(
     'webbed', 'read_html_blocks', ['.html', '.htm'],
-    attributes_all := 'attribute_capture := ''classes''');
+    options := [{intent: 'attributes', value: 'all',
+                 param:  'attribute_capture', arg: 'classes', arg_type: 'VARCHAR'}]);
 ```
-```sql
--- generated from the corrected row, same query as D
-SELECT * FROM read_html_blocks('page.html', attribute_capture := 'classes')
-```
-One statement, no rebuild, no release. **This is the case the design exists for** — three
-defects in this repo in two days were a compile-time claim about a sibling's runtime surface
-that could only be fixed by rebuilding.
+One statement, no rebuild, and the only thing that changed is a **value in a struct field**.
+The runtime-fix property that motivated the design survives the security fix intact — which
+is the test of whether the fix was the right one.
 
 **F. An option that does not apply is not silently dropped.**
 
@@ -328,17 +300,34 @@ that could only be fixed by rebuilding.
 SELECT * FROM read_panduck_doc('notes.odt', attributes := 'all');
 -- Invalid Input Error: panduck: the odt reader has no mapping for attributes := 'all'
 ```
-A registry row without a mapping for a requested intent raises rather than ignoring it. This
-is the `pages`-was-a-lie lesson applied in advance: a parameter that is accepted and does
-nothing reads as a feature at the call site.
+A row without a mapping for a requested intent raises. This is the `pages`-was-a-lie lesson
+applied in advance: a parameter accepted and ignored reads as a feature at the call site.
 
-**Security.** The options fragment is interpolated into generated SQL, and registrations are
-**process-wide and persistent** — one caller's registration is executed inside every later
-`read_panduck_doc`, including other sessions' calls in a shared process. A free-form
-fragment is therefore an injection vector. The fragment is accepted only from
-`panduck_register_doc_reader`, which is already a privileged operation in the sense that it
-changes global dispatch; it is never derived from a path, a document, or a query result.
-Builtin rows carry fragments written in this repo.
+#### The escape hatch: direct passthrough
+
+The ruling offered "or just pass through" as an alternative. It is better as a **complement**
+than a replacement, and both should exist:
+
+```sql
+SELECT * FROM read_panduck_doc('page.html',
+                               reader_params := MAP{'ignore_errors': 'true'});
+```
+
+rendered with the same identifier and type discipline. This covers every parameter panduck
+has no intent for — `maximum_file_size`, `ignore_errors`, `ocr_language` — without panduck
+growing a vocabulary entry per sibling option, which it should never do.
+
+**Why passthrough cannot replace the intent mapping.** panduck itself needs to request
+`class`: `doc_render('page.html', 'md')` converts HTML to Pandoc, and Pandoc's `Attr` is
+`(id, classes, kvs)`, so a faithful conversion needs the class attribute. There is **no
+caller** in that path to supply a parameter — `doc_render` takes a path and a format. panduck
+must know to ask, which means panduck must hold the mapping. Passthrough serves callers who
+know what they want; the intent mapping serves panduck's own correctness.
+
+**Why the intent vocabulary stays tiny.** Exactly one entry, `attributes`, needs this
+mechanism today. `filename` does not — §3.4 synthesises that column by projection and never
+passes a parameter at all. Everything else is passthrough's job until something in panduck
+needs to ask on its own behalf.
 
 ### 3.7 Document boundaries: withdrawn
 
@@ -411,6 +400,13 @@ The junction is where this class of feature breaks, so the tests are shaped arou
    passthrough end to end rather than asserting that a string was built.
 9. **A re-registered row overrides the builtin spelling**, proving the runtime-fix property
    that motivates §3.6 — example E.
+9a. **A registration with a non-identifier `param` is rejected at registration time**, not
+   at query time, so a malformed row cannot be stored. Assert the error, and assert the row
+   is absent from `panduck_reader_registry()` afterwards — the second half is what proves
+   rejection rather than a warning.
+9b. **Each `arg_type` renders correctly**: a `VARCHAR` containing a quote survives
+   `panduck_quote`, a `BOOLEAN` renders bare, an `INTEGER` rejects a non-numeric `arg`. This
+   is the test that there is no path from registration data to arbitrary SQL.
 10. **A requested intent with no mapping raises**, rather than being dropped — example F.
     This is the assertion `pages` never had.
 

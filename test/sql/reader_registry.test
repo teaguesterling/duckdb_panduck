@@ -40,9 +40,20 @@ SELECT ext, format, reader_ext, function FROM panduck_reader_registry() WHERE ex
 # condition returns. It is kept, rather than deleted, because the day someone adds a
 # planned format is precisely the day the guard is needed again -- and rewriting it from
 # scratch under that pressure is how the rule gets lost.
+#
+# SCOPED TO BUILTIN, for the same reason the reader_ext assertion below is. A USER
+# registering a planned extension is not a panduck defect -- it is the escape hatch working,
+# and it is exactly what someone would do to get an unshipped format read today. Only
+# panduck's own table claiming a planned format is the bug this guards.
+#
+# It cannot fire either way at the moment: there are currently NO rows with status='planned',
+# so the EXISTS is vacuous. Measured, not assumed. That makes the scoping free to add now and
+# impossible to verify now -- which is precisely why it is worth adding BEFORE a planned
+# format returns, rather than debugging it on the day one does.
 query I
 SELECT count(*) FROM panduck_reader_registry() r
-WHERE EXISTS (SELECT 1 FROM panduck_supported_extensions() s
+WHERE r.source = 'builtin'
+  AND EXISTS (SELECT 1 FROM panduck_supported_extensions() s
               WHERE s.status = 'planned' AND list_contains(s.extensions, ltrim(r.ext, '.')));
 ----
 0
@@ -509,3 +520,57 @@ FROM (VALUES ('zim://wiki.zim/A/Page'),
 ----
 zim://wiki.zim/A/Page	wiki.zim	A/Page
 zim://books/wiki.zim/A/Nested/Page	books/wiki.zim	A/Nested/Page
+
+
+# ---------------------------------------------------------------------------
+# WHY THE WHOLE-REGISTRY ASSERTIONS ABOVE SURVIVE OTHER TEST FILES.
+#
+# The registry is PROCESS-WIDE and the unittest binary runs every .test file in one process,
+# so registrations made by register_reader.test are still present when this file runs -- it
+# is position 6 of 23, this file is 11. Any assertion here that counts or enumerates the
+# whole registry is therefore reading other files' rows too.
+#
+# Two things make that safe, and only one of them was previously written down:
+#
+#   1. Assertions about panduck's OWN table are scoped to source = 'builtin' (the planned
+#      -format guard above, and the reader_ext half further up).
+#   2. Assertions that genuinely hold of EVERY entry stay unscoped -- but they hold only
+#      because REGISTRATION NORMALISES ITS INPUT, which nothing asserted until now. That is
+#      the load-bearing invariant, so it is pinned here rather than left as a property
+#      someone could remove without any test noticing.
+#
+# The convention for anyone adding an assertion here: if it must be true of panduck's shipped
+# registry, scope it to builtin. If it must be true of every entry however registered, leave
+# it unscoped AND check it survives the normalisation below.
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.ZZUP', 'zznodot']);
+
+# Case is folded and a missing dot is supplied, so a user CANNOT create a key that violates
+# the ext-shape assertion above. That is what lets that one stay unscoped.
+query II
+SELECT ext, source FROM panduck_reader_registry()
+WHERE ext IN ('.zzup', '.zznodot') ORDER BY ext;
+----
+.zznodot	user
+.zzup	user
+
+query I
+SELECT count(*) FROM panduck_reader_registry()
+WHERE ext <> lower(ext) OR NOT (starts_with(ext, '.') OR ends_with(ext, '://')) OR length(ext) < 2;
+----
+0
+
+# Registration REPLACES rather than appends, which is what lets the duplicate-ext assertion
+# stay unscoped. Registering the same extension twice must not create a second row.
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.zzup']);
+
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.zzup';
+----
+1
+
+query I
+SELECT count(*) FROM (SELECT ext FROM panduck_reader_registry() GROUP BY ext HAVING count(*) > 1);
+----
+0

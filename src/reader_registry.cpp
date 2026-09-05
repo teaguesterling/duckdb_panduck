@@ -592,7 +592,15 @@ const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
                                          {{"format", "'auto'"}, {nullptr, nullptr}},
                                          R"SQL(
 SELECT * FROM query(
-    CASE WHEN panduck_ensure_extension('duck_block_utils')
+    -- GUARDED HERE, NOT INHERITED FROM read_panduck_doc, because this macro does not pass
+    -- `format` along as a VALUE -- it renders it into SQL text through panduck_quote, which
+    -- coalesces NULL to ''. So dispatch never saw a NULL to refuse: it saw the string '',
+    -- resolved the format to '' and raised "resolves to format '' ... This is a panduck
+    -- bug", blaming panduck for the caller's NULL. MEASURED. A misdiagnosis is worse than a
+    -- silent default, because it sends the next person to read the wrong code.
+    CASE WHEN format IS NULL
+    THEN error('panduck: cannot use NULL as argument for "format"')
+    WHEN panduck_ensure_extension('duck_block_utils')
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
          'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
@@ -723,6 +731,14 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "panduck_read_arms_opt",
      {"paths", "with_filename", "opt_intent", "opt_value", nullptr},
      {{nullptr, nullptr}},
+     // THE NULL `with_filename` REFUSAL IS REPEATED HERE rather than left to dispatch, and
+     // in dispatch's exact words. This builder is directly callable and directly tested, so
+     // a guard living only in READ_DOC_MACRO would leave the two call sites disagreeing
+     // about the same argument -- which is the defect shape fixed for `pages` one round
+     // earlier, where dispatch coalesced a NULL that read_pdf_blocks refused.
+     "CASE WHEN with_filename IS NULL "
+     "     THEN error('panduck: cannot use NULL as argument for \"filename\"') "
+     "     ELSE "
      "array_to_string(list_transform(paths, lambda p: "
      "  CASE WHEN p IS NULL "
      "       THEN error('panduck: a multi-document source contains a NULL path') "
@@ -739,7 +755,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "            ELSE error('panduck: ' || p || ' needs the ' || panduck_reader_extension_for(p) || "
      "                       ' extension') END "
      "       END), "
-     "  ' UNION ALL ')"},
+     "  ' UNION ALL ') END"},
 
     // Arms with no option requested. Kept as its own name because it is what every caller
     // that has nothing to ask for should read like, and because the suite asserts its
@@ -796,6 +812,11 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{"format", "'auto'"}, {nullptr, nullptr}},
      "(SELECT r FROM query("
      "  CASE"
+     // Same as doc_toc: `format` is rendered into SQL text through panduck_quote, which
+     // coalesces NULL to '', so a NULL never reaches read_panduck_doc as a NULL and
+     // surfaced as the "This is a panduck bug" arm instead. Measured.
+     "    WHEN format IS NULL"
+     "      THEN error('panduck: cannot use NULL as argument for \"format\"')"
      "    WHEN output_format = 'md' AND panduck_ensure_extension('markdown')"
      "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(src) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
@@ -1040,6 +1061,35 @@ const DefaultTableMacro READ_DOC_MACRO = {
     R"SQL(
 SELECT * FROM query(
     CASE
+        -- NULL IS NOT A VALUE FOR A NAMED PARAMETER, and DuckDB CORE is the standard this
+        -- family was aligned to: read_csv('a.csv', filename := NULL) and read_json(...) both
+        -- raise `Cannot use NULL as argument for "filename"`. panduck silently defaulting
+        -- was therefore two defects at once -- accept-and-ignore, and a divergence from core
+        -- on the very parameter whose name, column and deliberate refusal of the
+        -- string-rename form were all settled by "same as core". MEASURED before this fix:
+        -- filename := NULL returned SEVEN columns from a single path, a glob and a pdf alike,
+        -- with provenance silently off; format := NULL read the document by auto-detection.
+        --
+        -- THIS IS THE SAME DEFECT IN ITS FOURTH COSTUME. It has now appeared as a `<>`
+        -- comparison (NULL falsifies the condition), as a renderer sentinel (NULL read as
+        -- 'default'), as this `CASE WHEN filename` (NULL is not TRUE, so provenance is
+        -- quietly off), and as `coalesce` inside panduck_resolved_format (NULL reads as
+        -- 'auto'). The shape is always the same: a NULL takes the same path the DEFAULT
+        -- takes, so the caller cannot tell that what they asked for did not happen. Checked
+        -- deliberately across every named parameter this macro family accepts rather than
+        -- only the ones already reported.
+        --
+        -- `pages` IS REFUSED FURTHER DOWN AND IN DIFFERENT WORDS, deliberately. `filename`
+        -- and `format` are panduck's own parameters and answer to core; `pages` is parsed by
+        -- read_pdf_blocks, so dispatch matches THAT function's refusal verbatim so the two
+        -- paths cannot disagree about the same argument. Each matches its own authority,
+        -- which is one rule, not two.
+        WHEN filename IS NULL
+            THEN error('panduck: cannot use NULL as argument for "filename"')
+
+        WHEN format IS NULL
+            THEN error('panduck: cannot use NULL as argument for "format"')
+
         -- `pages` ON A PLURAL SOURCE IS REFUSED OUTRIGHT, deliberately BEFORE the
         -- single-format `pages` guard below and BEFORE the format is ever resolved.
         -- Review round 2: the existing guard below only rejects `pages` when the
@@ -1179,6 +1229,23 @@ SELECT * FROM query(
         -- above, which inherited it. One pattern, fixed in one place at a time.
         WHEN attributes IS DISTINCT FROM 'default'
             THEN error('panduck: attributes is not supported for ' ||
+                       coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
+
+        -- AND `filename` IS THE SAME DEFECT WITH A NON-NULL VALUE, found by looking for the
+        -- pattern rather than for another NULL. Only the generic/plural branches (through
+        -- panduck_read_arms_opt) and the pdf branch below actually PROJECT the provenance
+        -- column. MEASURED: read_panduck_doc('config.toml', filename := true) returned its
+        -- row with no filename column, and format := 'pandoc' with filename := true returned
+        -- SEVEN columns -- the parameter accepted and silently ignored, exactly as `pages`
+        -- was, and exactly as `attributes` would have been without the guard above.
+        --
+        -- PDF IS EXCLUDED BY NAME because it is the one special-cased branch that DOES
+        -- project filename, and `IS DISTINCT FROM` rather than `<>` because
+        -- panduck_resolved_format is NULL for the code fallback (no registry format and
+        -- format := 'auto'), which is precisely where `NULL <> 'pdf'` would have skipped
+        -- this guard and let the defect survive in the one branch nothing else covers.
+        WHEN filename AND panduck_resolved_format(src::VARCHAR, format) IS DISTINCT FROM 'pdf'
+            THEN error('panduck: filename is not supported for ' ||
                        coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
 
         -- PANDOC'S OWN AST, reached by format := 'pandoc' and never by extension. The

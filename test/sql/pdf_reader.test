@@ -180,3 +180,24 @@ query I
 SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := true));
 ----
 8
+
+# PDF IS THE ONE SPECIAL-CASED DISPATCH BRANCH THAT PROJECTS `filename`. Every other one --
+# pandoc, toml, yaml, zim, the text and code fallbacks -- accepted filename := true and
+# silently returned seven columns, and dispatch now refuses those by name. This assertion is
+# the other half of that guard: it is what stops the refusal from being widened into a
+# refusal of a case that works.
+#
+# IT LIVES HERE RATHER THAN IN multidoc.test because it has to BIND read_pdf_elements, and
+# multidoc.test is ungated. multidoc's own pdf assertions are all refusals, which raise
+# before any SQL string is built, so nothing pdf-shaped is ever bound there.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := true));
+----
+8
+
+# And the NULL refusal reaches this branch too, in dispatch's words rather than by falling
+# through to a seven-column read.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := NULL);
+----
+cannot use NULL as argument for "filename"

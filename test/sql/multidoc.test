@@ -676,3 +676,122 @@ query I
 SELECT panduck_reader_option_for('x.emptyarg', 'a', 'b');
 ----
 p := ''
+
+# ---------------------------------------------------------------------------
+# NULL IS NOT A VALUE FOR ANY NAMED PARAMETER, and DuckDB CORE is the standard:
+#
+#   read_csv('a.csv', filename := NULL)  ->  Cannot use NULL as argument for "filename"
+#
+# panduck silently defaulting was two defects at once -- accept-and-ignore, and a divergence
+# from core on the very parameter whose name, column and deliberate refusal of the
+# string-rename form were all settled by "same as core". MEASURED before the fix:
+# filename := NULL returned SEVEN columns from a single path, a glob and a pdf alike, with
+# provenance silently off, and format := NULL read the document by auto-detection.
+#
+# THIS IS THE SAME DEFECT IN ITS FOURTH COSTUME, which is why the whole named-parameter
+# surface was swept rather than the reported instances patched. It has appeared as a `<>`
+# comparison (NULL falsifies the condition), as a renderer sentinel (NULL read as
+# 'default'), as `CASE WHEN filename` (NULL is not TRUE, so provenance is quietly off), and
+# as coalesce inside panduck_resolved_format (NULL reads as 'auto'). The shape never
+# changes: a NULL takes the same path the DEFAULT takes, so the caller cannot tell that
+# what they asked for did not happen.
+# ---------------------------------------------------------------------------
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', filename := NULL);
+----
+cannot use NULL as argument for "filename"
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt', filename := NULL);
+----
+cannot use NULL as argument for "filename"
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := NULL);
+----
+cannot use NULL as argument for "filename"
+
+# BOTH CALL SITES AGREE, in the same words. panduck_read_arms_opt is directly callable and
+# directly tested, so a guard living only in dispatch would leave the two disagreeing about
+# the same argument -- the defect shape fixed for `pages` one round earlier, where dispatch
+# coalesced a NULL that read_pdf_blocks refused.
+statement error
+SELECT panduck_read_arms_opt(['a.odt'], NULL, 'attributes', 'default');
+----
+cannot use NULL as argument for "filename"
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', format := NULL);
+----
+cannot use NULL as argument for "format"
+
+# doc_toc AND doc_render ARE GUARDED SEPARATELY, because they do not pass `format` along as
+# a VALUE -- they render it into SQL text through panduck_quote, which coalesces NULL to ''.
+# Dispatch therefore never saw a NULL to refuse: it saw the string '', resolved the format
+# to '' and raised "resolves to format '' ... This is a panduck bug", blaming panduck for
+# the caller's NULL. A misdiagnosis is worse than a silent default, because it sends the
+# next person to read the wrong code.
+statement error
+SELECT count(*) FROM doc_toc('test/fixtures/constructs.odt', format := NULL);
+----
+cannot use NULL as argument for "format"
+
+statement error
+SELECT length(doc_render('test/fixtures/constructs.odt', 'md', format := NULL));
+----
+cannot use NULL as argument for "format"
+
+# The macros that DO pass it as a value inherit the refusal, which is the point of guarding
+# at the dispatcher rather than in each of them.
+statement error
+SELECT len(panduck_read_blocks('test/fixtures/constructs.odt', format := NULL));
+----
+cannot use NULL as argument for "format"
+
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha', format := NULL);
+----
+cannot use NULL as argument for "format"
+
+statement error
+SELECT count(*) FROM doc_container('test/fixtures/containers.html', 'art', format := NULL);
+----
+cannot use NULL as argument for "format"
+
+# ---------------------------------------------------------------------------
+# AND `filename` IS THE SAME DEFECT WITH A NON-NULL VALUE, found by looking for the pattern
+# rather than for another NULL. Only the generic/plural branches (through
+# panduck_read_arms_opt) and the pdf branch actually PROJECT the provenance column, so every
+# other branch ACCEPTED filename := true and silently returned seven columns.
+# ---------------------------------------------------------------------------
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/config.toml', filename := true);
+----
+filename is not supported for toml
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/config.yaml', filename := true);
+----
+filename is not supported for yaml
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', format := 'pandoc', filename := true);
+----
+filename is not supported for pandoc
+
+# PDF IS EXCLUDED BY NAME from the guard above, because it is the one special-cased branch
+# that DOES project the column. That assertion lives in pdf_reader.test, not here: it has to
+# BIND read_pdf_elements, and this file is ungated. The refusals above are safe here because
+# error() aborts the CASE before any SQL string is built, so nothing pdf-shaped is ever bound.
+
+# ... and the branches that DO honour it still do, which is the assertion that none of the
+# guards above swallowed a working case.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/constructs.odt', filename := true));
+----
+8
+
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/*.odt', filename := true));
+----
+8

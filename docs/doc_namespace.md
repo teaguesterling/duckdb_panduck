@@ -82,6 +82,30 @@ The boundary is **the next heading at the same level or higher**, not the next h
 section contains its subsections, which is what makes `doc_section('Chapter 2')` mean what
 a reader expects. A section that is not present returns no rows rather than an error.
 
+> **`doc_section` and `doc_container` take a SINGLE document.** They slice the block stream
+> by `element_order` alone, and `element_order` restarts per document (see "`element_order`
+> is per document" below). A glob or a list is **not rejected** — it is read, and the rows
+> interleave silently:
+>
+> ```sql
+> SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha');  --   4
+> SELECT count(*) FROM doc_section('test/fixtures/*.html', 'Alpha');         --  12
+> --  element_order 0,0,0,1,1,1,2,2,2,3,3,3 -- three documents interleaved
+> --  ("Heading One" from constructs.html, "Alpha" from sections.html,
+> --   "inside intro" from containers.html), with no filename column to separate them
+> ```
+>
+> The multi-document path is `read_panduck_doc(…, filename := true)`, which keeps
+> provenance. A guard here is a follow-up; for this release the behaviour is documented
+> rather than prevented.
+>
+> The namespace is not consistent about this. `doc_toc`, `doc_render` and
+> `read_panduck_table` *do* refuse a list — but with a leaked internal binder error rather
+> than a panduck message: `No function matches the given name and argument types
+> 'replace(VARCHAR[], STRING_LITERAL, STRING_LITERAL)'` for the first two, and
+> `'panduck_reader_kind_for(VARCHAR[])'` for the third — while `panduck_read_blocks`,
+> `doc_section` and `doc_container` accept one.
+
 It slices panduck's own block stream rather than wrapping `duck_block_utils`, and that was
 a measurement rather than a preference. On build `3f2a0f0`, `duck_blocks_get_section`
 returns `VARCHAR` — rendered text — for *every* `output_format` including `'blocks'`, and

@@ -417,14 +417,33 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // Every source form becomes one VARCHAR[] here, so nothing downstream has to branch on
     // which form the caller used. flatten() preserves argument order for a list, which is
     // what makes read_panduck_doc(['a','b']) deterministic independent of the filesystem.
+    //
+    // NO LONGER NEUTRAL, reversing the original Task 2 ruling. The plan's first cut said
+    // this primitive stays neutral and dispatch alone owns the empty-match raise -- but
+    // dispatch only ever sees the FLATTENED list, and flatten() throws away which element
+    // produced which paths. read_panduck_doc(['a.odt', '*.nomatch']) flattens to just
+    // ['a.odt'], and a length check on THAT tells dispatch "one path resolved", which is
+    // true and useless: it can no longer see that the second element matched nothing.  A
+    // caller silently loses a source that named itself in the call.  So each glob is
+    // checked as it expands, here, before flatten() erases the boundary between elements --
+    // the only place in the pipeline where that boundary still exists.  Dispatch's own
+    // len(...) = 0 check on the whole list stays; it is now redundant for a list but still
+    // the one that catches a BARE glob matching nothing.
     {DEFAULT_SCHEMA,
      "panduck_source_list",
      {"src", nullptr},
      {{nullptr, nullptr}},
      "CASE WHEN typeof(src) LIKE '%[]' "
      "     THEN flatten(list_transform(src::VARCHAR[], "
-     "                  lambda p: CASE WHEN panduck_is_glob(p) THEN panduck_glob(p) ELSE [p] END)) "
-     "     WHEN panduck_is_glob(src::VARCHAR) THEN panduck_glob(src::VARCHAR) "
+     "                  lambda p: CASE WHEN panduck_is_glob(p) "
+     "                                 THEN CASE WHEN len(panduck_glob(p)) = 0 "
+     "                                      THEN error('panduck: no files matched ' || p) "
+     "                                      ELSE panduck_glob(p) END "
+     "                                 ELSE [p] END)) "
+     "     WHEN panduck_is_glob(src::VARCHAR) "
+     "          THEN CASE WHEN len(panduck_glob(src::VARCHAR)) = 0 "
+     "               THEN error('panduck: no files matched ' || src::VARCHAR) "
+     "               ELSE panduck_glob(src::VARCHAR) END "
      "     ELSE [src::VARCHAR] END"},
 
     // Build the UNION ALL that dispatch runs. One arm per path, joined in list order.
@@ -439,14 +458,41 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     //
     // It also means panduck needs nothing from a sibling to have provenance: the path is
     // already in hand at dispatch time.
+    //
+    // TWO DEFECTS FIXED HERE, both found in review, both because this builder assumed every
+    // path behaves like the generic branch's plain flat readers and neither assumption held.
+    //
+    // 1. NO EXTENSION GATE. panduck_ensure_extension does not merely produce a nicer error --
+    // it is TryAutoLoadExtension (reader_registry.cpp), so skipping it meant a community
+    // reader (webbed's read_html_blocks, say) that the single-path branch would have loaded
+    // automatically instead surfaced a raw Catalog Error through a plural call. Each arm now
+    // wraps its SELECT in the same ensure-or-named-error CASE the generic branch uses, so the
+    // two paths agree both in behaviour and in wording.
+    //
+    // 2. SILENT DATA LOSS. panduck_reader_function_for(p) is NULL for every registry entry
+    // whose `function` is deliberately empty -- pdf, toml, yaml, zim, zim://, and every KIND_TABLE
+    // format (csv, json, ...), all served by READ_DOC_MACRO's own special-cased branches rather
+    // than a plain table function. Concatenating a NULL reader name nulled the whole arm, and
+    // array_to_string SKIPS NULL elements -- so read_panduck_doc(['a.odt', 'x.pdf']) silently
+    // returned only a.odt's rows, no error, and a glob of nothing but such formats produced an
+    // empty UNION ALL that query() then failed to parse. Refusing loudly is the correct
+    // behaviour for now, matching this file's own stated preference for "no branch for it" over
+    // "silently wrong" -- teaching this builder the special branches is a separate change.
     {DEFAULT_SCHEMA,
      "panduck_read_arms",
      {"paths", "with_filename", nullptr},
      {{nullptr, nullptr}},
      "array_to_string(list_transform(paths, lambda p: "
-     "  'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
-     "                     ELSE '' END || "
-     "  ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || ')'), "
+     "  CASE WHEN panduck_reader_function_for(p) IS NULL "
+     "       THEN error('panduck: ' || p || ' (' || coalesce(panduck_format_for(p), 'unknown') || "
+     "                  ') cannot be read in a multi-document call yet') "
+     "       ELSE CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(p)) "
+     "            THEN 'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
+     "                               ELSE '' END || "
+     "                 ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || ')' "
+     "            ELSE error('panduck: ' || p || ' needs the ' || panduck_reader_extension_for(p) || "
+     "                       ' extension') END "
+     "       END), "
      "  ' UNION ALL ')"},
 
     // The unpack column list, defined once. Only LIST-producing branches use it; flat
@@ -724,26 +770,18 @@ const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
                                           R"SQL(
 SELECT * FROM query(
     CASE
-        -- PLURAL SOURCES. Resolved to a path list, then one arm per path. This branch runs
-        -- only when the source is not a single plain path, so a caller naming one file
-        -- generates exactly the SQL it generates today -- byte-identical, asserted.
-        --
-        -- The raise for an empty match lives HERE rather than in panduck_glob, so the
-        -- primitive stays neutral and the policy has one site. It matches DuckDB core,
-        -- which errors identically for a pattern matching nothing and for a named file
-        -- that is absent -- measured on read_csv, both "No files found that match the
-        -- pattern". A nicer rule was drafted and rejected: panduck is not the place to
-        -- diverge from core's file resolution unilaterally.
-        WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
-            THEN CASE WHEN len(panduck_source_list(src)) = 0
-                 THEN error('panduck: no files matched ' || src::VARCHAR)
-                 ELSE panduck_read_arms(panduck_source_list(src), filename) END
-
         -- `pages` WAS ACCEPTED AND IGNORED BY EVERY FORMAT. It has been declared here
         -- since this macro was written and was never referenced in the body, so
         -- pages := '2' and pages := 'utter nonsense' both returned the whole document.
         -- PDF now honours it; nothing else has pages to honour, and saying so is the
         -- point -- silently ignoring a parameter is how it came to read as a feature.
+        --
+        -- RUNS BEFORE THE PLURAL BRANCH, deliberately, so a glob inherits the same
+        -- refusal a plain path gets: read_panduck_doc('*.odt', pages := 'nonsense') must
+        -- raise rather than silently ignore pages, which is exactly the defect this guard
+        -- exists to name. panduck_resolved_format(src::VARCHAR, format) still resolves
+        -- correctly for a bare glob STRING here -- '*.odt' ends in '.odt' same as
+        -- 'x.odt' does -- because this guard runs before src is expanded into a list.
         WHEN pages <> '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
             THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
                        panduck_resolved_format(src::VARCHAR, format) || ' has no pages')
@@ -751,6 +789,25 @@ SELECT * FROM query(
         WHEN panduck_resolved_format(src::VARCHAR, format) = 'data'
             THEN error('panduck: ' || src::VARCHAR || ' is a data format, not a document. ' ||
                        'Use read_panduck_table instead.')
+
+        -- PLURAL SOURCES. Resolved to a path list, then one arm per path. This branch runs
+        -- only when the source is not a single plain path, so a caller naming one file
+        -- generates exactly the SQL it generates today -- byte-identical, asserted.
+        --
+        -- Runs AFTER the pages and data-format guards above (moved here in review), so a
+        -- glob string is checked by them exactly like a plain path is before ever being
+        -- expanded into a list. Placed BEFORE the generic branch below, which requires a
+        -- resolvable single format and would misfire on a list or a glob string.
+        --
+        -- The bare-glob empty-match raise below is now REDUNDANT: panduck_source_list
+        -- raises per-element as it expands each glob, which is the only place that still
+        -- has each element's own boundary before flatten() erases it (see that macro's
+        -- comment). Kept anyway because it is what catches a bare glob matching nothing,
+        -- and it costs nothing once the list is already known to be empty.
+        WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
+            THEN CASE WHEN len(panduck_source_list(src)) = 0
+                 THEN error('panduck: no files matched ' || src::VARCHAR)
+                 ELSE panduck_read_arms(panduck_source_list(src), filename) END
 
         -- GENERIC: the registry names a table function that emits duck_blocks, so call
         -- it. One path for builtin flat readers (rtf, markdown) and for anything a user

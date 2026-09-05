@@ -57,8 +57,15 @@ static constexpr const char *SOURCE_USER = "user";
 //!
 //! panduck renders the argument itself instead: `param` is validated as a bare identifier
 //! and `arg` is validated against `arg_type`, both AT REGISTRATION, and rendering re-checks
-//! before emitting. There is no path from registration data to arbitrary SQL, which is a
-//! shorter security argument than any a stored fragment could offer.
+//! before emitting. There is no path from an OPTION to arbitrary SQL, which is a shorter
+//! security argument than any a stored fragment could offer.
+//!
+//! THAT ARGUMENT COVERS `options` ONLY. The sibling field `ReaderEntry::function` is also
+//! registration data, and it is interpolated bare into the generated SQL with no validation
+//! at all -- a registration can put arbitrary SQL there. That is pre-existing (since
+//! 27cd39d) and tracked as a separate follow-up; reaching it already requires the ability to
+//! run `CALL panduck_register_doc_reader`. Registration as a whole is therefore NOT safe:
+//! `options` is.
 struct ReaderOption {
 	std::string intent;   //!< panduck's vocabulary: "attributes"
 	std::string value;    //!< the intent's value: "all"

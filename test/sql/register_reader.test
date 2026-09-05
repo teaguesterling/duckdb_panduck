@@ -40,6 +40,22 @@ INSTALL parquet;
 statement ok
 LOAD parquet;
 
+# duck_block_utils is installed explicitly for the same reason parquet is: the unittest
+# binary is built with ENABLE_EXTENSION_AUTOLOADING=0, so doc_toc's runtime lookup of
+# duck_blocks_toc fails with a catalog error rather than autoloading.
+#
+# THIS FILE PASSED LOCALLY AND FAILED IN CI WITHOUT IT. The developer machine's shared
+# ~/.duckdb profile already had duck_block_utils installed, so the doc_toc assertion below
+# resolved for a reason the test never stated; CI's clean container had nothing. That is the
+# same installed-vs-declared confusion this suite keeps finding in panduck's own dependencies
+# -- doc_namespace.test installs it explicitly three times for exactly this reason, one file
+# away, and passed the CI run this file failed.
+statement ok
+INSTALL duck_block_utils;
+
+statement ok
+LOAD duck_block_utils;
+
 # A duck_block stream from any panduck reader, written out as parquet. Self-contained on
 # purpose -- no second extension is needed to demonstrate the mechanism, and using a real
 # reader means the columns are the canonical seven rather than something hand-built.

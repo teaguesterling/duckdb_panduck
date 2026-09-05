@@ -674,12 +674,11 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 // webbed#142/#143 only div, section/article and heading kept it, so <ul id="steps"> was
 // unaddressable; after, every block keeps it. This macro is correct either way and simply
 // finds more.
-const DefaultTableMacro DOC_CONTAINER_MACRO = {
-    DEFAULT_SCHEMA,
-    "doc_container",
-    {"src", "id", nullptr},
-    {{"format", "'auto'"}, {nullptr, nullptr}},
-    R"SQL(
+const DefaultTableMacro DOC_CONTAINER_MACRO = {DEFAULT_SCHEMA,
+                                               "doc_container",
+                                               {"src", "id", nullptr},
+                                               {{"format", "'auto'"}, {nullptr, nullptr}},
+                                               R"SQL(
 WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
 c AS (SELECT element_order AS o, level AS lv
       FROM b WHERE attributes['id'] = id
@@ -694,12 +693,11 @@ WHERE b.element_order >= c.o
 ORDER BY b.element_order
 )SQL"};
 
-const DefaultTableMacro DOC_SECTION_MACRO = {
-    DEFAULT_SCHEMA,
-    "doc_section",
-    {"src", "section", nullptr},
-    {{"format", "'auto'"}, {nullptr, nullptr}},
-    R"SQL(
+const DefaultTableMacro DOC_SECTION_MACRO = {DEFAULT_SCHEMA,
+                                             "doc_section",
+                                             {"src", "section", nullptr},
+                                             {{"format", "'auto'"}, {nullptr, nullptr}},
+                                             R"SQL(
 WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
 h AS (SELECT element_order AS o,
              coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl
@@ -717,12 +715,11 @@ WHERE b.element_order >= h.o
 ORDER BY b.element_order
 )SQL"};
 
-const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {
-    DEFAULT_SCHEMA,
-    "read_pdf_blocks",
-    {"src", nullptr},
-    {{"pages", "''"}, {nullptr, nullptr}},
-    R"SQL(
+const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {DEFAULT_SCHEMA,
+                                                 "read_pdf_blocks",
+                                                 {"src", nullptr},
+                                                 {{"pages", "''"}, {nullptr, nullptr}},
+                                                 R"SQL(
 WITH lvl AS (
     SELECT font_size, dense_rank() OVER (ORDER BY font_size DESC) AS hl
     FROM (SELECT DISTINCT font_size FROM read_pdf_elements(src) WHERE element_type = 'heading')
@@ -798,12 +795,12 @@ FROM e LEFT JOIN lvl ON e.font_size = lvl.font_size
 ORDER BY e.ord
 )SQL"};
 
-const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
-                                          "read_panduck_doc",
-                                          {"src", nullptr},
-                                          {{"format", "'auto'"}, {"pages", "''"},
-                                           {"filename", "false"}, {nullptr, nullptr}},
-                                          R"SQL(
+const DefaultTableMacro READ_DOC_MACRO = {
+    DEFAULT_SCHEMA,
+    "read_panduck_doc",
+    {"src", nullptr},
+    {{"format", "'auto'"}, {"pages", "''"}, {"filename", "false"}, {nullptr, nullptr}},
+    R"SQL(
 SELECT * FROM query(
     CASE
         -- `pages` ON A PLURAL SOURCE IS REFUSED OUTRIGHT, deliberately BEFORE the
@@ -1197,8 +1194,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO,
-	                 &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO,
+	                 &DOC_CONTAINER_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

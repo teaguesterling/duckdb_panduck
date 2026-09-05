@@ -313,7 +313,18 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto v_idx = value_fmt.sel->get_index(i);
-		if (!value_fmt.validity.RowIsValid(v_idx) || values[v_idx].GetString() == OPTION_DEFAULT) {
+		// A NULL VALUE IS NOT THE SENTINEL, and conflating the two reopens the hole the
+		// IS DISTINCT FROM guards in READ_DOC_MACRO close. Those guards only cover the
+		// formats that map NO option; a format that DOES map one reaches the generic branch
+		// and arrives here, so read_panduck_doc('x.htmltest', attributes := NULL) would have
+		// rendered nothing and read the document without the option -- accepted and ignored,
+		// by passing NULL instead of a value, on exactly the formats where the option works.
+		if (!value_fmt.validity.RowIsValid(v_idx)) {
+			auto i_idx_err = intent_fmt.sel->get_index(i);
+			auto named = intent_fmt.validity.RowIsValid(i_idx_err) ? intents[i_idx_err].GetString() : "an option";
+			throw InvalidInputException("panduck: %s must name a value; NULL is not one", named);
+		}
+		if (values[v_idx].GetString() == OPTION_DEFAULT) {
 			result.SetValue(i, Value(""));
 			continue;
 		}
@@ -454,12 +465,24 @@ unique_ptr<FunctionData> RegisterBind(ClientContext &, TableFunctionBindInput &i
 			// type fixes the order today, but a by-index read silently mis-assigns every
 			// field if that declaration is ever reordered -- and the field that would land
 			// in `param` decides what gets emitted as an identifier.
+			//
+			// EVERY FIELD IS REQUIRED AND NULL IS NOT A VALUE. A field the caller omits
+			// arrives here as NULL (the cast fills it in; it is not a bind error), and
+			// folding NULL to "" made a row with no `arg` at all storable under
+			// arg_type 'VARCHAR' -- it rendered `p := ''`, measured. The design's claim is
+			// that a malformed row cannot be STORED, and a row missing a field is malformed,
+			// so the NULL is refused here rather than absorbed. An explicitly EMPTY `arg` is
+			// still accepted: `p := ''` is a legitimate literal to want, and it is
+			// distinguishable from an absent one.
 			readers::ReaderOption o;
 			auto &fields = StructValue::GetChildren(row);
 			auto &field_types = StructType::GetChildTypes(row.type());
 			for (idx_t i = 0; i < fields.size(); i++) {
-				auto text = fields[i].IsNull() ? std::string() : fields[i].GetValue<string>();
 				auto &name = field_types[i].first;
+				if (fields[i].IsNull()) {
+					throw InvalidInputException("panduck: an option needs a non-NULL '%s'", name);
+				}
+				auto text = fields[i].GetValue<string>();
 				if (name == "intent") {
 					o.intent = std::move(text);
 				} else if (name == "value") {
@@ -1027,7 +1050,17 @@ SELECT * FROM query(
         -- silently dropping `pages` again, the identical defect class. Subsuming the
         -- glob case here, ahead of any format resolution, closes that off pre-emptively
         -- rather than waiting for it to be found the same way Finding 3 was.
-        WHEN pages <> '' AND (typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR))
+        --
+        -- `IS DISTINCT FROM`, NOT `<>`, AND THAT IS THE WHOLE GUARD. `NULL <> ''` is NULL,
+        -- not TRUE, so a caller writing pages := NULL skipped both of these guards entirely
+        -- and got the parameter accepted and silently ignored -- measured:
+        -- read_panduck_doc('constructs.odt', pages := NULL) returned all 54 rows, and
+        -- read_panduck_doc('*.odt', pages := NULL) returned all 180. That is the exact
+        -- defect these guards exist to close, reachable by passing NULL instead of a value,
+        -- which is how the class survives a fix that only looks at non-NULL arguments. The
+        -- round-2 error() audit found error(NULL) silently returning NULL; this is its
+        -- twin one level up, in the CONDITION rather than the message.
+        WHEN pages IS DISTINCT FROM '' AND (typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR))
             THEN error('panduck: pages applies to a single document; ' ||
                        coalesce(src::VARCHAR, '<NULL>') || ' names more than one')
 
@@ -1048,9 +1081,24 @@ SELECT * FROM query(
         -- the condition itself requires it to literally not equal 'pdf', which cannot be
         -- true for a NULL value (NULL <> 'pdf' is NULL, not TRUE) -- so no coalesce is
         -- needed on the interpolation below. Verified in the round-2 error() audit.
-        WHEN pages <> '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
+        --
+        -- `IS DISTINCT FROM` for the same reason as the guard above; see its comment.
+        WHEN pages IS DISTINCT FROM '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
             THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
                        panduck_resolved_format(src::VARCHAR, format) || ' has no pages')
+
+        -- THE ONE HOLE THE TWO GUARDS ABOVE CANNOT REACH: a single PDF with pages := NULL.
+        -- Both guards now fire for a NULL, but neither SELECTS here -- the first needs a
+        -- plural source and the second needs a non-pdf format -- so a NULL fell through to
+        -- the pdf branch below, where panduck_quote coalesces NULL to '' and the read
+        -- quietly returned every page. Dispatch and the function it delegates to disagreed
+        -- about the same argument: read_pdf_blocks(src, pages := NULL) raises this exact
+        -- message on its own (see its first_page/last_page CASE). Fixing the guards and
+        -- leaving this would have meant closing the hole for every format EXCEPT the one
+        -- where `pages` actually means something. The wording is read_pdf_blocks' verbatim,
+        -- so the two paths now refuse identically as well as both refusing.
+        WHEN pages IS NULL
+            THEN error('panduck: pages must be N or N-M, got <NULL>')
 
         -- src::VARCHAR IS COALESCED HERE (round-2 error() audit) because this branch is
         -- reachable with a NULL src: a caller forcing format := 'data' explicitly makes
@@ -1123,7 +1171,13 @@ SELECT * FROM query(
         -- by name costs one branch and closes the class off for every intent added later.
         -- Placed AFTER the generic branch, so a source that CAN honour the option still
         -- does; reached only when nothing above claimed the source.
-        WHEN attributes <> 'default'
+        --
+        -- `IS DISTINCT FROM`, NOT `<>`: `NULL <> 'default'` is NULL, not TRUE, so
+        -- read_panduck_doc('two_pages.pdf', attributes := NULL) skipped this guard and
+        -- returned all 45 rows -- the parameter accepted and ignored, reached by passing
+        -- NULL instead of a value. Measured, and identical in shape to the `pages` guards
+        -- above, which inherited it. One pattern, fixed in one place at a time.
+        WHEN attributes IS DISTINCT FROM 'default'
             THEN error('panduck: attributes is not supported for ' ||
                        coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
 
@@ -1429,8 +1483,20 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 
 	auto list_of_varchar = LogicalType::LIST(LogicalType::VARCHAR);
 	// The option row's shape is DECLARED here, so DuckDB casts whatever the caller wrote to
-	// it before RegisterBind sees it -- a struct with a missing or misspelled field is a
-	// bind error naming the field, rather than a silently empty string reaching validation.
+	// it before RegisterBind sees it.
+	//
+	// WHAT THAT CAST ACTUALLY DOES, measured rather than assumed -- an earlier version of
+	// this comment claimed a missing or misspelled field became "a bind error naming the
+	// field", and that is FALSE. DuckDB casts a struct BY NAME: fields written in any order
+	// land correctly ({arg_type, arg, param, value, intent} registers fine), and a field
+	// that is absent or misspelled is filled with NULL rather than refused. So a misspelled
+	// `parm:` reaches RegisterBind as param = NULL. It is caught there -- every field is
+	// required and NULL is refused -- but the cast is not what catches it, and a comment
+	// that misdescribes a security check is worse than none, because the next person trusts
+	// it instead of testing it.
+	//
+	// The by-name read in RegisterBind is therefore belt-and-braces rather than the thing
+	// standing between a reordered declaration and a mis-assigned `param`; both hold today.
 	auto option_list = LogicalType::LIST(LogicalType::STRUCT({{"intent", LogicalType::VARCHAR},
 	                                                          {"value", LogicalType::VARCHAR},
 	                                                          {"param", LogicalType::VARCHAR},

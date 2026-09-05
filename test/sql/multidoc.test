@@ -575,3 +575,104 @@ statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', attributes := 'all');
 ----
 attributes is not supported for
+
+# ---------------------------------------------------------------------------
+# NULL IS NOT A VALUE, AND `<>` CANNOT SAY SO. `NULL <> 'default'` is NULL, not TRUE, so
+# every guard written with `<>` was skipped outright by a caller passing NULL instead of a
+# value -- the parameter accepted and silently ignored, which is the exact defect the guard
+# exists to close, reached through the one input the guard cannot see. MEASURED before the
+# fix: attributes := NULL returned 45 rows from a PDF, pages := NULL returned 54 from an
+# ODT and 180 from a glob, all without a word.
+#
+# This is the round-2 error() audit's twin one level up: that one found error(NULL)
+# silently returning NULL in a MESSAGE, this one finds NULL silently falsifying a
+# CONDITION. The `pages` guards inherited it and are fixed in the same change, because
+# fixing the new guard and leaving the old one would keep this plan's headline defect alive
+# in the precise place the plan claims to have closed it.
+# ---------------------------------------------------------------------------
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', attributes := NULL);
+----
+attributes is not supported for
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', pages := NULL);
+----
+pages applies only to paginated formats
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt', pages := NULL);
+----
+pages applies to a single document
+
+# THE ONE HOLE THE TWO `pages` GUARDS CANNOT REACH: a single PDF. Neither selects for it --
+# the first needs a plural source, the second a non-pdf format -- so a NULL fell through to
+# the pdf branch, where panduck_quote coalesces it to '' and every page came back. Dispatch
+# and read_pdf_blocks disagreed about the same argument: called directly, read_pdf_blocks
+# raises this message on its own. They now refuse identically, in the same words.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', pages := NULL);
+----
+pages must be N or N-M, got <NULL>
+
+# AND ON A FORMAT THAT DOES MAP THE OPTION, where the dispatch guards above never run --
+# the generic branch selects first and the NULL reaches the renderer. Treating a NULL value
+# as the 'default' sentinel there would have reopened the hole on exactly the formats where
+# the option works, which is the worst possible place to leave it.
+statement error
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', NULL);
+----
+must name a value
+
+# ---------------------------------------------------------------------------
+# EVERY OPTION FIELD IS REQUIRED, AND AN OMITTED ONE ARRIVES AS NULL RATHER THAN AS A BIND
+# ERROR. Measured: DuckDB casts the struct BY NAME, so fields written in any order land
+# correctly, and a field that is absent or misspelled is filled with NULL rather than
+# refused. Folding that NULL to '' made a row with no `arg` at all storable under
+# arg_type 'VARCHAR' -- it rendered `p := ''`. The design's claim is that a malformed row
+# cannot be STORED, and a row missing a field is malformed.
+# ---------------------------------------------------------------------------
+statement error
+CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.noarg'],
+     options := [{intent: 'a', value: 'b', param: 'p', arg_type: 'VARCHAR'}]);
+----
+an option needs a non-NULL 'arg'
+
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.noarg';
+----
+0
+
+# A MISSPELLED FIELD IS THE SAME SHAPE, and it is worth pinning separately because the
+# error it produces names the field that is MISSING rather than the one that was typed --
+# `parm:` reaches the bind as param = NULL, not as "no such field parm".
+statement error
+CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.misspelled'],
+     options := [{intent: 'a', value: 'b', parm: 'p', arg: 'c', arg_type: 'VARCHAR'}]);
+----
+an option needs a non-NULL 'param'
+
+# FIELDS IN ANY ORDER STILL REGISTER CORRECTLY, because the cast is by name. This is the
+# assertion behind the claim that the by-name read in RegisterBind is belt-and-braces
+# rather than the only thing standing between a reordered declaration and a mis-assigned
+# `param` -- both hold, and a test says which.
+statement ok
+CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.reordered'],
+     options := [{arg_type: 'VARCHAR', arg: 'c', param: 'p', value: 'b', intent: 'a'}]);
+
+query I
+SELECT panduck_reader_option_for('x.reordered', 'a', 'b');
+----
+p := 'c'
+
+# AN EXPLICITLY EMPTY `arg` IS STILL ACCEPTED. `p := ''` is a legitimate literal to want,
+# and it is distinguishable from an absent one -- which is why the check refuses NULL
+# rather than refusing emptiness.
+statement ok
+CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.emptyarg'],
+     options := [{intent: 'a', value: 'b', param: 'p', arg: '', arg_type: 'VARCHAR'}]);
+
+query I
+SELECT panduck_reader_option_for('x.emptyarg', 'a', 'b');
+----
+p := ''

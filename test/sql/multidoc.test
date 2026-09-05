@@ -104,9 +104,14 @@ true
 
 # A companion that fails if the order were reversed, so the assertion above is not
 # satisfiable by a symmetric bug (e.g. concatenating the two halves in the wrong order).
+# Uses 'lists.odt' rather than 'constructs.odt' deliberately: 'constructs.odt' sorts
+# FIRST among the '*.odt' matches, so an explicit-path-vs-glob swap would coincidentally
+# still land it at position [1] and this check would pass either way. 'lists.odt' sorts
+# third, so a swap puts the glob's own first match ('constructs.odt') at [1] instead,
+# which is not 'lists.odt' -- the check can actually fail.
 query I
-SELECT panduck_source_list(['test/fixtures/constructs.odt', 'test/fixtures/*.odt'])[1]
-     = 'test/fixtures/constructs.odt';
+SELECT panduck_source_list(['test/fixtures/lists.odt', 'test/fixtures/*.odt'])[1]
+     = 'test/fixtures/lists.odt';
 ----
 true
 

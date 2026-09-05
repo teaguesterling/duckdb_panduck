@@ -57,6 +57,59 @@ std::string ExtOfPath(const std::string &path) {
 	return NormalizeExt(base.substr(dot));
 }
 
+//! A reader parameter name must be a bare identifier.
+//!
+//! CHECKED AT REGISTRATION, not at render time, so a malformed row cannot be STORED at
+//! all. The difference matters because a registry entry is process-wide and permanent: a
+//! row accepted now would be rendered into every later read_panduck_doc in the process,
+//! and the caller who then hits the error has no way to tell which registration is
+//! responsible. Refusing at the point of registration puts the error where the mistake is.
+bool IsIdentifier(const std::string &s) {
+	if (s.empty() || (!std::isalpha(static_cast<unsigned char>(s[0])) && s[0] != '_')) {
+		return false;
+	}
+	for (char c : s) {
+		if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') {
+			return false;
+		}
+	}
+	return true;
+}
+
+//! Does `arg` actually hold a value of `arg_type`?
+//!
+//! BOOLEAN AND INTEGER ARE RENDERED BARE -- unquoted -- so an unchecked `arg` under either
+//! type is a direct SQL injection: arg_type 'BOOLEAN' with arg "true) UNION SELECT ..."
+//! would be emitted verbatim into the reader call. Only VARCHAR is quoted, and quoting is
+//! what makes it safe. So the bare types are constrained to values that cannot be anything
+//! but a literal, and this runs BOTH at registration (so the row cannot be stored) and
+//! again in the renderer (so no future path can reach emission unchecked). The redundancy
+//! is deliberate: this is the check the whole no-stored-fragment argument rests on.
+bool ArgMatchesType(const std::string &arg_type, const std::string &arg) {
+	if (arg_type == "VARCHAR") {
+		return true; // rendered quoted and escaped; any content is a literal
+	}
+	if (arg_type == "BOOLEAN") {
+		return arg == "true" || arg == "false";
+	}
+	if (arg_type == "INTEGER") {
+		if (arg.empty()) {
+			return false;
+		}
+		size_t i = (arg[0] == '-' || arg[0] == '+') ? 1 : 0;
+		if (i >= arg.size()) {
+			return false;
+		}
+		for (; i < arg.size(); i++) {
+			if (!std::isdigit(static_cast<unsigned char>(arg[i]))) {
+				return false;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 ReaderRegistry &ReaderRegistry::Get() {
 	static ReaderRegistry instance;
 	return instance;
@@ -226,6 +279,174 @@ void CanReadFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	});
 }
 
+//! The sentinel meaning "the caller asked for nothing". Dispatch's option-bearing named
+//! parameters default to it, and it renders to the empty string WITHOUT consulting the
+//! registry -- which is what keeps a default read byte-identical to the SQL panduck
+//! generated before options existed, for every format, including the ones that map no
+//! options at all and would otherwise raise.
+static constexpr const char *OPTION_DEFAULT = "default";
+
+//! panduck_reader_option_for(path, intent, value) -> "param := literal", or ''.
+//!
+//! THE RENDERING IS BY TYPE, and this is the whole security boundary. `param` is re-checked
+//! as an identifier and `arg` re-checked against `arg_type` even though registration
+//! already refused anything else: this function is the only place registration data becomes
+//! SQL text, so it does not delegate its own safety to a check that ran somewhere else. A
+//! VARCHAR goes through the same doubling panduck_quote uses; BOOLEAN and INTEGER are
+//! emitted bare and are therefore constrained to values that cannot be anything but a
+//! literal. Nothing registrant-supplied reaches the generated SQL as SQL.
+//!
+//! AN UNMAPPED INTENT RAISES rather than being dropped. `pages` spent the life of this
+//! macro being accepted and silently ignored, which is how it came to read as a working
+//! feature at the call site; a reader that cannot honour `attributes := 'all'` must say so
+//! rather than return a document quietly missing what was asked for.
+void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	// SetValue rather than a TernaryExecutor, for the same version-neutrality reason
+	// RegistryFieldFun gives: the executors' null protocol moved between v1.5.5 and v2.0.
+	UnifiedVectorFormat path_fmt, intent_fmt, value_fmt;
+	args.data[0].ToUnifiedFormat(args.size(), path_fmt);
+	args.data[1].ToUnifiedFormat(args.size(), intent_fmt);
+	args.data[2].ToUnifiedFormat(args.size(), value_fmt);
+	auto paths = UnifiedVectorFormat::GetData<string_t>(path_fmt);
+	auto intents = UnifiedVectorFormat::GetData<string_t>(intent_fmt);
+	auto values = UnifiedVectorFormat::GetData<string_t>(value_fmt);
+
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto v_idx = value_fmt.sel->get_index(i);
+		// A NULL VALUE IS NOT THE SENTINEL, and conflating the two reopens the hole the
+		// IS DISTINCT FROM guards in READ_DOC_MACRO close. Those guards only cover the
+		// formats that map NO option; a format that DOES map one reaches the generic branch
+		// and arrives here, so read_panduck_doc('x.htmltest', attributes := NULL) would have
+		// rendered nothing and read the document without the option -- accepted and ignored,
+		// by passing NULL instead of a value, on exactly the formats where the option works.
+		if (!value_fmt.validity.RowIsValid(v_idx)) {
+			auto i_idx_err = intent_fmt.sel->get_index(i);
+			auto named = intent_fmt.validity.RowIsValid(i_idx_err) ? intents[i_idx_err].GetString() : "an option";
+			throw InvalidInputException("panduck: %s must name a value; NULL is not one", named);
+		}
+		if (values[v_idx].GetString() == OPTION_DEFAULT) {
+			result.SetValue(i, Value(""));
+			continue;
+		}
+		auto p_idx = path_fmt.sel->get_index(i);
+		auto i_idx = intent_fmt.sel->get_index(i);
+		if (!path_fmt.validity.RowIsValid(p_idx) || !intent_fmt.validity.RowIsValid(i_idx)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		auto path = paths[p_idx].GetString();
+		auto intent = intents[i_idx].GetString();
+		auto value = values[v_idx].GetString();
+
+		ReaderEntry entry;
+		ReaderRegistry::Get().Lookup(ExtOfPath(path), entry);
+		const readers::ReaderOption *match = nullptr;
+		for (auto &o : entry.options) {
+			if (o.intent == intent && o.value == value) {
+				match = &o;
+				break;
+			}
+		}
+		if (!match) {
+			throw InvalidInputException("panduck: the reader for %s has no mapping for %s = '%s'", path, intent, value);
+		}
+		if (!readers::IsIdentifier(match->param) || !readers::ArgMatchesType(match->arg_type, match->arg)) {
+			throw InvalidInputException("panduck: refusing to render option %s for %s", match->param, path);
+		}
+		std::string rendered = match->param + " := ";
+		if (match->arg_type == "VARCHAR") {
+			rendered += "'";
+			for (char c : match->arg) {
+				if (c == '\'') {
+					rendered += "''";
+				} else {
+					rendered.push_back(c);
+				}
+			}
+			rendered += "'";
+		} else {
+			rendered += match->arg;
+		}
+		result.SetValue(i, Value(rendered));
+	}
+}
+
+//! panduck_render_params(MAP(VARCHAR, VARCHAR)) -> ", key := 'value'" per entry, or ''.
+//!
+//! THE ESCAPE HATCH FOR THE VOCABULARY panduck_reader_option_for SERVES. That path exists
+//! so panduck can ask a sibling for something ON ITS OWN BEHALF -- doc_render needs `class`
+//! for a faithful Pandoc Attr, and there is no caller to ask. This is the complement: a
+//! caller who already knows a sibling's exact parameter name (ignore_errors, say) says so
+//! directly, so panduck never grows a vocabulary entry -- and a registry row -- for every
+//! option a sibling happens to expose.
+//!
+//! SAME IDENTIFIER DISCIPLINE, ONE TYPE WIDE. `key` is checked with the same IsIdentifier
+//! used at registration, so there is still no path from caller input to a bare SQL
+//! fragment. `value` is always rendered as a quoted VARCHAR literal, the same doubling
+//! panduck_quote uses -- there is no bare-typed arm here the way
+//! panduck_reader_option_for has for BOOLEAN/INTEGER, because THAT is precisely the arm
+//! measured to be a live injection under an unchecked value ('true) UNION SELECT 1 --').
+//! Restricting this surface to one type removes the trap rather than re-litigating it: a
+//! caller wanting a boolean or a list passes the literal text and the reader's own CAST
+//! does the rest.
+void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			// Reachable only if a caller strips the function's own null-propagation
+			// (there is none registered here); READ_DOC_MACRO refuses reader_params IS
+			// NULL before this function is ever reached, exactly as it does for
+			// `filename` and `format`. Kept explicit rather than assumed unreachable.
+			result.SetValue(i, Value());
+			continue;
+		}
+		std::string rendered;
+		// BOUND TO A NAMED LOCAL, NOT INLINED INTO THE LOOP HEAD. MapValue::GetChildren
+		// returns a reference INTO the Value it is given; GetValue(i) returns that Value
+		// by temporary, and a temporary bound to a function PARAMETER (rather than
+		// directly to the range-for's own reference) is destroyed at the end of the full
+		// expression -- before the loop body ever runs. Inlined, this still compiled and
+		// ran, and MEASURED (10 runs each): the empty map was clean every time, because a
+		// zero-entry range never dereferences the dangling reference at all; a ONE-entry
+		// map crashed every time (INTERNAL Error: Invalid PhysicalType for GetTypeIdSize);
+		// a three-entry map failed every time too, but inconsistently between that same
+		// internal error and a raw segfault depending on what the freed memory had been
+		// overwritten with. So this was never a two-or-more-entries bug -- any non-empty
+		// map was already broken, reliably, and the smallest committed test (one entry)
+		// would have caught it on its own. Keeping the Value alive in `map_val` for the
+		// loop's duration is what the reference actually needs.
+		Value map_val = args.data[0].GetValue(i);
+		for (auto &entry : MapValue::GetChildren(map_val)) {
+			auto &kv = StructValue::GetChildren(entry);
+			auto key = kv[0].IsNull() ? std::string() : kv[0].GetValue<std::string>();
+			if (!readers::IsIdentifier(key)) {
+				throw InvalidInputException("panduck: reader_params key must be an identifier, got '%s'", key);
+			}
+			// A NULL VALUE IS NOT ONE, same ruling ReaderOptionForFun makes for an option
+			// value: silently dropping the entry would be the parameter accepted and
+			// ignored, and rendering the bare word NULL would emit `key := NULL` --
+			// syntactically a value, semantically not what MAP(VARCHAR, VARCHAR) NULL
+			// means to a caller who never asked for that keyword at all.
+			if (kv[1].IsNull()) {
+				throw InvalidInputException("panduck: reader_params['%s'] must name a value; NULL is not one", key);
+			}
+			rendered += ", " + key + " := '";
+			for (char c : kv[1].GetValue<std::string>()) {
+				if (c == '\'') {
+					rendered += "''";
+				} else {
+					rendered.push_back(c);
+				}
+			}
+			rendered += "'";
+		}
+		result.SetValue(i, Value(rendered));
+	}
+}
+
 void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t name) {
@@ -279,6 +500,7 @@ void RegistryScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 struct RegisterBindData : public TableFunctionData {
 	std::vector<std::string> exts;
 	std::string reader_ext, function, kind;
+	std::vector<readers::ReaderOption> options;
 };
 
 struct RegisterGlobalState : public GlobalTableFunctionState {
@@ -303,6 +525,67 @@ unique_ptr<FunctionData> RegisterBind(ClientContext &, TableFunctionBindInput &i
 	if (result->exts.empty()) {
 		throw InvalidInputException("panduck: register requires at least one file extension");
 	}
+
+	// OPTIONS ARE VALIDATED HERE, IN THE BIND, so an ill-formed row never reaches the
+	// registry. RegisterScan runs after this returns and is the only writer, so a throw
+	// from here leaves the registry untouched -- which is the property the test asserts by
+	// counting rows for the rejected extension afterwards, not merely by catching an error.
+	// See ReaderOption for why the fields are validated rather than trusted.
+	auto opt_entry = input.named_parameters.find("options");
+	if (opt_entry != input.named_parameters.end() && !opt_entry->second.IsNull()) {
+		for (auto &row : ListValue::GetChildren(opt_entry->second)) {
+			if (row.IsNull()) {
+				throw InvalidInputException("panduck: options contains a NULL entry");
+			}
+			// READ BY NAME rather than by position. The named parameter's declared STRUCT
+			// type fixes the order today, but a by-index read silently mis-assigns every
+			// field if that declaration is ever reordered -- and the field that would land
+			// in `param` decides what gets emitted as an identifier.
+			//
+			// EVERY FIELD IS REQUIRED AND NULL IS NOT A VALUE. A field the caller omits
+			// arrives here as NULL (the cast fills it in; it is not a bind error), and
+			// folding NULL to "" made a row with no `arg` at all storable under
+			// arg_type 'VARCHAR' -- it rendered `p := ''`, measured. The design's claim is
+			// that a malformed row cannot be STORED, and a row missing a field is malformed,
+			// so the NULL is refused here rather than absorbed. An explicitly EMPTY `arg` is
+			// still accepted: `p := ''` is a legitimate literal to want, and it is
+			// distinguishable from an absent one.
+			readers::ReaderOption o;
+			auto &fields = StructValue::GetChildren(row);
+			auto &field_types = StructType::GetChildTypes(row.type());
+			for (idx_t i = 0; i < fields.size(); i++) {
+				auto &name = field_types[i].first;
+				if (fields[i].IsNull()) {
+					throw InvalidInputException("panduck: an option needs a non-NULL '%s'", name);
+				}
+				auto text = fields[i].GetValue<string>();
+				if (name == "intent") {
+					o.intent = std::move(text);
+				} else if (name == "value") {
+					o.value = std::move(text);
+				} else if (name == "param") {
+					o.param = std::move(text);
+				} else if (name == "arg") {
+					o.arg = std::move(text);
+				} else if (name == "arg_type") {
+					o.arg_type = std::move(text);
+				}
+			}
+			if (!readers::IsIdentifier(o.param)) {
+				throw InvalidInputException("panduck: param must be an identifier, got '%s'", o.param);
+			}
+			if (o.arg_type != "VARCHAR" && o.arg_type != "BOOLEAN" && o.arg_type != "INTEGER") {
+				throw InvalidInputException("panduck: unknown arg_type '%s' (VARCHAR, BOOLEAN or INTEGER)", o.arg_type);
+			}
+			if (!readers::ArgMatchesType(o.arg_type, o.arg)) {
+				throw InvalidInputException("panduck: arg '%s' is not a %s", o.arg, o.arg_type);
+			}
+			if (o.intent.empty()) {
+				throw InvalidInputException("panduck: an option needs an intent");
+			}
+			result->options.push_back(std::move(o));
+		}
+	}
 	return std::move(result);
 }
 
@@ -324,6 +607,7 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 		entry.function = data.function;
 		entry.kind = data.kind;
 		entry.source = readers::SOURCE_USER;
+		entry.options = data.options;
 		ReaderRegistry::Get().Register(entry);
 
 		output.SetValue(0, count, Value(entry.ext));
@@ -384,7 +668,15 @@ const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
                                          {{"format", "'auto'"}, {nullptr, nullptr}},
                                          R"SQL(
 SELECT * FROM query(
-    CASE WHEN panduck_ensure_extension('duck_block_utils')
+    -- GUARDED HERE, NOT INHERITED FROM read_panduck_doc, because this macro does not pass
+    -- `format` along as a VALUE -- it renders it into SQL text through panduck_quote, which
+    -- coalesces NULL to ''. So dispatch never saw a NULL to refuse: it saw the string '',
+    -- resolved the format to '' and raised "resolves to format '' ... This is a panduck
+    -- bug", blaming panduck for the caller's NULL. MEASURED. A misdiagnosis is worse than a
+    -- silent default, because it sends the next person to read the wrong code.
+    CASE WHEN format IS NULL
+    THEN error('panduck: cannot use NULL as argument for "format"')
+    WHEN panduck_ensure_extension('duck_block_utils')
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
          'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
@@ -499,10 +791,44 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // which used to fall into defect 2's own arm with p itself NULL -- naming a NULL path in
     // the message and nulling it right back out through the same error(NULL) trap. Checked
     // ahead of the function-lookup so every later arm can assume p is non-NULL.
+    //
+    // OPTIONS ARE CARRIED AS AN INTENT, NOT AS A FRAGMENT. `opt_intent`/`opt_value` are
+    // panduck's own vocabulary ('attributes', 'all'); the reader's spelling for it comes
+    // from the registry and is RENDERED by panduck_reader_option_for, which validates
+    // before emitting. Nothing a registrant supplied is interpolated as SQL. See
+    // ReaderOption in reader_registry.hpp for why a stored fragment was rejected.
+    //
+    // THIS IS THE ONE IMPLEMENTATION, and panduck_read_arms below delegates to it with the
+    // 'default' sentinel. Written the other way round -- arms_opt as a copy of arms with an
+    // extra concat -- the three silent-data-loss defects documented above would have to stay
+    // correct in two bodies at once, and the byte-identity property Task 4 asserts would be
+    // a coincidence between two strings rather than a consequence of running one builder.
+    // `reader_params` IS A NAMED PARAMETER, NOT A FIFTH POSITIONAL ONE, deliberately: the
+    // string assertions above and the whole-suite byte-identity property (Task 4) call this
+    // builder positionally with exactly four arguments, and a new required argument would
+    // break every one of them for a feature that is off by default. `MAP {}` as the default
+    // renders through panduck_render_params to '', so an unchanged call is unchanged SQL.
     {DEFAULT_SCHEMA,
-     "panduck_read_arms",
-     {"paths", "with_filename", nullptr},
-     {{nullptr, nullptr}},
+     "panduck_read_arms_opt",
+     {"paths", "with_filename", "opt_intent", "opt_value", nullptr},
+     {{"reader_params", "MAP {}"}, {nullptr, nullptr}},
+     // THE NULL `with_filename` REFUSAL IS REPEATED HERE rather than left to dispatch, and
+     // in dispatch's exact words. This builder is directly callable and directly tested, so
+     // a guard living only in READ_DOC_MACRO would leave the two call sites disagreeing
+     // about the same argument -- which is the defect shape fixed for `pages` one round
+     // earlier, where dispatch coalesced a NULL that read_pdf_blocks refused.
+     //
+     // `reader_params` GETS THE SAME TREATMENT, for the same reason: READ_DOC_MACRO refuses
+     // reader_params IS NULL before ever reaching this builder, but this builder is called
+     // directly (see the test suite), so a caller going straight to
+     // panduck_read_arms_opt(..., reader_params := NULL) must hit the same refusal rather
+     // than reach panduck_render_params, whose own null handling would otherwise concatenate
+     // a NULL through the whole arm exactly as an unguarded `with_filename` used to.
+     "CASE WHEN with_filename IS NULL "
+     "     THEN error('panduck: cannot use NULL as argument for \"filename\"') "
+     "     WHEN reader_params IS NULL "
+     "     THEN error('panduck: cannot use NULL as argument for \"reader_params\"') "
+     "     ELSE "
      "array_to_string(list_transform(paths, lambda p: "
      "  CASE WHEN p IS NULL "
      "       THEN error('panduck: a multi-document source contains a NULL path') "
@@ -513,11 +839,23 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "                 OR panduck_ensure_extension(panduck_reader_extension_for(p)) "
      "            THEN 'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
      "                               ELSE '' END || "
-     "                 ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || ')' "
+     "                 ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || "
+     "                 CASE WHEN panduck_reader_option_for(p, opt_intent, opt_value) = '' THEN '' "
+     "                      ELSE ', ' || panduck_reader_option_for(p, opt_intent, opt_value) END || "
+     "                 panduck_render_params(reader_params) || ')' "
      "            ELSE error('panduck: ' || p || ' needs the ' || panduck_reader_extension_for(p) || "
      "                       ' extension') END "
      "       END), "
-     "  ' UNION ALL ')"},
+     "  ' UNION ALL ') END"},
+
+    // Arms with no option requested. Kept as its own name because it is what every caller
+    // that has nothing to ask for should read like, and because the suite asserts its
+    // output as a string; 'default' is the sentinel that makes the option render to ''.
+    {DEFAULT_SCHEMA,
+     "panduck_read_arms",
+     {"paths", "with_filename", nullptr},
+     {{nullptr, nullptr}},
+     "panduck_read_arms_opt(paths, with_filename, NULL, 'default')"},
 
     // The unpack column list, defined once. Only LIST-producing branches use it; flat
     // branches pass SELECT * through, which has no positional list to transpose.
@@ -565,6 +903,11 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{"format", "'auto'"}, {nullptr, nullptr}},
      "(SELECT r FROM query("
      "  CASE"
+     // Same as doc_toc: `format` is rendered into SQL text through panduck_quote, which
+     // coalesces NULL to '', so a NULL never reaches read_panduck_doc as a NULL and
+     // surfaced as the "This is a panduck bug" arm instead. Measured.
+     "    WHEN format IS NULL"
+     "      THEN error('panduck: cannot use NULL as argument for \"format\"')"
      "    WHEN output_format = 'md' AND panduck_ensure_extension('markdown')"
      "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(src) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
@@ -799,10 +1142,66 @@ const DefaultTableMacro READ_DOC_MACRO = {
     DEFAULT_SCHEMA,
     "read_panduck_doc",
     {"src", nullptr},
-    {{"format", "'auto'"}, {"pages", "''"}, {"filename", "false"}, {nullptr, nullptr}},
+    // `attributes` IS THE FIRST OPTION INTENT to reach dispatch, and it exists here rather
+    // than only in panduck_read_arms_opt's own test for a reason: an option the dispatcher
+    // cannot be asked for is a feature that exists solely inside its own assertion. Its
+    // default is the 'default' sentinel, which renders to nothing -- so an unchanged call
+    // generates byte-identical SQL to what it generated before options existed, which is
+    // the property the plural and single-path string assertions pin.
+    {{"format", "'auto'"},
+     {"pages", "''"},
+     {"filename", "false"},
+     {"attributes", "'default'"},
+     // The escape hatch (Task 7): a caller who already knows a sibling reader's exact
+     // parameter name says so directly, rather than panduck growing a vocabulary entry --
+     // and a registry row -- per sibling option. `MAP {}` is empty by construction, which is
+     // what keeps an unchanged call byte-identical: panduck_render_params(MAP {}) renders ''
+     // without consulting anything.
+     {"reader_params", "MAP {}"},
+     {nullptr, nullptr}},
     R"SQL(
 SELECT * FROM query(
     CASE
+        -- NULL IS NOT A VALUE FOR A NAMED PARAMETER, and DuckDB CORE is the standard this
+        -- family was aligned to: read_csv('a.csv', filename := NULL) and read_json(...) both
+        -- raise `Cannot use NULL as argument for "filename"`. panduck silently defaulting
+        -- was therefore two defects at once -- accept-and-ignore, and a divergence from core
+        -- on the very parameter whose name, column and deliberate refusal of the
+        -- string-rename form were all settled by "same as core". MEASURED before this fix:
+        -- filename := NULL returned SEVEN columns from a single path, a glob and a pdf alike,
+        -- with provenance silently off; format := NULL read the document by auto-detection.
+        --
+        -- THIS IS THE SAME DEFECT IN ITS FOURTH COSTUME. It has now appeared as a `<>`
+        -- comparison (NULL falsifies the condition), as a renderer sentinel (NULL read as
+        -- 'default'), as this `CASE WHEN filename` (NULL is not TRUE, so provenance is
+        -- quietly off), and as `coalesce` inside panduck_resolved_format (NULL reads as
+        -- 'auto'). The shape is always the same: a NULL takes the same path the DEFAULT
+        -- takes, so the caller cannot tell that what they asked for did not happen. Checked
+        -- deliberately across every named parameter this macro family accepts rather than
+        -- only the ones already reported.
+        --
+        -- `pages` IS REFUSED FURTHER DOWN AND IN DIFFERENT WORDS, deliberately. `filename`
+        -- and `format` are panduck's own parameters and answer to core; `pages` is parsed by
+        -- read_pdf_blocks, so dispatch matches THAT function's refusal verbatim so the two
+        -- paths cannot disagree about the same argument. Each matches its own authority,
+        -- which is one rule, not two.
+        WHEN filename IS NULL
+            THEN error('panduck: cannot use NULL as argument for "filename"')
+
+        WHEN format IS NULL
+            THEN error('panduck: cannot use NULL as argument for "format"')
+
+        -- SAME RULING FOR `reader_params`, the escape hatch this task adds: a caller
+        -- writing reader_params := NULL is not the same caller as one who wrote nothing,
+        -- and DuckDB core agrees -- read_csv('a.csv', filename := NULL) raises rather than
+        -- falling back to a default. Without this guard, panduck_render_params's own
+        -- default null-propagation would turn a NULL argument into a NULL rendering, which
+        -- concatenates through the whole reader call and produces NULL SQL text for
+        -- query() -- the same "accepted, then destroyed before dispatch could see it"
+        -- shape `attributes` and `filename` were already found in.
+        WHEN reader_params IS NULL
+            THEN error('panduck: cannot use NULL as argument for "reader_params"')
+
         -- `pages` ON A PLURAL SOURCE IS REFUSED OUTRIGHT, deliberately BEFORE the
         -- single-format `pages` guard below and BEFORE the format is ever resolved.
         -- Review round 2: the existing guard below only rejects `pages` when the
@@ -813,7 +1212,17 @@ SELECT * FROM query(
         -- silently dropping `pages` again, the identical defect class. Subsuming the
         -- glob case here, ahead of any format resolution, closes that off pre-emptively
         -- rather than waiting for it to be found the same way Finding 3 was.
-        WHEN pages <> '' AND (typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR))
+        --
+        -- `IS DISTINCT FROM`, NOT `<>`, AND THAT IS THE WHOLE GUARD. `NULL <> ''` is NULL,
+        -- not TRUE, so a caller writing pages := NULL skipped both of these guards entirely
+        -- and got the parameter accepted and silently ignored -- measured:
+        -- read_panduck_doc('constructs.odt', pages := NULL) returned all 54 rows, and
+        -- read_panduck_doc('*.odt', pages := NULL) returned all 180. That is the exact
+        -- defect these guards exist to close, reachable by passing NULL instead of a value,
+        -- which is how the class survives a fix that only looks at non-NULL arguments. The
+        -- round-2 error() audit found error(NULL) silently returning NULL; this is its
+        -- twin one level up, in the CONDITION rather than the message.
+        WHEN pages IS DISTINCT FROM '' AND (typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR))
             THEN error('panduck: pages applies to a single document; ' ||
                        coalesce(src::VARCHAR, '<NULL>') || ' names more than one')
 
@@ -834,9 +1243,24 @@ SELECT * FROM query(
         -- the condition itself requires it to literally not equal 'pdf', which cannot be
         -- true for a NULL value (NULL <> 'pdf' is NULL, not TRUE) -- so no coalesce is
         -- needed on the interpolation below. Verified in the round-2 error() audit.
-        WHEN pages <> '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
+        --
+        -- `IS DISTINCT FROM` for the same reason as the guard above; see its comment.
+        WHEN pages IS DISTINCT FROM '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
             THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
                        panduck_resolved_format(src::VARCHAR, format) || ' has no pages')
+
+        -- THE ONE HOLE THE TWO GUARDS ABOVE CANNOT REACH: a single PDF with pages := NULL.
+        -- Both guards now fire for a NULL, but neither SELECTS here -- the first needs a
+        -- plural source and the second needs a non-pdf format -- so a NULL fell through to
+        -- the pdf branch below, where panduck_quote coalesces NULL to '' and the read
+        -- quietly returned every page. Dispatch and the function it delegates to disagreed
+        -- about the same argument: read_pdf_blocks(src, pages := NULL) raises this exact
+        -- message on its own (see its first_page/last_page CASE). Fixing the guards and
+        -- leaving this would have meant closing the hole for every format EXCEPT the one
+        -- where `pages` actually means something. The wording is read_pdf_blocks' verbatim,
+        -- so the two paths now refuse identically as well as both refusing.
+        WHEN pages IS NULL
+            THEN error('panduck: pages must be N or N-M, got <NULL>')
 
         -- src::VARCHAR IS COALESCED HERE (round-2 error() audit) because this branch is
         -- reachable with a NULL src: a caller forcing format := 'data' explicitly makes
@@ -872,7 +1296,7 @@ SELECT * FROM query(
         WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
             THEN CASE WHEN len(panduck_source_list(src)) = 0
                  THEN error('panduck: no files matched ' || src::VARCHAR)
-                 ELSE panduck_read_arms(panduck_source_list(src), filename) END
+                 ELSE panduck_read_arms_opt(panduck_source_list(src), filename, 'attributes', attributes, reader_params := reader_params) END
 
         -- GENERIC: the registry names a table function that emits duck_blocks, so call
         -- it. One path for builtin flat readers (rtf, markdown) and for anything a user
@@ -893,13 +1317,83 @@ SELECT * FROM query(
         -- hoist, reader_extension_for(src::VARCHAR) is guaranteed NON-NULL in the ELSE
         -- below (the OR would otherwise have already selected the THEN), so no coalesce is
         -- needed there.
+        --
+        -- AND THE HOIST ABOVE WAS ONLY HALF OF IT -- it fixed the message, not the routing.
+        -- An empty reader_ext also makes the FORMAT empty, and RegistryFieldFun maps empty
+        -- to NULL, so panduck_format_for answers NULL for such an entry. With `=`, the
+        -- comparison below was NULL = NULL -> NULL -> never TRUE, and the whole branch was
+        -- skipped: the read fell through to the CODE fallback and handed back a
+        -- syntax-highlighted parse tree instead of the reader the caller registered, with
+        -- no error to say so. `IS NOT DISTINCT FROM` is why.
+        --
+        -- IT CANNOT OVER-FIRE, and the reason is the conjunct above rather than this one.
+        -- `IS NOT DISTINCT FROM` differs from `=` only when both sides are NULL, i.e. only
+        -- when panduck_format_for(src) IS NULL and format is 'auto'. Reaching here at all
+        -- already requires a registry entry naming a function, and no builtin entry has a
+        -- function with an empty format -- the fourteen rows with a NULL function are the
+        -- fourteen with no function at all, and the first conjunct excludes every one. An
+        -- explicit `format :=` makes panduck_resolved_format non-NULL against a NULL
+        -- panduck_format_for, which is FALSE under both spellings. Measured, not reasoned:
+        -- register_reader.test asserts the routing and the full suite asserts the rest.
         WHEN panduck_reader_function_for(src::VARCHAR) IS NOT NULL
-             AND panduck_resolved_format(src::VARCHAR, format) = panduck_format_for(src::VARCHAR)
+             AND panduck_resolved_format(src::VARCHAR, format) IS NOT DISTINCT FROM panduck_format_for(src::VARCHAR)
             THEN CASE WHEN panduck_reader_extension_for(src::VARCHAR) IS NULL
                       OR panduck_ensure_extension(panduck_reader_extension_for(src::VARCHAR))
-                 THEN panduck_read_arms([src::VARCHAR], filename)
+                 THEN panduck_read_arms_opt([src::VARCHAR], filename, 'attributes', attributes, reader_params := reader_params)
                  ELSE error('panduck: ' || src::VARCHAR || ' needs the ' ||
                             panduck_reader_extension_for(src::VARCHAR) || ' extension') END
+
+        -- EVERY BRANCH BELOW THIS LINE IS SPECIAL-CASED AND CANNOT CARRY AN OPTION: pdf,
+        -- zim, toml/yaml, the text fallbacks and the code fallback all build their own SQL
+        -- rather than going through panduck_read_arms_opt, so `attributes` would be
+        -- ACCEPTED AND SILENTLY IGNORED there -- the exact shape `pages` had for the whole
+        -- life of this macro, which is how it came to read as a working feature. Refusing
+        -- by name costs one branch and closes the class off for every intent added later.
+        -- Placed AFTER the generic branch, so a source that CAN honour the option still
+        -- does; reached only when nothing above claimed the source.
+        --
+        -- `IS DISTINCT FROM`, NOT `<>`: `NULL <> 'default'` is NULL, not TRUE, so
+        -- read_panduck_doc('two_pages.pdf', attributes := NULL) skipped this guard and
+        -- returned all 45 rows -- the parameter accepted and ignored, reached by passing
+        -- NULL instead of a value. Measured, and identical in shape to the `pages` guards
+        -- above, which inherited it. One pattern, fixed in one place at a time.
+        WHEN attributes IS DISTINCT FROM 'default'
+            THEN error('panduck: attributes is not supported for ' ||
+                       coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
+
+        -- `reader_params` GETS THE SAME REFUSAL, for the same reason: pdf, zim, toml/yaml
+        -- and the text and code fallbacks below build their own SQL directly rather than
+        -- through panduck_read_arms_opt, so a reader_params entry would otherwise be
+        -- ACCEPTED AND SILENTLY IGNORED on exactly the branches that cannot thread it --
+        -- the `pages` shape again, closed off here before any caller can find it the same
+        -- way `pages` was found: by trusting that a named parameter which is accepted does
+        -- something.
+        --
+        -- `IS DISTINCT FROM`, NOT `<>`, because panduck_resolved_format is NULL for the code
+        -- fallback (no registry format and format := 'auto') -- precisely the one branch
+        -- with no name of its own, and precisely where `NULL <> MAP {}` (itself NULL, not
+        -- TRUE) would have skipped this guard and let the defect survive where nothing else
+        -- covers it.
+        WHEN reader_params IS DISTINCT FROM MAP {}
+            THEN error('panduck: reader_params is not supported for ' ||
+                       coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
+
+        -- AND `filename` IS THE SAME DEFECT WITH A NON-NULL VALUE, found by looking for the
+        -- pattern rather than for another NULL. Only the generic/plural branches (through
+        -- panduck_read_arms_opt) and the pdf branch below actually PROJECT the provenance
+        -- column. MEASURED: read_panduck_doc('config.toml', filename := true) returned its
+        -- row with no filename column, and format := 'pandoc' with filename := true returned
+        -- SEVEN columns -- the parameter accepted and silently ignored, exactly as `pages`
+        -- was, and exactly as `attributes` would have been without the guard above.
+        --
+        -- PDF IS EXCLUDED BY NAME because it is the one special-cased branch that DOES
+        -- project filename, and `IS DISTINCT FROM` rather than `<>` because
+        -- panduck_resolved_format is NULL for the code fallback (no registry format and
+        -- format := 'auto'), which is precisely where `NULL <> 'pdf'` would have skipped
+        -- this guard and let the defect survive in the one branch nothing else covers.
+        WHEN filename AND panduck_resolved_format(src::VARCHAR, format) IS DISTINCT FROM 'pdf'
+            THEN error('panduck: filename is not supported for ' ||
+                       coalesce(panduck_resolved_format(src::VARCHAR, format), 'this source'))
 
         -- PANDOC'S OWN AST, reached by format := 'pandoc' and never by extension. The
         -- generic branch above derives its reader from the file's SUFFIX, and this format
@@ -1185,13 +1679,49 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                                       RegistryFieldFun<Field::KIND>));
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_can_read", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, CanReadFun));
+	// SPECIAL_HANDLING, and it is load-bearing rather than a formality. Under DuckDB's
+	// default the executor short-circuits any row with a NULL argument to NULL without
+	// calling the function at all -- so panduck_read_arms, which delegates with a NULL
+	// intent because it is asking for nothing, rendered NULL, concatenated NULL through the
+	// whole arm, and array_to_string dropped it: every single-path read produced no SQL.
+	// This function defines its own NULL behaviour (a NULL VALUE means "nothing requested"
+	// and renders '') and has to be told it may see one.
+	ScalarFunction option_for("panduck_reader_option_for",
+	                          {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                          ReaderOptionForFun);
+	option_for.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	loader.RegisterFunction(option_for);
+	loader.RegisterFunction(ScalarFunction("panduck_render_params",
+	                                       {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)},
+	                                       LogicalType::VARCHAR, RenderParamsFun));
 
 	TableFunction registry("panduck_reader_registry", {}, RegistryScan, RegistryBind, RegistryGlobalState::Init);
 	loader.RegisterFunction(registry);
 
 	auto list_of_varchar = LogicalType::LIST(LogicalType::VARCHAR);
+	// The option row's shape is DECLARED here, so DuckDB casts whatever the caller wrote to
+	// it before RegisterBind sees it.
+	//
+	// WHAT THAT CAST ACTUALLY DOES, measured rather than assumed -- an earlier version of
+	// this comment claimed a missing or misspelled field became "a bind error naming the
+	// field", and that is FALSE. DuckDB casts a struct BY NAME: fields written in any order
+	// land correctly ({arg_type, arg, param, value, intent} registers fine), and a field
+	// that is absent or misspelled is filled with NULL rather than refused. So a misspelled
+	// `parm:` reaches RegisterBind as param = NULL. It is caught there -- every field is
+	// required and NULL is refused -- but the cast is not what catches it, and a comment
+	// that misdescribes a security check is worse than none, because the next person trusts
+	// it instead of testing it.
+	//
+	// The by-name read in RegisterBind is therefore belt-and-braces rather than the thing
+	// standing between a reordered declaration and a mis-assigned `param`; both hold today.
+	auto option_list = LogicalType::LIST(LogicalType::STRUCT({{"intent", LogicalType::VARCHAR},
+	                                                          {"value", LogicalType::VARCHAR},
+	                                                          {"param", LogicalType::VARCHAR},
+	                                                          {"arg", LogicalType::VARCHAR},
+	                                                          {"arg_type", LogicalType::VARCHAR}}));
 	TableFunction reg_doc("panduck_register_doc_reader", {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar},
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
+	reg_doc.named_parameters["options"] = option_list;
 	loader.RegisterFunction(reg_doc);
 
 	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO,
@@ -1210,6 +1740,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	TableFunction reg_tbl("panduck_register_table_reader",
 	                      {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar}, RegisterScan,
 	                      RegisterBind<TABLE_KIND>, RegisterGlobalState::Init);
+	reg_tbl.named_parameters["options"] = option_list;
 	loader.RegisterFunction(reg_tbl);
 }
 

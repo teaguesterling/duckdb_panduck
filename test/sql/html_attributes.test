@@ -1,0 +1,75 @@
+# name: test/sql/html_attributes.test
+# description: reader options end to end -- the option changes what the READER returns
+# group: [sql]
+
+#
+# WHY THIS IS A FILE OF ITS OWN RATHER THAN A SECTION OF multidoc.test. `require-env` is
+# not a section gate: the runner returns out of the whole script when the variable is
+# absent and marks the ENTIRE file skipped, so a mid-file gate would have taken multidoc's
+# other assertions down with it and reported them as passing-by-absence.
+#
+# WHY IT IS GATED AT ALL, named rather than papered over, exactly as pdf_reader.test names
+# its own gap. MEASURED against the published community webbed today: read_html_blocks
+# takes [col0, include_filepath, file_path, filename, maximum_file_size, ignore_errors] --
+# there is NO capture_attributes parameter at all. It arrives in webbed 60318d8, which is
+# unreleased. So this file cannot run anywhere yet, and weakening its assertions into
+# something that passes against today's build would assert nothing. `make check` does not
+# set PANDUCK_TEST_WEBBED_ATTRS; nothing does yet, and that is the coverage gap.
+#
+# THE COMPLEMENT TO THIS FILE IS ALREADY UNGATED. multidoc.test asserts the generated SQL,
+# the registration-time refusals and dispatch's own refusals on every platform. What is
+# gated here is only the claim no string assertion can make: that the sibling reader
+# RECEIVED and HONOURED the parameter. Asserting the string proves panduck built it;
+# asserting the rows proves the reader acted on it. Only the second is the feature.
+#
+# WHY THE FIXTURE'S CLASS SITS ON A <div>, also measured: today's webbed DROPS class on
+# headings (an <h1 class="lead"> comes back {heading_level=1}), on paragraphs, on lists and
+# on blockquotes, and KEEPS it on div and section. A class on a heading cannot discriminate
+# the two cases at all, and a test that cannot distinguish them is worse than no test.
+#
+# THE DEFAULT SIDE IS THE UNVERIFIED HALF, stated rather than assumed. Because today's
+# build has no capture_attributes, nothing measures what its DEFAULT does with a div's
+# class -- today the class is kept unconditionally. So the second assertion is the
+# strict-increase form ("asking for attributes yields more of them"), which is the actual
+# feature claim; if 60318d8 turns out to keep div classes by default this goes red and
+# someone re-measures, which is the correct outcome for a gated test whose premise expired.
+require-env PANDUCK_TEST_WEBBED_ATTRS
+
+require panduck
+
+statement ok
+INSTALL webbed;
+
+statement ok
+LOAD webbed;
+
+# The mapping is registered rather than built in: panduck's builtin .html row predates
+# options, and a registration is how a caller teaches panduck a sibling's spelling.
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.html'],
+     options := [{intent: 'attributes', value: 'all',
+                  param: 'capture_attributes', arg: 'classes', arg_type: 'VARCHAR'}]);
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.html', attributes := 'all')
+WHERE attributes['class'] IS NOT NULL;
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.html', attributes := 'all')
+        WHERE attributes['class'] IS NOT NULL)
+     > (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.html')
+        WHERE attributes['class'] IS NOT NULL);
+----
+true
+
+# AND IT CARRIES ACROSS A PLURAL READ, which is the branch options exist for: one arm per
+# path, each rendering the option independently from its own registry row.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc(['test/fixtures/constructs.html',
+                                           'test/fixtures/containers.html'],
+                                          attributes := 'all')
+WHERE attributes['class'] IS NOT NULL;
+----
+true

@@ -92,6 +92,24 @@ SELECT len(panduck_source_list(['test/fixtures/constructs.odt', 'test/fixtures/*
 ----
 true
 
+# The count check above constrains cardinality, not order -- and order is the property
+# this macro exists to guarantee, since a later task builds a UNION ALL from this list and
+# the generated SQL must be deterministic. This pins the actual sequence: the explicit
+# path comes FIRST, and the glob's own (sorted) expansion follows in place.
+query I
+SELECT panduck_source_list(['test/fixtures/constructs.odt', 'test/fixtures/*.odt'])
+     = ['test/fixtures/constructs.odt'] || panduck_glob('test/fixtures/*.odt');
+----
+true
+
+# A companion that fails if the order were reversed, so the assertion above is not
+# satisfiable by a symmetric bug (e.g. concatenating the two halves in the wrong order).
+query I
+SELECT panduck_source_list(['test/fixtures/constructs.odt', 'test/fixtures/*.odt'])[1]
+     = 'test/fixtures/constructs.odt';
+----
+true
+
 # A non-existent plain path passes through untouched -- panduck does not pre-validate it.
 query I
 SELECT panduck_source_list('no/such/file.odt');

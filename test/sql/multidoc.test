@@ -1,0 +1,35 @@
+# name: test/sql/multidoc.test
+# description: multi-document reads -- glob expansion, plural sources, provenance
+# group: [sql]
+
+require panduck
+
+# panduck_glob is the one primitive this feature needs in C++. DuckDB's own glob is a TABLE
+# function, and dispatch cannot use it: a table function's arguments must be literals, so
+# neither `LATERAL read_odt_blocks(g.file)` nor `query((SELECT ... FROM glob(...)))` binds.
+# A scalar returning a list can be consumed by the scalar expression that builds dispatch's
+# SQL string, which is the whole mechanism.
+query I
+SELECT len(panduck_glob('test/fixtures/*.odt')) > 1;
+----
+true
+
+# Sorted, so a UNION ALL built from it is deterministic across runs and platforms.
+query I
+SELECT panduck_glob('test/fixtures/*.odt') = list_sort(panduck_glob('test/fixtures/*.odt'));
+----
+true
+
+# An exact path that exists resolves to itself.
+query I
+SELECT panduck_glob('test/fixtures/constructs.odt');
+----
+[test/fixtures/constructs.odt]
+
+# NOTHING MATCHED IS AN EMPTY LIST, NOT AN ERROR. The primitive is neutral and the policy
+# lives in dispatch (Task 4), so there is exactly one site to change if the rule is ever
+# revisited, and a future caller wanting "possibly none" has something to build on.
+query I
+SELECT len(panduck_glob('test/fixtures/*.nothing_matches_this'));
+----
+0

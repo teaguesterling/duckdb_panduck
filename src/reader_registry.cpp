@@ -5,11 +5,13 @@
 
 #include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/catalog/default/default_table_functions.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/extension_helper.hpp"
 
+#include <algorithm>
 #include <cctype>
 
 namespace duckdb {
@@ -890,11 +892,56 @@ SELECT * FROM query(
 const char DOC_KIND[] = "doc";
 const char TABLE_KIND[] = "table";
 
+// panduck_glob(pattern) -- expand a filesystem pattern to a sorted list of paths.
+//
+// WHY THIS EXISTS IN C++ AT ALL, since one new primitive in a design that is otherwise
+// macro SQL deserves a reason. DuckDB's `glob` is a TABLE function, and dispatch cannot
+// consume a table function: a table function's arguments must be LITERALS, so
+// `LATERAL read_odt_blocks(g.file)` is refused ("does not support lateral join column
+// parameters") and `query((SELECT ... FROM glob(...)))` is refused ("Table function cannot
+// contain subqueries"). A SCALAR returning a list can be consumed by the scalar expression
+// that builds dispatch's SQL string. That is the entire reason.
+//
+// Sorted, because the UNION ALL built from this must be deterministic across runs and
+// platforms; the file system's enumeration order is not.
+//
+// Empty list rather than an error when nothing matches: the primitive stays neutral and
+// read_panduck_doc owns the policy, so the raise has exactly one site.
+void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	auto &fs = FileSystem::GetFileSystem(context);
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+	auto patterns = UnifiedVectorFormat::GetData<string_t>(input);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			result.SetValue(i, Value(LogicalType::LIST(LogicalType::VARCHAR)));
+			continue;
+		}
+		auto files = fs.GlobFiles(patterns[idx].GetString(), FileGlobOptions::ALLOW_EMPTY);
+		std::vector<std::string> paths;
+		paths.reserve(files.size());
+		for (auto &f : files) {
+			paths.push_back(f.path);
+		}
+		std::sort(paths.begin(), paths.end());
+		vector<Value> out;
+		out.reserve(paths.size());
+		for (auto &p : paths) {
+			out.push_back(Value(p));
+		}
+		result.SetValue(i, Value::LIST(LogicalType::VARCHAR, std::move(out)));
+	}
+}
+
 } // namespace
 
 void RegisterReaderRegistry(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun));
+	loader.RegisterFunction(ScalarFunction("panduck_glob", {LogicalType::VARCHAR},
+	                                       LogicalType::LIST(LogicalType::VARCHAR), PanduckGlobFun));
 	loader.RegisterFunction(ScalarFunction("panduck_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                                       RegistryFieldFun<Field::FORMAT>));
 	loader.RegisterFunction(ScalarFunction("panduck_reader_function_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,

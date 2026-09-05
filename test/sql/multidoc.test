@@ -352,3 +352,75 @@ statement error
 SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', NULL]);
 ----
 a multi-document source contains a NULL path
+
+# ---------------------------------------------------------------------------
+# THE JUNCTION. Every test above verifies panduck against panduck. What actually broke in
+# two sibling extensions this week was the junction: an emitter in one repo producing a
+# shape a consumer in another repo refuses. No repo's own suite can catch that, because
+# each verifies its own behaviour -- webbed had 3940 assertions and shipped it.
+#
+# panduck's own writer is a real consumer that binds the canonical struct STRUCTURALLY, so
+# it is a junction check that needs no second extension installed.
+# ---------------------------------------------------------------------------
+query I
+SELECT length(panduck_blocks_to_pandoc_ast(
+    (SELECT list(b ORDER BY b.element_order)
+     FROM read_panduck_doc('test/fixtures/constructs.odt') b))::VARCHAR) > 0;
+----
+true
+
+# THE EXACT EMITTED TYPE, asserted as a full string. This is the producer-side instrument
+# that webbed and markdown both lacked: it fails HERE, in the producer, if the provenance
+# column ever moves, instead of three repos away at someone else's binder.
+query I
+SELECT typeof(list(b)) FROM read_panduck_doc('test/fixtures/constructs.odt', filename := true) b;
+----
+STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER, filename VARCHAR)[]
+
+# And the seven-field shape is unchanged when provenance is off.
+query I
+SELECT typeof(list(b)) FROM read_panduck_doc('test/fixtures/constructs.odt') b;
+----
+STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[]
+
+# ---------------------------------------------------------------------------
+# THE SECOND CONSUMER. panduck_blocks_to_pandoc_ast above is panduck checking itself against
+# its own writer -- a real binder, but one repo. duck_block_utils is the other side of the
+# junction that actually broke: an independent extension whose table macros consume the
+# canonical struct by field name. Explicit INSTALL/LOAD rather than `require duck_block_utils`,
+# because the unittest binary is built with ENABLE_EXTENSION_AUTOLOADING=0 -- a test that
+# relies on the developer's own ~/.duckdb profile already having it loaded passes locally and
+# fails in CI, which is exactly the defect doc_namespace.test documents and this file must not
+# repeat. See doc_namespace.test for the fuller account of that failure and the two-clock
+# problem (panduck's submodule pin vs. whatever build is actually installed).
+# ---------------------------------------------------------------------------
+statement ok
+INSTALL duck_block_utils;
+
+statement ok
+LOAD duck_block_utils;
+
+# duck_blocks_toc binds against read_panduck_doc's single-document output -- the same
+# canonical seven-field struct panduck_blocks_to_pandoc_ast bound above, now bound by code
+# panduck does not own.
+query I
+SELECT len(duck_blocks_toc(
+    (SELECT list(b ORDER BY b.element_order)
+     FROM read_panduck_doc('test/fixtures/constructs.odt') b))) > 0;
+----
+true
+
+# And it binds across a GLOB read -- multiple documents concatenated into one list, consumed
+# end to end by an independent extension. Six .odt fixtures, twelve headings total across
+# them. NOT run with filename := true: duck_blocks_toc binds the canonical SEVEN-field
+# struct only -- verified directly, the eight-field provenance-bearing struct is a Binder
+# Error against it ("No function matches the given name and argument types"). That is not a
+# bug for this task to fix; it is the documented boundary from the design (multi-document
+# concatenation feeds duck_blocks_toc and friends, which have no notion of multiple
+# documents), and this assertion pins the boundary rather than papering over it.
+query I
+SELECT len(duck_blocks_toc(
+    (SELECT list(b ORDER BY b.element_order)
+     FROM read_panduck_doc('test/fixtures/*.odt') b)));
+----
+12

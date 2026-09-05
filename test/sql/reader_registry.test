@@ -88,10 +88,20 @@ SELECT count(*) FROM (SELECT ext FROM panduck_reader_registry() GROUP BY ext HAV
 ----
 0
 
-# Every registered entry names a reader extension and a kind.
+# Every BUILTIN entry names a reader extension, and EVERY entry names a kind.
+#
+# THE reader_ext HALF IS SCOPED TO BUILTIN, and that is a correction rather than a
+# weakening: an empty reader_ext is a SUPPORTED user registration --
+# panduck_register_doc_reader('', fn, exts) means "no companion extension needed", which
+# read_panduck_doc's generic branch has an explicit hoist for. The registry is process-wide
+# and the unittest binary runs every file in one process, so register_reader.test's
+# empty-reader_ext entry is still present when this file runs; unscoped, this assertion
+# claimed of all entries what is only true of the builtins. The `kind` half stays unscoped
+# because it IS true of every entry, however registered.
 query I
 SELECT count(*) FROM panduck_reader_registry()
-WHERE reader_ext IS NULL OR reader_ext = '' OR kind NOT IN ('doc', 'table');
+WHERE (source = 'builtin' AND (reader_ext IS NULL OR reader_ext = ''))
+   OR kind NOT IN ('doc', 'table');
 ----
 0
 

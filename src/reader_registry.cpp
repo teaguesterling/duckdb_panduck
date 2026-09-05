@@ -1317,8 +1317,26 @@ SELECT * FROM query(
         -- hoist, reader_extension_for(src::VARCHAR) is guaranteed NON-NULL in the ELSE
         -- below (the OR would otherwise have already selected the THEN), so no coalesce is
         -- needed there.
+        --
+        -- AND THE HOIST ABOVE WAS ONLY HALF OF IT -- it fixed the message, not the routing.
+        -- An empty reader_ext also makes the FORMAT empty, and RegistryFieldFun maps empty
+        -- to NULL, so panduck_format_for answers NULL for such an entry. With `=`, the
+        -- comparison below was NULL = NULL -> NULL -> never TRUE, and the whole branch was
+        -- skipped: the read fell through to the CODE fallback and handed back a
+        -- syntax-highlighted parse tree instead of the reader the caller registered, with
+        -- no error to say so. `IS NOT DISTINCT FROM` is why.
+        --
+        -- IT CANNOT OVER-FIRE, and the reason is the conjunct above rather than this one.
+        -- `IS NOT DISTINCT FROM` differs from `=` only when both sides are NULL, i.e. only
+        -- when panduck_format_for(src) IS NULL and format is 'auto'. Reaching here at all
+        -- already requires a registry entry naming a function, and no builtin entry has a
+        -- function with an empty format -- the fourteen rows with a NULL function are the
+        -- fourteen with no function at all, and the first conjunct excludes every one. An
+        -- explicit `format :=` makes panduck_resolved_format non-NULL against a NULL
+        -- panduck_format_for, which is FALSE under both spellings. Measured, not reasoned:
+        -- register_reader.test asserts the routing and the full suite asserts the rest.
         WHEN panduck_reader_function_for(src::VARCHAR) IS NOT NULL
-             AND panduck_resolved_format(src::VARCHAR, format) = panduck_format_for(src::VARCHAR)
+             AND panduck_resolved_format(src::VARCHAR, format) IS NOT DISTINCT FROM panduck_format_for(src::VARCHAR)
             THEN CASE WHEN panduck_reader_extension_for(src::VARCHAR) IS NULL
                       OR panduck_ensure_extension(panduck_reader_extension_for(src::VARCHAR))
                  THEN panduck_read_arms_opt([src::VARCHAR], filename, 'attributes', attributes, reader_params := reader_params)

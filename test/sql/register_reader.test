@@ -122,3 +122,54 @@ SELECT length(panduck_blocks_to_pandoc_ast(
      FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks') b))::VARCHAR) > 0;
 ----
 true
+
+# AN EMPTY reader_ext MEANS "no companion extension needed" -- and until this assertion
+# existed, it also meant "unreachable". panduck_register_doc_reader('', fn, exts) stores an
+# empty reader_ext, RegistryFieldFun maps empty to NULL, so panduck_format_for answers NULL
+# for the suffix. read_panduck_doc's generic WHEN compared
+# panduck_resolved_format(src, 'auto') = panduck_format_for(src), which for this entry is
+# NULL = NULL -> NULL -> never TRUE. Dispatch fell straight through to the CODE fallback:
+# the caller asked for their registered reader and got a syntax-highlighted parse tree, with
+# no error to say so. The comparison is IS NOT DISTINCT FROM for that reason.
+#
+# The bridge file is written again under a second suffix so this entry is independent of the
+# '.parquet_duck_blocks' registration above -- that one names a reader_ext and would pass
+# whether or not the NULL case works.
+statement ok
+CALL panduck_register_doc_reader('', 'read_parquet', ['.noext_duck_blocks']);
+
+# The registry has the entry and names the function, but has no format for it -- this is the
+# state the old comparison could not act on, asserted so the fix is anchored to its cause.
+query II
+SELECT panduck_format_for('x.noext_duck_blocks'), panduck_reader_function_for('x.noext_duck_blocks');
+----
+NULL	read_parquet
+
+statement ok
+COPY (SELECT * FROM read_odt_blocks('test/fixtures/constructs.odt') ORDER BY element_order)
+  TO '__TEST_DIR__/noext.noext_duck_blocks' (FORMAT parquet);
+
+# THE OUTPUT, not the row count. A code-fallback read returns tree-sitter node types, or --
+# in the unittest binary, which is built with ENABLE_EXTENSION_AUTOLOADING=0 -- fails to bind
+# ast_to_blocks at all. The registered reader returns the document's own block vocabulary.
+query II
+SELECT element_order, element_type
+FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks')
+ORDER BY element_order LIMIT 4;
+----
+0	heading
+1	paragraph
+2	text
+3	bold
+
+query I
+SELECT content FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks')
+WHERE element_type = 'heading' ORDER BY element_order LIMIT 1;
+----
+Heading One
+
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks'))
+     = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
+----
+true

@@ -428,3 +428,150 @@ SELECT len(duck_blocks_toc(
      FROM read_panduck_doc('test/fixtures/*.odt') b)));
 ----
 12
+
+# ---------------------------------------------------------------------------
+# READER OPTIONS ARE STRUCTURED DATA, NEVER A STORED SQL FRAGMENT.
+#
+# A registry entry is process-wide and lives as long as the process, so a fragment stored
+# by one caller would be interpolated into the SQL of EVERY later read_panduck_doc --
+# including calls from other sessions sharing that process, which never registered anything
+# and cannot see what was stored. That is an arbitrary-SQL injection point with
+# session-crossing reach, which is why the first design was rejected.
+#
+# So a registration carries typed FIELDS -- intent, value, param, arg, arg_type -- and
+# panduck renders the argument itself. `param` must be a bare identifier and `arg` must
+# actually hold a value of `arg_type`, both checked AT REGISTRATION so a malformed row
+# cannot be stored at all.
+# ---------------------------------------------------------------------------
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.htmltest'],
+     options := [{intent: 'attributes', value: 'all',
+                  param: 'capture_attributes', arg: 'classes', arg_type: 'VARCHAR'}]);
+
+# The intent reaches the sibling's parameter; the caller never types capture_attributes.
+query I
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'all');
+----
+SELECT * FROM read_html_blocks('x.htmltest', capture_attributes := 'classes')
+
+# THE 'default' SENTINEL RENDERS NOTHING, and it does so WITHOUT consulting the registry --
+# which is what keeps an unchanged call byte-identical to the SQL panduck generated before
+# options existed, for every format, including the ones that map no option at all and would
+# otherwise raise. panduck_read_arms is now literally panduck_read_arms_opt with this
+# sentinel, so the string assertions earlier in this file are that property, asserted.
+query I
+SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'default')
+     = panduck_read_arms(['x.htmltest'], false);
+----
+true
+
+# A non-identifier param is REJECTED AT REGISTRATION, so a malformed row cannot be stored.
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.badopt'],
+     options := [{intent: 'a', value: 'b',
+                  param: 'x := 1) UNION SELECT', arg: 'c', arg_type: 'VARCHAR'}]);
+----
+param must be an identifier
+
+# ... and it is ABSENT afterwards. Asserting the error alone would pass on a warning, or on
+# an implementation that raised after writing the row.
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.badopt';
+----
+0
+
+# BOOLEAN AND INTEGER ARE RENDERED BARE -- unquoted -- so an unchecked `arg` under either
+# type is a direct injection: only VARCHAR is quoted, and quoting is what makes it safe.
+# The bare types are therefore constrained to values that cannot be anything but a literal,
+# and that too is checked at registration.
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.badbool'],
+     options := [{intent: 'a', value: 'b',
+                  param: 'flag', arg: 'true) UNION SELECT 1 --', arg_type: 'BOOLEAN'}]);
+----
+is not a BOOLEAN
+
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.badbool';
+----
+0
+
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.badint'],
+     options := [{intent: 'a', value: 'b',
+                  param: 'n', arg: '1; DROP TABLE t', arg_type: 'INTEGER'}]);
+----
+is not a INTEGER
+
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.badtype'],
+     options := [{intent: 'a', value: 'b',
+                  param: 'n', arg: '1', arg_type: 'BLOB'}]);
+----
+unknown arg_type
+
+# The types that ARE accepted render as literals of their own kind: bare for BOOLEAN and
+# INTEGER, quoted-and-escaped for VARCHAR. The quote in the VARCHAR arg is the assertion
+# that panduck escapes rather than concatenates -- the same property the path assertions
+# above make for panduck_quote.
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.optkinds'],
+     options := [{intent: 'b', value: 'on', param: 'flag', arg: 'true', arg_type: 'BOOLEAN'},
+                 {intent: 'i', value: 'two', param: 'n', arg: '2', arg_type: 'INTEGER'},
+                 {intent: 's', value: 'quoted', param: 's', arg: 'o''brien', arg_type: 'VARCHAR'}]);
+
+query III
+SELECT panduck_reader_option_for('x.optkinds', 'b', 'on'),
+       panduck_reader_option_for('x.optkinds', 'i', 'two'),
+       panduck_reader_option_for('x.optkinds', 's', 'quoted');
+----
+flag := true	n := 2	s := 'o''brien'
+
+# A requested intent with no mapping RAISES rather than being dropped. This is the
+# pages-was-a-lie lesson applied in advance: a parameter accepted and ignored reads as a
+# feature at the call site, which is exactly how `pages` survived unimplemented.
+statement error
+SELECT panduck_read_arms_opt(['a.odt'], false, 'attributes', 'all');
+----
+has no mapping for
+
+# ---------------------------------------------------------------------------
+# THE OPTION REACHES DISPATCH, not merely panduck_read_arms_opt's own test. An option the
+# dispatcher cannot be asked for is a feature that exists solely inside its own assertion.
+# `attributes` is read_panduck_doc's named parameter for the intent, defaulting to the
+# 'default' sentinel.
+# ---------------------------------------------------------------------------
+
+# Both the single-path and the plural branch carry it. Asserted through the generated SQL
+# via panduck_read_arms_opt, since the reader that would honour it is not published yet
+# (see the gated section below).
+query I
+SELECT panduck_read_arms_opt(['x.htmltest', 'y.htmltest'], true, 'attributes', 'all');
+----
+SELECT *, 'x.htmltest' AS filename FROM read_html_blocks('x.htmltest', capture_attributes := 'classes') UNION ALL SELECT *, 'y.htmltest' AS filename FROM read_html_blocks('y.htmltest', capture_attributes := 'classes')
+
+# THE DEFAULT IS UNCHANGED SQL, asserted through dispatch itself rather than through the
+# builder: a read that names no option must produce exactly what it produced before options
+# existed. 54 is constructs.odt's block count, the same number the byte-identity assertion
+# above compares against read_odt_blocks directly.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', attributes := 'default');
+----
+54
+
+# A FORMAT THAT MAPS NO OPTION REFUSES BY NAME rather than reading the document and quietly
+# omitting what was asked for. odt has no attributes mapping.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', attributes := 'all');
+----
+has no mapping for
+
+# EVERY SPECIAL-CASED BRANCH REFUSES TOO. pdf, zim, toml/yaml and the text and code
+# fallbacks build their own SQL rather than going through panduck_read_arms_opt, so
+# `attributes` would be ACCEPTED AND SILENTLY IGNORED there -- the exact shape `pages` had
+# for the whole life of this macro. Refusing by name closes the class off for every intent
+# added later, not just this one.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', attributes := 'all');
+----
+attributes is not supported for

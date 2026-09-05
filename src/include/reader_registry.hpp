@@ -46,6 +46,27 @@ static constexpr const char *KIND_TABLE = "table"; //!< rows and columns
 static constexpr const char *SOURCE_BUILTIN = "builtin";
 static constexpr const char *SOURCE_USER = "user";
 
+//! One reader option, held as STRUCTURED DATA rather than as a SQL fragment.
+//!
+//! WHY NOT A FRAGMENT, which is what the first design stored. A registry entry is
+//! process-wide and persists for the life of the process, so a fragment stored by one
+//! caller would be interpolated into the SQL of EVERY later read_panduck_doc -- including
+//! calls made by other sessions sharing that process, which never registered anything and
+//! cannot see what was stored. Registration would be an arbitrary-SQL injection point with
+//! session-crossing reach.
+//!
+//! panduck renders the argument itself instead: `param` is validated as a bare identifier
+//! and `arg` is validated against `arg_type`, both AT REGISTRATION, and rendering re-checks
+//! before emitting. There is no path from registration data to arbitrary SQL, which is a
+//! shorter security argument than any a stored fragment could offer.
+struct ReaderOption {
+	std::string intent;   //!< panduck's vocabulary: "attributes"
+	std::string value;    //!< the intent's value: "all"
+	std::string param;    //!< the READER's parameter name: "capture_attributes"
+	std::string arg;      //!< the value to pass, unrendered
+	std::string arg_type; //!< VARCHAR | BOOLEAN | INTEGER
+};
+
 struct ReaderEntry {
 	std::string ext;        //!< lowercase, dot-prefixed (".rtf")
 	std::string format;     //!< format name; 'data' means "not a document"
@@ -53,10 +74,22 @@ struct ReaderEntry {
 	std::string function;   //!< table function to call, or empty for a builtin branch
 	std::string kind;       //!< KIND_DOC or KIND_TABLE
 	std::string source;     //!< SOURCE_BUILTIN or SOURCE_USER
+	//! panduck's intent vocabulary mapped to THIS reader's spelling; see ReaderOption.
+	//! Deliberately NOT surfaced as a panduck_reader_registry() column: that function's
+	//! shape is asserted by reader_registry.test, and options are dispatch machinery
+	//! rather than the answer to "who reads this extension".
+	std::vector<ReaderOption> options;
 };
 
 //! The extension of a path, lowercased and dot-prefixed ("" when there is none).
 std::string ExtOfPath(const std::string &path);
+
+//! A bare identifier: `^[A-Za-z_][A-Za-z0-9_]*$`. See ReaderOption.
+bool IsIdentifier(const std::string &s);
+
+//! Whether `arg` holds a value of `arg_type`. BOOLEAN and INTEGER render BARE, so this is
+//! the check that keeps them literals rather than SQL. See ReaderOption.
+bool ArgMatchesType(const std::string &arg_type, const std::string &arg);
 
 //! Process-wide registry. A user registration replaces any entry for the same extension,
 //! so there is exactly one reader per extension by construction -- the drift the derived

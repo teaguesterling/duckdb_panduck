@@ -44,7 +44,7 @@ the test now states the invariant directly instead of naming an example.
 
 | Function | Shape |
 |---|---|
-| `read_panduck_doc(src, format := 'auto', pages := '')` | table of `duck_block` rows |
+| `read_panduck_doc(src, format := 'auto', pages := '', filename := false, attributes := 'default', reader_params := MAP {})` | table of `duck_block` rows; `src` is a path, a glob or a `VARCHAR[]` |
 | `read_panduck_table(src)` | table of rows and columns |
 | `panduck_read_blocks(src, …)` | `LIST(duck_block)` |
 | `read_rtf_blocks(path)` … `read_pandoc_blocks(path)` | one format, directly |
@@ -86,8 +86,8 @@ enforces it by feeding every fixture's output to a real pandoc.
 
 | Function | Effect |
 |---|---|
-| `CALL panduck_register_doc_reader(ext, function, [exts])` | route extensions to your own block reader |
-| `CALL panduck_register_table_reader(ext, function, [exts])` | route extensions to your own table reader |
+| `CALL panduck_register_doc_reader(ext, function, [exts], options := …)` | route extensions to your own block reader |
+| `CALL panduck_register_table_reader(ext, function, [exts], options := …)` | route extensions to your own table reader |
 | `panduck_ensure_extension(name)` | load an installed extension; false if absent |
 
 ## Installing

@@ -11,6 +11,7 @@ from a registry that derives itself rather than being maintained by hand.
 LOAD panduck;
 
 SELECT * FROM read_panduck_doc('report.docx');   -- any document -> duck_blocks
+SELECT * FROM read_panduck_doc('docs/*.md', filename := true);  -- a whole corpus
 SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 SELECT * FROM doc_section('report.docx', 'Methods');  -- one section, as duck_blocks
@@ -46,7 +47,7 @@ pushdown) or an HTTP server. panduck does neither.
 
 | Function | Shape | Returns |
 |---|---|---|
-| `read_panduck_doc(src, format := 'auto', pages := '')` | table | `duck_block` rows |
+| `read_panduck_doc(src, format := 'auto', pages := '', filename := false, attributes := 'default', reader_params := MAP {})` | table | `duck_block` rows |
 | `panduck_read_blocks(src, …)` | scalar | `LIST(duck_block)` |
 | `read_panduck_table(src)` | table | rows and columns |
 | `read_rtf_blocks(path)`, `read_org_blocks(path)`, … | table | one format, directly |
@@ -60,6 +61,41 @@ function doing both would have to lie about one of them.
 `read_panduck_doc` is a **table function**, so a filter pushes down to the reader. The
 scalar `LIST` form plants a blocking aggregate that no predicate can pass, which is fine
 for a README and not for a 400-page EPUB. See [Dispatch](docs/dispatch.md).
+
+## Reading a corpus
+
+`src` takes a plain path, a **glob**, or a `VARCHAR[]`. A list may mix formats — each path
+dispatches through the registry independently, so one call reads a DOCX and an ODT into one
+block stream:
+
+```sql
+SELECT * FROM read_panduck_doc('docs/*.md');
+SELECT * FROM read_panduck_doc(['test/fixtures/constructs.docx',
+                                'test/fixtures/constructs.odt']);
+```
+
+`filename := true` adds a trailing `filename` column with the path each block came from.
+It is **off by default for every source form**, because the released `duck_block_utils`
+(**3f2a0f0**, spec 6.3) refuses an eight-field struct at the binder — so panduck's default
+output stays the canonical seven columns and keeps working against the fleet that exists.
+`element_order` is per document; `ORDER BY filename, element_order` is a global order.
+
+```sql
+SELECT filename, count(*) AS headings
+FROM read_panduck_doc('docs/*.md', filename := true)
+WHERE element_type = 'heading'
+GROUP BY 1 ORDER BY 1;
+```
+
+Core's `filename := 'custom_name'` rename form is **deliberately unsupported**: an eighth
+field named anything but `filename` does not bind as a `duck_block`, so honouring it would
+hand back rows no consumer accepts.
+
+A glob matching nothing **raises**, as it does in core. `pages` is real for PDF and raises
+for formats that have none. `attributes := 'all'` asks in panduck's own vocabulary and
+`reader_params := MAP{…}` passes a sibling's parameter through verbatim — and both are
+**refused by name**, never ignored, on the branches that cannot thread them. See
+[The doc_ namespace](docs/doc_namespace.md).
 
 ## The doc_* namespace
 

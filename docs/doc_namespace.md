@@ -90,6 +90,19 @@ are useful; neither hands back `duck_blocks`. Wrapping either would make `doc_se
 only `doc_*` that takes a path and returns text instead of a queryable table. Slicing
 locally also needs no `json` extension, which those functions do.
 
+**One of those two reasons has since expired upstream, and the other has not.** As of
+`duck_block_utils` `f047b3e`/`0eb9e47` — on their `main`, *not* in the published build
+measured above — `output_format` is gone entirely and the functions return blocks:
+`duck_blocks_get_section(blocks, pattern)` and `duck_blocks_get_pages(blocks, first, last)`
+return `LIST(duck_block)`, and `duck_blocks_sections_like(blocks, query)` returns
+`(section, start_order, blocks)`. Their own reasoning matches the note above: one return
+type per macro means every `output_format` branch collapsed to VARCHAR anyway.
+
+So the "returns rendered text" reason no longer applies to their `main`. The `json`
+dependency reason still does, and `doc_section` is unchanged on that basis. Recorded here
+rather than silently left standing, because a justification that has half-expired reads as
+though it were still whole.
+
 `doc_sections_like` is deliberately absent: it is a **search** returning rendered text — a
 different shape and a different job. Use `duck_block_utils`' version directly.
 

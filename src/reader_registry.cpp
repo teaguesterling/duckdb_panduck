@@ -676,10 +676,21 @@ SELECT * FROM query(
     -- silent default, because it sends the next person to read the wrong code.
     CASE WHEN format IS NULL
     THEN error('panduck: cannot use NULL as argument for "format"')
+    -- SINGLE DOCUMENT ONLY. A table of contents over several documents is not a wider
+    -- contents -- element_order restarts per document, so the column stops addressing
+    -- anything and the entries interleave. Measured: '*.html' returned 7 merged rows.
+    -- Tests what the source RESOLVES to rather than its shape, so a one-match glob and a
+    -- one-element list still work; a LIST previously leaked
+    -- `replace(VARCHAR[], ...)` out of panduck_quote, which named nothing useful.
+    WHEN len(panduck_source_list(src)) > 1
+    THEN error('panduck: doc_toc takes a single document; element_order restarts per '
+               'document, so a glob or list interleaves them. Use '
+               'read_panduck_doc(src, filename := true) for multiple documents')
     WHEN panduck_ensure_extension('duck_block_utils')
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' || panduck_quote(src) ||
+         'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' ||
+         panduck_quote(panduck_source_list(src)[1]) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
     ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
     END
@@ -908,14 +919,22 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // surfaced as the "This is a panduck bug" arm instead. Measured.
      "    WHEN format IS NULL"
      "      THEN error('panduck: cannot use NULL as argument for \"format\"')"
+     // Single document only, for the same reason as doc_toc: rendering a glob concatenated
+     // three documents into 344 characters with no separator and no way to tell where one
+     // ended. Resolves rather than shape-tests, so one-match globs and one-element lists
+     // render; a list used to leak replace(VARCHAR[], ...) from panduck_quote.
+     "    WHEN len(panduck_source_list(src)) > 1"
+     "      THEN error('panduck: doc_render takes a single document; a glob or list would ' ||"
+     "                 'concatenate them. Use read_panduck_doc(src, filename := true) and ' ||"
+     "                 'render each document separately')"
      "    WHEN output_format = 'md' AND panduck_ensure_extension('markdown')"
-     "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(src) ||"
+     "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      "    WHEN output_format = 'html' AND panduck_ensure_extension('webbed')"
-     "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(src) ||"
+     "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      "    WHEN output_format = 'text' AND panduck_ensure_extension('duck_block_utils')"
-     "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(src) ||"
+     "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      // output_format IS COALESCED (round-2 error() audit): a caller can write
      // doc_render(src, NULL), which matches none of the WHEN clauses above (each requires

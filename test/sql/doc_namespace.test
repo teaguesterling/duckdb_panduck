@@ -179,3 +179,65 @@ statement error
 SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'ansi');
 ----
 doc_render supports md, html and text
+
+# ---------------------------------------------------------------------------
+# doc_toc AND doc_render TAKE A SINGLE DOCUMENT TOO.
+#
+# doc_section and doc_container were guarded first; these two had the same defect and were
+# left open, which #14 records. Measured before the guard: doc_toc('*.html') returned 7 rows
+# -- a merged table of contents over three documents whose element_order values collide, so
+# the `element_order` column no longer addresses anything -- and doc_render('*.html','md')
+# returned 344 characters of three documents concatenated with no separator.
+#
+# A LIST was refused before this, but by LEAKING AN INTERNAL BINDER ERROR
+# (`replace(VARCHAR[], STRING_LITERAL, STRING_LITERAL)`) from inside panduck_quote, which
+# names none of panduck, the function, or what to do instead. Both spellings now get the
+# same named refusal.
+statement error
+SELECT count(*) FROM doc_toc('test/fixtures/*.html');
+----
+doc_toc takes a single document
+
+statement error
+SELECT count(*) FROM doc_toc(['test/fixtures/pandoc_pstyle.docx', 'test/fixtures/handwritten.tex']);
+----
+doc_toc takes a single document
+
+statement error
+SELECT doc_render('test/fixtures/*.html', 'md');
+----
+doc_render takes a single document
+
+statement error
+SELECT doc_render(['test/fixtures/pandoc_pstyle.docx', 'test/fixtures/handwritten.tex'], 'md');
+----
+doc_render takes a single document
+
+# NEGATIVE CONTROLS. A guard that refused everything would satisfy all four assertions above
+# and break both functions, so the single-document path is pinned by exact value, not by
+# "did not error".
+query III
+SELECT level, title, indent FROM doc_toc('test/fixtures/pandoc_pstyle.docx') ORDER BY element_order;
+----
+1	Heading One	0
+2	Heading Two	1
+
+query I
+SELECT starts_with(doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'md'), '# Heading One');
+----
+true
+
+# ...AND THE SPELLINGS OF ONE DOCUMENT. A glob that matches exactly one file, and a
+# one-element list, are single documents and must work -- the mistake the doc_section guard
+# made on its first attempt, by testing the shape of the source instead of what it resolves
+# to. A one-element list previously hit the leaked binder error here, so this is new
+# capability rather than merely a preserved one.
+query I
+SELECT count(*) FROM doc_toc('test/fixtures/pandoc_pstyle.doc?');
+----
+2
+
+query I
+SELECT count(*) FROM doc_toc(['test/fixtures/pandoc_pstyle.docx']);
+----
+2

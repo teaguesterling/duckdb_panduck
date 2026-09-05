@@ -149,16 +149,38 @@ own document, and making it global would break every existing consumer that uses
 reconstruct one document's order — including `doc_section`, `doc_container` and the pandoc
 writer. Callers wanting a global order have `ORDER BY filename, element_order`.
 
-### 3.4 Provenance: on by default when plural
+### 3.4 Provenance: consistent, and OFF by default
 
-- **Single path** → off by default, `filename := true` to request it.
-- **Glob or list** → **on by default**, `filename := false` to suppress it.
+**`filename` is off by default for every source form** — single path, glob, or list — and
+`filename := true` requests it. Ruled 2026-09-05: *"i want filename off by default, always"*.
 
-The asymmetry is deliberate and is the one place this design departs from the fleet's
-"opt-in" framing. For a single path the column is a constant repeated on every row: pure
-overhead, and the caller already knows the path. For a glob it is the only thing
-distinguishing one document's rows from another's, so a caller who omits it does not get a
-cheaper result, they get a **silently unusable** one. Defaults should not have that shape.
+Two earlier drafts were wrong in opposite directions. The first made it plural-sensitive
+(off for one path, on for many); the second made it on everywhere. Consistency was the right
+half of the second draft and the default was not.
+
+**Why off is right, and it is not merely conservatism.** An 8-field struct is refused by the
+*released* `duck_block_utils`, which is what every user has today:
+
+```
+duck_block_utils 3f2a0f0 (spec 6.3)
+duck_blocks_toc(list(b))   -- b carrying a trailing filename
+Binder Error: No function matches ... STRUCT(kind, ..., element_order INTEGER,
+                                             filename VARCHAR)[]
+```
+
+On-by-default would therefore have made panduck's **default** output something the released
+fleet cannot consume, breaking the `list(b)` idiom in panduck's own published
+community-extensions `hello_world` on the day it shipped — the same failure this repo spent
+2026-09-04 fixing, only foreseeable.
+
+Off-by-default needs **no release gate at all**. panduck's default output stays the canonical
+seven columns, works identically against 6.3 and 6.4, and the feature can ship the day it is
+built. A caller who opts in has, by opting in, taken on the requirement that their consumer
+accepts eight fields.
+
+This also matches `duck_block_utils`' spec, which already states it normatively —
+*"Producers MAY emit the 8th field, and SHOULD do so only behind `filename := true`"* — and
+DuckDB core, where `read_csv`, `read_json` and `read_parquet` all default it off.
 
 The column is always named `filename`, always trailing, and always the full resolved path —
 matching `read_csv`, `read_json` and `read_parquet`, and matching spec 6.4's accepted type.
@@ -229,6 +251,87 @@ panduck_register_doc_reader('webbed', 'read_html_blocks', ['.html'],
 re-registers the row at runtime and nothing rebuilds. Every alternative bakes the sibling's
 spelling into panduck's binary.
 
+#### Worked examples
+
+**A. One file, nothing requested — today's behaviour, unchanged.**
+
+```sql
+SELECT * FROM read_panduck_doc('report.docx');
+```
+```sql
+-- generated
+SELECT * FROM read_docx_blocks('report.docx')
+```
+Seven columns. No provenance, no options, no `UNION ALL`. Every existing query keeps working
+and generates the same SQL it does now.
+
+**B. A glob with provenance.**
+
+```sql
+SELECT * FROM read_panduck_doc('docs/*.odt', filename := true);
+```
+```sql
+-- generated, arms in sorted path order
+SELECT *, 'docs/a.odt' AS filename FROM read_odt_blocks('docs/a.odt')
+UNION ALL
+SELECT *, 'docs/b.odt' AS filename FROM read_odt_blocks('docs/b.odt')
+```
+Eight columns, `filename` trailing by construction. `element_order` restarts per document
+(§3.3), so `ORDER BY filename, element_order` is the global order.
+
+**C. A mixed list — two formats, one call, one block stream.**
+
+```sql
+SELECT * FROM read_panduck_doc(['notes.odt', 'page.html'], filename := true);
+```
+```sql
+-- generated: the registry resolves each path independently
+SELECT *, 'notes.odt' AS filename FROM read_odt_blocks('notes.odt')
+UNION ALL
+SELECT *, 'page.html' AS filename FROM read_html_blocks('page.html')
+```
+Note the second arm calls **webbed's** reader. Nothing in the design special-cases this; it
+falls out of per-path registry resolution.
+
+**D. An intent reaching a sibling's parameter.**
+
+```sql
+SELECT * FROM read_panduck_doc('page.html', attributes := 'all');
+```
+```sql
+-- generated: 'all' looked up in the html row's options mapping
+SELECT * FROM read_html_blocks('page.html', capture_attributes := 'classes')
+```
+panduck's caller never types `capture_attributes`. That spelling lives in the registry row,
+not in the query and not in panduck's binary.
+
+**E. The rename, survived at runtime.** Suppose webbed renames the parameter to
+`attribute_capture` in some future release. Today that breaks panduck until a new binary
+ships. Under this design:
+
+```sql
+SELECT * FROM panduck_register_doc_reader(
+    'webbed', 'read_html_blocks', ['.html', '.htm'],
+    attributes_all := 'attribute_capture := ''classes''');
+```
+```sql
+-- generated from the corrected row, same query as D
+SELECT * FROM read_html_blocks('page.html', attribute_capture := 'classes')
+```
+One statement, no rebuild, no release. **This is the case the design exists for** — three
+defects in this repo in two days were a compile-time claim about a sibling's runtime surface
+that could only be fixed by rebuilding.
+
+**F. An option that does not apply is not silently dropped.**
+
+```sql
+SELECT * FROM read_panduck_doc('notes.odt', attributes := 'all');
+-- Invalid Input Error: panduck: the odt reader has no mapping for attributes := 'all'
+```
+A registry row without a mapping for a requested intent raises rather than ignoring it. This
+is the `pages`-was-a-lie lesson applied in advance: a parameter that is accepted and does
+nothing reads as a feature at the call site.
+
 **Security.** The options fragment is interpolated into generated SQL, and registrations are
 **process-wide and persistent** — one caller's registration is executed inside every later
 `read_panduck_doc`, including other sessions' calls in a shared process. A free-form
@@ -236,6 +339,31 @@ fragment is therefore an injection vector. The fragment is accepted only from
 `panduck_register_doc_reader`, which is already a privileged operation in the sense that it
 changes global dispatch; it is never derived from a path, a document, or a query result.
 Builtin rows carry fragments written in this repo.
+
+### 3.7 Document boundaries: withdrawn
+
+An earlier revision proposed `document_start` / `document_end` attributes marking the first
+and last block of each document, mirroring a `page_start` / `page_end` proposal one level
+down. **Both are withdrawn.** Teague, 2026-09-05, on the page version:
+
+> "i think my page start attribute idea is wrong. you can have it always on and selectively
+> propagate, however!"
+
+The same reasoning retires the document version, and it is the better design. The markers
+are **always on** — `page_break` for pages, and for documents the arm boundary is known to
+dispatch because dispatch built it. What varies is not what is *stored* but what is
+*propagated*: a utility fills the information onto the blocks a caller actually asked about,
+at query time.
+
+That keeps the vocabulary out of it entirely. No `ATTR_` constants, no producer obligation,
+no one-derivation rule and no instrument needed to enforce one, because there is only ever
+one derivation. It also means a boundary is not frozen into rows at read time by a producer
+that cannot know which slice the caller will eventually take.
+
+Nothing in the rest of this design depends on it. `filename` (§3.4) already answers "which
+document is this row from" for any caller who asks for it, and
+`row_number() OVER (PARTITION BY filename ORDER BY element_order)` answers "is this the
+first block of its document" without any new vocabulary at all.
 
 ---
 
@@ -262,8 +390,10 @@ The junction is where this class of feature breaks, so the tests are shaped arou
    fixture cannot silently invalidate it.
 2. **Mixed-format list.** `['constructs.odt','constructs.html']` returns rows from both,
    with two distinct `filename` values.
-3. **Provenance default is plural-sensitive.** A single path has seven columns; a glob has
-   eight. Asserted by `DESCRIBE`, so a column-order regression fails here.
+3. **Provenance is consistent across source forms, and off by default.** A single path, a
+   glob and a list all produce seven columns with no `filename` argument, and eight under
+   `filename := true`. Asserted by `DESCRIBE`, so a column-order regression and a
+   re-introduced plural/singular asymmetry both fail here.
 4. **The emitted type is exact.** `typeof(list(b))` asserted as the full string, ending
    `element_order INTEGER, filename VARCHAR)[]`. This is the producer-side half of the
    junction check — the instrument that both webbed and markdown lacked when they shipped a
@@ -273,13 +403,16 @@ The junction is where this class of feature breaks, so the tests are shaped arou
    pins differ; directly when they do not.
 6. **A glob matching nothing errors, and so do a missing explicit path and a missing list
    element** — all three with a message naming the pattern, matching core (§3.5).
-7. **`filename := false` on a glob** returns seven columns, and the result is byte-identical
-   to today's output for a single path.
+7. **The default output is byte-identical to today's** for every source form — the check
+   that this feature is additive, and that a caller on a released 6.3 `duck_block_utils` is
+   unaffected until they opt in.
 8. **Options reach the reader.** With `attributes := 'all'`, a `class` attribute present in
    an HTML fixture appears in the output; with the default it does not. This asserts the
    passthrough end to end rather than asserting that a string was built.
 9. **A re-registered row overrides the builtin spelling**, proving the runtime-fix property
-   that motivates §3.6.
+   that motivates §3.6 — example E.
+10. **A requested intent with no mapping raises**, rather than being dropped — example F.
+    This is the assertion `pages` never had.
 
 ---
 

@@ -169,3 +169,14 @@ WHERE element_type = 'page_break' ORDER BY element_order;
 ----
 true	1
 true	2
+
+# ---------------------------------------------------------------------------
+# read_panduck_doc's PDF branch honours `filename` too, not just the generic branch.
+# Without this, read_panduck_doc('report.pdf', filename := true) would accept the
+# parameter and silently ignore it -- exactly the `pages`-was-a-lie defect this plan
+# exists to correct, on a column count instead of a page range.
+# ---------------------------------------------------------------------------
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := true));
+----
+8

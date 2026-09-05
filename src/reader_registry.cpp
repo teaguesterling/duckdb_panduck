@@ -719,50 +719,74 @@ ORDER BY e.ord
 const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
                                           "read_panduck_doc",
                                           {"src", nullptr},
-                                          {{"format", "'auto'"}, {"pages", "''"}, {nullptr, nullptr}},
+                                          {{"format", "'auto'"}, {"pages", "''"},
+                                           {"filename", "false"}, {nullptr, nullptr}},
                                           R"SQL(
 SELECT * FROM query(
     CASE
+        -- PLURAL SOURCES. Resolved to a path list, then one arm per path. This branch runs
+        -- only when the source is not a single plain path, so a caller naming one file
+        -- generates exactly the SQL it generates today -- byte-identical, asserted.
+        --
+        -- The raise for an empty match lives HERE rather than in panduck_glob, so the
+        -- primitive stays neutral and the policy has one site. It matches DuckDB core,
+        -- which errors identically for a pattern matching nothing and for a named file
+        -- that is absent -- measured on read_csv, both "No files found that match the
+        -- pattern". A nicer rule was drafted and rejected: panduck is not the place to
+        -- diverge from core's file resolution unilaterally.
+        WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
+            THEN CASE WHEN len(panduck_source_list(src)) = 0
+                 THEN error('panduck: no files matched ' || src::VARCHAR)
+                 ELSE panduck_read_arms(panduck_source_list(src), filename) END
+
         -- `pages` WAS ACCEPTED AND IGNORED BY EVERY FORMAT. It has been declared here
         -- since this macro was written and was never referenced in the body, so
         -- pages := '2' and pages := 'utter nonsense' both returned the whole document.
         -- PDF now honours it; nothing else has pages to honour, and saying so is the
         -- point -- silently ignoring a parameter is how it came to read as a feature.
-        WHEN pages <> '' AND panduck_resolved_format(src, format) <> 'pdf'
+        WHEN pages <> '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
             THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
-                       panduck_resolved_format(src, format) || ' has no pages')
+                       panduck_resolved_format(src::VARCHAR, format) || ' has no pages')
 
-        WHEN panduck_resolved_format(src, format) = 'data'
-            THEN error('panduck: ' || src || ' is a data format, not a document. ' ||
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'data'
+            THEN error('panduck: ' || src::VARCHAR || ' is a data format, not a document. ' ||
                        'Use read_panduck_table instead.')
 
         -- GENERIC: the registry names a table function that emits duck_blocks, so call
         -- it. One path for builtin flat readers (rtf, markdown) and for anything a user
-        -- registered with panduck_register_doc_reader. SELECT * because those readers
-        -- already emit the canonical schema -- no column list, nothing to transpose.
-        WHEN panduck_reader_function_for(src) IS NOT NULL
-             AND panduck_resolved_format(src, format) = panduck_format_for(src)
-            THEN CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(src))
-                 THEN 'SELECT * FROM ' || panduck_reader_function_for(src) ||
-                      '(' || panduck_quote(src) || ')'
-                 ELSE error('panduck: ' || src || ' needs the ' ||
-                            panduck_reader_extension_for(src) || ' extension') END
+        -- registered with panduck_register_doc_reader. panduck_read_arms with a
+        -- single-element list generates exactly the same SQL the hand-built string used
+        -- to, because with_filename := false is a no-op projection -- byte-identical,
+        -- asserted by doc_namespace.test, reader_registry.test and html_reader.test.
+        WHEN panduck_reader_function_for(src::VARCHAR) IS NOT NULL
+             AND panduck_resolved_format(src::VARCHAR, format) = panduck_format_for(src::VARCHAR)
+            THEN CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(src::VARCHAR))
+                 THEN panduck_read_arms([src::VARCHAR], filename)
+                 ELSE error('panduck: ' || src::VARCHAR || ' needs the ' ||
+                            panduck_reader_extension_for(src::VARCHAR) || ' extension') END
 
         -- PANDOC'S OWN AST, reached by format := 'pandoc' and never by extension. The
         -- generic branch above derives its reader from the file's SUFFIX, and this format
         -- deliberately claims none -- so it needs a branch of its own or it is
         -- unreachable through dispatch entirely.
-        WHEN panduck_resolved_format(src, format) = 'pandoc'
-            THEN 'SELECT * FROM read_pandoc_blocks(' || panduck_quote(src) || ')'
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'pandoc'
+            THEN 'SELECT * FROM read_pandoc_blocks(' || panduck_quote(src::VARCHAR) || ')'
 
         -- LIST-producing branches: these unpack BY NAME.
         -- PDF delegates to read_pdf_blocks, which is where `pages` actually means
         -- something. The gate stays here so dispatch keeps its named error; the function
         -- itself cannot carry one, because a guard would have to run before the binder
         -- resolves read_pdf_elements.
-        WHEN panduck_resolved_format(src, format) = 'pdf'
+        --
+        -- filename is projected here too, the same way the generic branch does it --
+        -- otherwise read_panduck_doc('report.pdf', filename := true) would accept the
+        -- parameter and silently ignore it, which is the exact defect `pages` had before
+        -- this plan, on a single row-count instead of a whole page.
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'pdf'
             THEN CASE WHEN panduck_ensure_extension('pdf')
-                 THEN 'SELECT * FROM read_pdf_blocks(' || panduck_quote(src) ||
+                 THEN 'SELECT *' ||
+                      CASE WHEN filename THEN ', ' || panduck_quote(src::VARCHAR) || ' AS filename' ELSE '' END ||
+                      ' FROM read_pdf_blocks(' || panduck_quote(src::VARCHAR) ||
                       ', pages := ' || panduck_quote(pages) || ')'
                  ELSE error('panduck: pdf needs the pdf extension') END
 
@@ -813,17 +837,17 @@ SELECT * FROM query(
         -- duck_block_utils just closed on its own `role` literals. The guard here is
         -- test/sql/reader_registry.test, which asserts these against
         -- duck_block_encoding_names() and the declared role, not against a copy.
-        WHEN panduck_resolved_format(src, format) = 'toml'
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'toml'
             THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
                  'content AS content, 1 AS level, ' ||
                  '''toml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
-                 '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
+                 '0 AS element_order FROM read_text(' || panduck_quote(src::VARCHAR) || ')'
 
-        WHEN panduck_resolved_format(src, format) = 'yaml'
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'yaml'
             THEN 'SELECT ''block'' AS kind, ''metadata'' AS element_type, ' ||
                  'content AS content, 1 AS level, ' ||
                  '''yaml'' AS encoding, MAP {''role'': ''document''} AS attributes, ' ||
-                 '0 AS element_order FROM read_text(' || panduck_quote(src) || ')'
+                 '0 AS element_order FROM read_text(' || panduck_quote(src::VARCHAR) || ')'
 
         -- ONE ZIM ARTICLE IS A DOCUMENT. zim://<archive>.zim/<path> resolves through the
         -- zim extension to the article's HTML, which then reads exactly like any other
@@ -832,12 +856,12 @@ SELECT * FROM query(
         -- The archive ends at `.zim`, which is what separates it from the article path: an
         -- archive may itself live under directories, so splitting on the first slash would
         -- take `wiki.zim` out of `zim://books/wiki.zim/A/Page` and leave `books`.
-        WHEN panduck_resolved_format(src, format) = 'zim_article'
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'zim_article'
             THEN CASE WHEN panduck_ensure_extension('zim') AND panduck_ensure_extension('webbed')
                  THEN 'SELECT ' || panduck_block_cols() ||
                       ' FROM (SELECT unnest(html_to_duck_blocks(zim_get_content(' ||
-                      panduck_quote(substr(src, 7, position('.zim' IN src) - 3)) || ', ' ||
-                      panduck_quote(substr(src, position('.zim' IN src) + 5)) ||
+                      panduck_quote(substr(src::VARCHAR, 7, position('.zim' IN src::VARCHAR) - 3)) || ', ' ||
+                      panduck_quote(substr(src::VARCHAR, position('.zim' IN src::VARCHAR) + 5)) ||
                       ')::VARCHAR)) AS b)'
                  ELSE error('panduck: zim:// needs the zim and webbed extensions') END
 
@@ -849,8 +873,8 @@ SELECT * FROM query(
         -- resolves a single article -- which IS a document, and reaches panduck as HTML.
         --
         -- An error naming the alternative beats both silence and a plausible wrong answer.
-        WHEN panduck_resolved_format(src, format) = 'zim'
-            THEN error('panduck: ' || src || ' is a ZIM archive -- a corpus of many ' ||
+        WHEN panduck_resolved_format(src::VARCHAR, format) = 'zim'
+            THEN error('panduck: ' || src::VARCHAR || ' is a ZIM archive -- a corpus of many ' ||
                        'articles, not one document. Use the zim extension to index or ' ||
                        'search it, and read a single article once resolved.')
 
@@ -886,16 +910,16 @@ SELECT * FROM query(
         -- silently wrong rather than loudly missing. That is precisely how doc_search
         -- silently degraded md/html/blocks/pandoc to text in duck_block_utils, and it is
         -- how .yaml behaved here until this branch existed.
-        WHEN (panduck_format_for(src) IS NULL AND nullif(format, 'auto') IS NULL)
-             OR panduck_resolved_format(src, format) = 'code'
+        WHEN (panduck_format_for(src::VARCHAR) IS NULL AND nullif(format, 'auto') IS NULL)
+             OR panduck_resolved_format(src::VARCHAR, format) = 'code'
             THEN CASE WHEN panduck_ensure_extension('sitting_duck')
              THEN 'SELECT ' || panduck_block_cols() ||
-                  ' FROM (SELECT block AS b FROM ast_to_blocks(' || panduck_quote(src) || '))'
-             ELSE error('panduck: no reader for ' || src ||
+                  ' FROM (SELECT block AS b FROM ast_to_blocks(' || panduck_quote(src::VARCHAR) || '))'
+             ELSE error('panduck: no reader for ' || src::VARCHAR ||
                         ' and sitting_duck (the fallback) is not installed') END
 
-        ELSE error('panduck: ' || src || ' resolves to format ''' ||
-                   panduck_resolved_format(src, format) ||
+        ELSE error('panduck: ' || src::VARCHAR || ' resolves to format ''' ||
+                   panduck_resolved_format(src::VARCHAR, format) ||
                    ''' but read_panduck_doc has no branch for it -- the registry claims ' ||
                    'the format and dispatch does not handle it. This is a panduck bug.')
     END

@@ -153,3 +153,88 @@ query I
 SELECT contains(panduck_read_arms(['o''brien.odt'], true), 'o''''brien.odt');
 ----
 true
+
+# ---------------------------------------------------------------------------
+# A glob returns exactly the sum of the individual reads. Written as a computed equality
+# rather than a literal so that adding an .odt fixture cannot silently invalidate it.
+#
+# Not written as a correlated subquery over unnest(panduck_glob(...)) -- DuckDB v1.5.5
+# refuses that outright ("Table function ... does not support lateral join column
+# parameters"), and that restriction is unconditional: it reproduces on read_csv and on
+# read_odt_blocks called directly, with no panduck code in the path at all. So the per-path
+# counts are summed by building one query() arm per path instead, the same technique
+# panduck_read_arms itself uses, keeping every path a compile-time literal.
+# ---------------------------------------------------------------------------
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt'))
+     = (SELECT sum(n) FROM query(
+         array_to_string(list_transform(panduck_glob('test/fixtures/*.odt'),
+             lambda p: 'SELECT count(*) AS n FROM read_panduck_doc(' || panduck_quote(p) || ')'),
+             ' UNION ALL ')));
+----
+true
+
+# Mixed formats in one call, each path dispatched through the registry independently.
+#
+# webbed is loaded explicitly here, the same way html_reader.test does it. panduck_read_arms
+# builds a plain "SELECT ... FROM reader(path)" per arm with no panduck_ensure_extension
+# gate of its own -- that gate lives in the single-path branch, which this call never takes
+# -- so a community reader used through a plural source needs to already be loaded, same as
+# calling read_html_blocks directly would.
+statement ok
+INSTALL webbed;
+
+statement ok
+LOAD webbed;
+
+query I
+SELECT count(DISTINCT filename)
+FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/constructs.html'],
+                      filename := true);
+----
+2
+
+# PROVENANCE IS OFF BY DEFAULT FOR EVERY SOURCE FORM. A default that changed shape with
+# the form of the argument would mean read_panduck_doc(x) returns seven or eight columns
+# depending on whether x contains a '*' -- a rule every caller must know and none can see
+# at the call site. It is also what keeps the default output consumable by a RELEASED
+# duck_block_utils, which refuses an 8-field struct.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/*.odt'));
+----
+7
+
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/constructs.odt'));
+----
+7
+
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/*.odt', filename := true));
+----
+8
+
+# element_order is PER DOCUMENT. Making it global would break every consumer that uses it
+# to reconstruct one document's order -- doc_section, doc_container, the pandoc writer.
+query I
+SELECT bool_and(has_zero) FROM (
+  SELECT bool_or(element_order = 0) AS has_zero
+  FROM read_panduck_doc('test/fixtures/*.odt', filename := true)
+  GROUP BY filename);
+----
+true
+
+# A glob matching nothing RAISES, matching DuckDB core, which errors identically for a
+# pattern that matches nothing and for a named file that is absent.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.nothing_matches_this');
+----
+no files matched
+
+# The default output is byte-identical to today's for a single path -- the check that this
+# feature is additive and that a caller on a released duck_block_utils is unaffected.
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt'))
+     = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
+----
+true

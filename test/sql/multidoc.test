@@ -412,12 +412,16 @@ true
 
 # And it binds across a GLOB read -- multiple documents concatenated into one list, consumed
 # end to end by an independent extension. Six .odt fixtures, twelve headings total across
-# them. NOT run with filename := true: duck_blocks_toc binds the canonical SEVEN-field
-# struct only -- verified directly, the eight-field provenance-bearing struct is a Binder
-# Error against it ("No function matches the given name and argument types"). That is not a
-# bug for this task to fix; it is the documented boundary from the design (multi-document
-# concatenation feeds duck_blocks_toc and friends, which have no notion of multiple
-# documents), and this assertion pins the boundary rather than papering over it.
+# them. NOT run with filename := true: measured against duck_block_utils 3f2a0f0
+# (duck_block_spec_version 6.3), the build published today, duck_blocks_toc binds the
+# canonical SEVEN-field struct only, and the eight-field filename-bearing struct is a
+# Binder Error against it ("No function matches the given name and argument types"). This
+# is a property of THAT build, not of duck_block_utils generally: 6.4 adds registered
+# implicit casts for the 8-field struct (the exact struct to duck_block, and the LIST
+# form), so this assertion's justification expires when 6.4 publishes and should be
+# re-measured then rather than assumed. That is not a bug for this task to fix -- the
+# design doc separately notes this shape is why filename defaults to off, which is a
+# different and still-true claim from what duck_blocks_toc's binder currently accepts.
 query I
 SELECT len(duck_blocks_toc(
     (SELECT list(b ORDER BY b.element_order)

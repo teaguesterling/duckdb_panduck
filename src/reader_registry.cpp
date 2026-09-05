@@ -408,10 +408,15 @@ void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 		// returns a reference INTO the Value it is given; GetValue(i) returns that Value
 		// by temporary, and a temporary bound to a function PARAMETER (rather than
 		// directly to the range-for's own reference) is destroyed at the end of the full
-		// expression -- before the loop body ever runs. Inlined, this compiled and ran,
-		// and sometimes even produced the right answer, because the freed memory had not
-		// yet been overwritten; the empty-map and single-entry cases measured clean and a
-		// two-entry map corrupted the heap. Keeping the Value alive in `map_val` for the
+		// expression -- before the loop body ever runs. Inlined, this still compiled and
+		// ran, and MEASURED (10 runs each): the empty map was clean every time, because a
+		// zero-entry range never dereferences the dangling reference at all; a ONE-entry
+		// map crashed every time (INTERNAL Error: Invalid PhysicalType for GetTypeIdSize);
+		// a three-entry map failed every time too, but inconsistently between that same
+		// internal error and a raw segfault depending on what the freed memory had been
+		// overwritten with. So this was never a two-or-more-entries bug -- any non-empty
+		// map was already broken, reliably, and the smallest committed test (one entry)
+		// would have caught it on its own. Keeping the Value alive in `map_val` for the
 		// loop's duration is what the reference actually needs.
 		Value map_val = args.data[0].GetValue(i);
 		for (auto &entry : MapValue::GetChildren(map_val)) {

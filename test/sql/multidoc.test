@@ -809,6 +809,28 @@ SELECT panduck_render_params(MAP{'ignore_errors': 'true'});
 ----
 , ignore_errors := 'true'
 
+# A PERMANENT MULTI-ENTRY ASSERTION, closing a hole a single-entry-only test suite left
+# open. The first implementation of panduck_render_params ranged a for-loop over
+# MapValue::GetChildren(args.data[0].GetValue(i)) -- a reference into a temporary Value
+# destroyed at the end of the full expression (bound to GetChildren's PARAMETER, not
+# directly to the range-for's own reference), which is undefined behaviour the instant the
+# loop body dereferences it. MEASURED, ten runs each, on the broken version: the EMPTY map
+# was clean every time (a zero-entry range never dereferences the dangling reference at
+# all), but a ONE-entry map crashed every time -- not "sometimes" -- with
+# "INTERNAL Error: Invalid PhysicalType for GetTypeIdSize", and a three-entry map failed
+# every time too, inconsistently between that same internal error and a raw segfault
+# depending on what the freed memory had been overwritten with by the time it was read.
+# So the single-entry case above was never a partial guard; every non-empty map was already
+# broken, and the smallest committed test would have caught it. This entry exists so the
+# combination the original defect actually needed -- more than one key, which orders the
+# render, escapes each value, and exercises the loop body more than once -- has a permanent
+# assertion of its own rather than living only in a session transcript. DuckDB MAP
+# preserves insertion order and renders repeatably, so this string is stable, not flaky.
+query I
+SELECT panduck_render_params(MAP{'a':'1','b':'2','c':'3'});
+----
+, a := '1', b := '2', c := '3'
+
 query I
 SELECT panduck_render_params(MAP{});
 ----
@@ -861,8 +883,27 @@ true
 # rendering, which concatenates through the whole reader call and silently produces NULL
 # SQL text for query() -- accepted, then destroyed before dispatch could see it, the same
 # shape `attributes` and `filename` were already found in.
+#
+# constructs.odt REACHES THE GENERIC BRANCH, so this pins the observable behaviour of
+# read_panduck_doc but does NOT uniquely exercise the READ_DOC_MACRO-level guard: odt's
+# path also passes reader_params through to panduck_read_arms_opt, whose OWN NULL guard
+# (below) raises the identical message. Disabling the top-level guard alone and rerunning
+# this exact assertion still passes, because the second guard catches it one layer later --
+# measured while building the controls for this task. Kept as an end-to-end sanity check,
+# not as the assertion that isolates either guard.
 statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', reader_params := NULL);
+----
+cannot use NULL as argument for "reader_params"
+
+# THE ASSERTION THAT DOES ISOLATE THE READ_DOC_MACRO-LEVEL GUARD. pdf's `function` field is
+# empty, so it never reaches the generic branch or panduck_read_arms_opt at all -- the ONLY
+# guard standing between reader_params := NULL and dispatch here is the top-level WHEN.
+# Verified as a control: with that WHEN commented out, this exact assertion fails (the
+# error becomes "reader_params is not supported for pdf", from the IS DISTINCT FROM MAP {}
+# guard catching it a branch later instead) rather than silently passing.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', reader_params := NULL);
 ----
 cannot use NULL as argument for "reader_params"
 
@@ -900,3 +941,22 @@ query I
 SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', reader_params := MAP{});
 ----
 54
+
+# A MULTI-ENTRY reader_params THROUGH DISPATCH, END TO END, not only through
+# panduck_render_params or panduck_read_arms_opt in isolation. The crash this task found
+# was in the render path, but a caller's MAP arrives through read_panduck_doc, so this pins
+# the whole path: dispatch resolves the generic branch, threads reader_params to
+# panduck_read_arms_opt, which threads it to panduck_render_params, which renders two real
+# entries into a call against webbed's actual read_html_blocks -- ignore_errors (BOOLEAN)
+# and maximum_file_size (BIGINT), both real named parameters, passed as VARCHAR literals
+# the way the escape hatch is meant to be used, and both cast implicitly the same way core
+# accepts them. Same row count as a plain read: the parameters are accepted and change
+# nothing observable about sections.html, which is the point -- the crash this guards
+# against was a memory fault, not a wrong answer, so the count alone would not have caught
+# it without the earlier renderer-level assertions; this is the coverage that the fault is
+# unreachable via the path a real caller actually uses.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/sections.html',
+    reader_params := MAP{'ignore_errors': 'true', 'maximum_file_size': '999999999'});
+----
+9

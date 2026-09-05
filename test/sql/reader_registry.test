@@ -396,6 +396,17 @@ WITH r AS (
     FROM read_latex_blocks_string(
       '\begin{itemize}\item outer\begin{enumerate}\item inner\par loose\end{enumerate}' ||
       '\item \begin{quote}quoted\end{quote}\item last\end{itemize}')
+  -- ...AND THE OTHER FIVE READERS THE has_level DELETION TOUCHED. This invariant covered
+  -- docx, odt, rtf, epub and latex; ipynb, mediawiki, org, rst and textile had their
+  -- NULL-level branch removed with nothing here pinning that they never emit one. The
+  -- deletion was proved a no-op by a corpus diff, but a corpus diff is a one-time
+  -- measurement and this is the standing guard -- so the five readers it protected and the
+  -- five it did not are now the same set.
+  UNION ALL SELECT 'k_ipynb', element_order, level FROM read_ipynb_blocks('test/fixtures/notebook.ipynb')
+  UNION ALL SELECT 'l_mediawiki', element_order, level FROM read_mediawiki_blocks('test/fixtures/handwritten.wiki')
+  UNION ALL SELECT 'm_org', element_order, level FROM read_org_blocks('test/fixtures/handwritten.org')
+  UNION ALL SELECT 'n_rst', element_order, level FROM read_rst_blocks('test/fixtures/handwritten.rst')
+  UNION ALL SELECT 'o_textile', element_order, level FROM read_textile_blocks('test/fixtures/handwritten.textile')
 ), d AS (
   SELECT src, level, level - lag(level) OVER (PARTITION BY src ORDER BY element_order) AS delta FROM r
 )
@@ -415,6 +426,11 @@ g_latex	0	0	0
 h_latex_pandoc	0	0	0
 i_latex_nested	0	0	0
 j_latex_lists	0	0	0
+k_ipynb	0	0	0
+l_mediawiki	0	0	0
+m_org	0	0	0
+n_rst	0	0	0
+o_textile	0	0	0
 
 # ---------------------------------------------------------------------------
 # EVERY HEADING CARRIES attributes['heading_level']. Under spec 3.0 a heading without it

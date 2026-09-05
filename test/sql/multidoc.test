@@ -1008,3 +1008,30 @@ query I
 SELECT count(*) > 0 FROM doc_container('test/fixtures/containers.html', 'intro');
 ----
 true
+
+# A SOURCE THAT RESOLVES TO ONE DOCUMENT IS NOT PLURAL, however it is spelled.
+#
+# The first guard tested the SHAPE of the source -- "is it a list, does it contain a glob
+# metacharacter" -- and that refused two things it should not have: a glob that matches
+# exactly one file, and a single-element list. Neither can interleave, because interleaving
+# needs two documents. It also refused a REAL FILE whose NAME contains `[` or `?`, which is
+# an ordinary shape for a downloaded file; measured on a copy named `sections[1].html`,
+# which read fine before the guard and errored after it.
+#
+# So the test is now what the guard is actually for: does this source resolve to more than
+# one document. panduck_source_list is the same expansion read_panduck_doc performs, so the
+# two now agree on OUTCOMES and not merely on a predicate.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/sections.htm?', 'Alpha');
+----
+4
+
+query I
+SELECT count(*) FROM doc_section(['test/fixtures/sections.html'], 'Alpha');
+----
+4
+
+query I
+SELECT count(*) FROM doc_container(['test/fixtures/containers.html'], 'intro') ;
+----
+2

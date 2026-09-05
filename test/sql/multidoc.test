@@ -120,3 +120,36 @@ query I
 SELECT panduck_source_list('no/such/file.odt');
 ----
 [no/such/file.odt]
+
+# ---------------------------------------------------------------------------
+# The generated SQL is asserted as a STRING before anything runs it. A test that only
+# checked row counts would pass on SQL that happened to work while emitting the provenance
+# column in the wrong POSITION -- which is exactly the defect that shipped in two sibling
+# extensions (webbed a865d37, markdown 340c0cd both emitted filename FIRST, which spec 6.4
+# refuses). Asserting the string catches it in the producer.
+# ---------------------------------------------------------------------------
+query I
+SELECT panduck_read_arms(['a.odt'], false);
+----
+SELECT * FROM read_odt_blocks('a.odt')
+
+# filename LAST, after the canonical seven, because SELECT * emits them first. Trailing is
+# not cosmetic: spec 6.4 keys 8-field acceptance on the exact type with filename last, and
+# every consumer reads the struct BY INDEX, so a leading column puts the path where kind is
+# expected.
+query I
+SELECT panduck_read_arms(['a.odt'], true);
+----
+SELECT *, 'a.odt' AS filename FROM read_odt_blocks('a.odt')
+
+query I
+SELECT panduck_read_arms(['a.odt', 'b.html'], true);
+----
+SELECT *, 'a.odt' AS filename FROM read_odt_blocks('a.odt') UNION ALL SELECT *, 'b.html' AS filename FROM read_html_blocks('b.html')
+
+# A path with a quote in it survives, because every interpolated value goes through
+# panduck_quote. This is the assertion that the string builder is not concatenating.
+query I
+SELECT contains(panduck_read_arms(['o''brien.odt'], true), 'o''''brien.odt');
+----
+true

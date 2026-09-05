@@ -427,6 +427,28 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "     WHEN panduck_is_glob(src::VARCHAR) THEN panduck_glob(src::VARCHAR) "
      "     ELSE [src::VARCHAR] END"},
 
+    // Build the UNION ALL that dispatch runs. One arm per path, joined in list order.
+    //
+    // PROVENANCE IS PROJECTED, NOT REQUESTED. `SELECT *, '<path>' AS filename` puts the
+    // column AFTER the canonical seven by construction, because SELECT * emits those first.
+    // That matters more than it looks: duck_block spec 6.4 keys 8-field acceptance on the
+    // exact type with filename LAST, every consumer reads the struct by index, and BOTH
+    // shipped sibling producers got this wrong by emitting the column first (webbed
+    // a865d37, markdown 340c0cd) -- refused at the binder rather than misread, but refused.
+    // A projection cannot make that mistake.
+    //
+    // It also means panduck needs nothing from a sibling to have provenance: the path is
+    // already in hand at dispatch time.
+    {DEFAULT_SCHEMA,
+     "panduck_read_arms",
+     {"paths", "with_filename", nullptr},
+     {{nullptr, nullptr}},
+     "array_to_string(list_transform(paths, lambda p: "
+     "  'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
+     "                     ELSE '' END || "
+     "  ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || ')'), "
+     "  ' UNION ALL ')"},
+
     // The unpack column list, defined once. Only LIST-producing branches use it; flat
     // branches pass SELECT * through, which has no positional list to transpose.
     {DEFAULT_SCHEMA,

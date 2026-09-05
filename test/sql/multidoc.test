@@ -176,17 +176,11 @@ true
 
 # Mixed formats in one call, each path dispatched through the registry independently.
 #
-# webbed is loaded explicitly here, the same way html_reader.test does it. panduck_read_arms
-# builds a plain "SELECT ... FROM reader(path)" per arm with no panduck_ensure_extension
-# gate of its own -- that gate lives in the single-path branch, which this call never takes
-# -- so a community reader used through a plural source needs to already be loaded, same as
-# calling read_html_blocks directly would.
-statement ok
-INSTALL webbed;
-
-statement ok
-LOAD webbed;
-
+# NOT preceded by INSTALL/LOAD webbed. panduck_read_arms wraps each arm in the same
+# panduck_ensure_extension gate the single-path branch uses -- and that gate does not
+# merely produce a nicer error, it IS TryAutoLoadExtension (reader_registry.cpp), so the
+# .html arm autoloads webbed on its own. An explicit LOAD here would hide a regression in
+# the gate rather than prove it works.
 query I
 SELECT count(DISTINCT filename)
 FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/constructs.html'],
@@ -238,3 +232,40 @@ SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt'))
      = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
 ----
 true
+
+# ---------------------------------------------------------------------------
+# ROUND-1 REVIEW FIXES. Four regressions found in review, each covered here and each also
+# verified in isolation (its own scratch file, run alone) because sqllogictest aborts at
+# the first failing assertion in a file -- a whole-file pass proves only that something
+# before the last assertion did not fail, not that any one assertion is doing its job.
+# ---------------------------------------------------------------------------
+
+# CRITICAL 1 (autoload gate) is covered by the mixed-format assertion above, which now
+# runs with no preceding INSTALL/LOAD webbed.
+
+# CRITICAL 2: a format with no registry function (pdf, toml, yaml, zim, and every
+# KIND_TABLE format) inside a plural call is REFUSED LOUDLY, not silently dropped.
+# Before this fix: read_panduck_doc(['constructs.odt', 'two_pages.pdf']) returned 54 rows
+# -- exactly constructs.odt alone -- because array_to_string skips the NULL arm a reader
+# with no registry function produces.
+statement error
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/two_pages.pdf']);
+----
+cannot be read in a multi-document call yet
+
+# IMPORTANT 1: `pages` is no longer silently ignored on a glob. The plural branch now runs
+# after this guard, so a glob is checked exactly like a plain path is.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt', pages := 'nonsense');
+----
+pages applies only to paginated formats
+
+# IMPORTANT 2: a glob NESTED inside a list that matches nothing raises, naming that
+# element specifically -- not silently dropped by flatten(). Before this fix:
+# read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/*.nomatch']) returned
+# rows for constructs.odt alone, with no error, because the length check ran only on the
+# flattened (and therefore already-collapsed) list.
+statement error
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/*.nomatch']);
+----
+no files matched

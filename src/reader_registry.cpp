@@ -404,6 +404,29 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{nullptr, nullptr}},
      "'''' || replace(coalesce(s, ''), '''', '''''') || ''''"},
 
+    // Is this source string a PATTERN or a PATH? Only these three characters make a glob in
+    // DuckDB's matcher. A plain path deliberately does NOT go through the filesystem: a
+    // caller naming one file must keep today's behaviour, including the reader's own error
+    // if it is missing, rather than getting a glob-shaped error from panduck.
+    {DEFAULT_SCHEMA,
+     "panduck_is_glob",
+     {"s", nullptr},
+     {{nullptr, nullptr}},
+     "contains(s, '*') OR contains(s, '?') OR contains(s, '[')"},
+
+    // Every source form becomes one VARCHAR[] here, so nothing downstream has to branch on
+    // which form the caller used. flatten() preserves argument order for a list, which is
+    // what makes read_panduck_doc(['a','b']) deterministic independent of the filesystem.
+    {DEFAULT_SCHEMA,
+     "panduck_source_list",
+     {"src", nullptr},
+     {{nullptr, nullptr}},
+     "CASE WHEN typeof(src) LIKE '%[]' "
+     "     THEN flatten(list_transform(src::VARCHAR[], "
+     "                  lambda p: CASE WHEN panduck_is_glob(p) THEN panduck_glob(p) ELSE [p] END)) "
+     "     WHEN panduck_is_glob(src::VARCHAR) THEN panduck_glob(src::VARCHAR) "
+     "     ELSE [src::VARCHAR] END"},
+
     // The unpack column list, defined once. Only LIST-producing branches use it; flat
     // branches pass SELECT * through, which has no positional list to transpose.
     {DEFAULT_SCHEMA,

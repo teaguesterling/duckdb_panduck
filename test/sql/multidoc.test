@@ -63,3 +63,37 @@ query I
 SELECT panduck_glob(NULL) IS NULL AND len(panduck_glob('test/fixtures/*.no_such')) = 0;
 ----
 true
+
+# ---------------------------------------------------------------------------
+# One normalisation for every source form, so nothing downstream branches on which form
+# the caller used. A plain path is NOT sent through the filesystem: a caller naming one
+# file should get the same behaviour they get today, including the reader's own error if
+# it does not exist, rather than a glob-shaped error from panduck.
+# ---------------------------------------------------------------------------
+query I
+SELECT panduck_source_list('test/fixtures/constructs.odt');
+----
+[test/fixtures/constructs.odt]
+
+query I
+SELECT len(panduck_source_list('test/fixtures/*.odt')) > 1;
+----
+true
+
+query I
+SELECT panduck_source_list(['a.odt', 'b.docx']);
+----
+[a.odt, b.docx]
+
+# A list element may itself glob, and order follows the argument, not the filesystem.
+query I
+SELECT len(panduck_source_list(['test/fixtures/constructs.odt', 'test/fixtures/*.odt']))
+     = 1 + len(panduck_glob('test/fixtures/*.odt'));
+----
+true
+
+# A non-existent plain path passes through untouched -- panduck does not pre-validate it.
+query I
+SELECT panduck_source_list('no/such/file.odt');
+----
+[no/such/file.odt]

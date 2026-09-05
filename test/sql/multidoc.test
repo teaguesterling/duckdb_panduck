@@ -253,12 +253,18 @@ SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fix
 ----
 cannot be read in a multi-document call yet
 
-# IMPORTANT 1: `pages` is no longer silently ignored on a glob. The plural branch now runs
-# after this guard, so a glob is checked exactly like a plain path is.
+# IMPORTANT 1: `pages` is no longer silently ignored on a glob.
+#
+# ROUND 2: this now raises via the pages-on-a-plural-source guard added ahead of the
+# single-format pages guard (round 2 review), which subsumes the glob case entirely --
+# a glob no longer needs to reach format resolution at all before being refused. The
+# assertion below was originally written against the older single-format guard's message
+# ("pages applies only to paginated formats"); it still exists and still fires for a
+# non-plural, non-pdf source, but a glob is now caught one guard earlier.
 statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt', pages := 'nonsense');
 ----
-pages applies only to paginated formats
+pages applies to a single document
 
 # IMPORTANT 2: a glob NESTED inside a list that matches nothing raises, naming that
 # element specifically -- not silently dropped by flatten(). Before this fix:
@@ -269,3 +275,30 @@ statement error
 SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/*.nomatch']);
 ----
 no files matched
+
+# ---------------------------------------------------------------------------
+# ROUND-2 REVIEW FIX. `error(NULL) IS NULL` is true in DuckDB -- error() does not throw
+# on a NULL argument, it silently returns NULL. Round 1's own fix for the finding above
+# built its named error as 'panduck: ' || p || ' needs the ' ||
+# panduck_reader_extension_for(p) || ' extension', and panduck_reader_extension_for(p) is
+# NULL for a reader registered with an empty reader_ext (panduck_register_doc_reader('',
+# fn, exts) -- "no companion extension needed"). That reintroduced the exact silent loss
+# this file already tests above, through a different route: the arm went NULL, and
+# array_to_string skipped it. constructs_dup.no_ext_needed is a byte-identical copy of
+# constructs.odt under a name nothing else claims, registered here as a second path to
+# the same reader with no extension requirement.
+# ---------------------------------------------------------------------------
+statement ok
+SELECT * FROM panduck_register_doc_reader('', 'read_odt_blocks', ['no_ext_needed']);
+
+query I
+SELECT panduck_reader_extension_for('x.no_ext_needed') IS NULL;
+----
+true
+
+# Both documents read successfully -- NULL reader_extension_for means "nothing to ensure",
+# not "refuse this path". 54 (one ODT) would mean the second arm went missing again.
+query I
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/constructs_dup.no_ext_needed']);
+----
+108

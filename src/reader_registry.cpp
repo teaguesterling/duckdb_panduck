@@ -459,34 +459,58 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // It also means panduck needs nothing from a sibling to have provenance: the path is
     // already in hand at dispatch time.
     //
-    // TWO DEFECTS FIXED HERE, both found in review, both because this builder assumed every
-    // path behaves like the generic branch's plain flat readers and neither assumption held.
+    // THREE DEFECTS FIXED HERE across two rounds of review, all because this builder assumed
+    // every path behaves like the generic branch's plain flat readers and none of those
+    // assumptions held.
     //
     // 1. NO EXTENSION GATE. panduck_ensure_extension does not merely produce a nicer error --
     // it is TryAutoLoadExtension (reader_registry.cpp), so skipping it meant a community
     // reader (webbed's read_html_blocks, say) that the single-path branch would have loaded
     // automatically instead surfaced a raw Catalog Error through a plural call. Each arm now
-    // wraps its SELECT in the same ensure-or-named-error CASE the generic branch uses, so the
-    // two paths agree both in behaviour and in wording.
+    // wraps its SELECT in an ensure-or-named-error CASE, so the two paths agree both in
+    // behaviour and in wording.
     //
-    // 2. SILENT DATA LOSS. panduck_reader_function_for(p) is NULL for every registry entry
-    // whose `function` is deliberately empty -- pdf, toml, yaml, zim, zim://, and every KIND_TABLE
-    // format (csv, json, ...), all served by READ_DOC_MACRO's own special-cased branches rather
-    // than a plain table function. Concatenating a NULL reader name nulled the whole arm, and
-    // array_to_string SKIPS NULL elements -- so read_panduck_doc(['a.odt', 'x.pdf']) silently
-    // returned only a.odt's rows, no error, and a glob of nothing but such formats produced an
-    // empty UNION ALL that query() then failed to parse. Refusing loudly is the correct
-    // behaviour for now, matching this file's own stated preference for "no branch for it" over
-    // "silently wrong" -- teaching this builder the special branches is a separate change.
+    // 2. SILENT DATA LOSS (round 1). panduck_reader_function_for(p) is NULL for every
+    // registry entry whose `function` is deliberately empty -- pdf, toml, yaml, zim, zim://,
+    // and every KIND_TABLE format (csv, json, ...), all served by READ_DOC_MACRO's own
+    // special-cased branches rather than a plain table function. Concatenating a NULL reader
+    // name nulled the whole arm, and array_to_string SKIPS NULL elements -- so
+    // read_panduck_doc(['a.odt', 'x.pdf']) silently returned only a.odt's rows, no error.
+    // Refusing loudly is the correct behaviour for now; teaching this builder the special
+    // branches is a separate change.
+    //
+    // 3. SILENT DATA LOSS AGAIN, THROUGH THE ROUND-1 FIX ITSELF (round 2). `error(NULL) IS
+    // NULL` is true -- error() does not throw on a NULL argument, it silently RETURNS NULL.
+    // The round-1 fix's own named-error arm, `error('...' || panduck_reader_extension_for(p)
+    // || '...')`, concatenates NULL whenever a reader is registered with an empty
+    // reader_ext (panduck_register_doc_reader('', fn, exts) -- meaning "no companion
+    // extension needed"), so panduck_reader_extension_for(p) answers NULL,
+    // panduck_ensure_extension(NULL) answers NULL (not TRUE), and the ELSE below used to
+    // build error(NULL) -- itself NULL, skipped by array_to_string exactly like defect 2.
+    // Reproduced end to end: register such a reader, put it in a list with an ODT, and the
+    // second document silently vanishes with no error. FIXED by hoisting the NULL check into
+    // the WHEN rather than the message: a NULL reader_ext takes the SAME path a real
+    // extension that loaded fine would (nothing to ensure), so the ELSE is only ever reached
+    // when reader_extension_for(p) is proven NON-NULL, and no coalesce is needed there.
+    //
+    // A NULL PATH ELEMENT gets the same structural treatment, checked FIRST: a caller can
+    // write read_panduck_doc(['a.odt', NULL]), and panduck_reader_function_for(NULL) also
+    // answers NULL (not "no function for this format" but "no input to look up at all"),
+    // which used to fall into defect 2's own arm with p itself NULL -- naming a NULL path in
+    // the message and nulling it right back out through the same error(NULL) trap. Checked
+    // ahead of the function-lookup so every later arm can assume p is non-NULL.
     {DEFAULT_SCHEMA,
      "panduck_read_arms",
      {"paths", "with_filename", nullptr},
      {{nullptr, nullptr}},
      "array_to_string(list_transform(paths, lambda p: "
-     "  CASE WHEN panduck_reader_function_for(p) IS NULL "
+     "  CASE WHEN p IS NULL "
+     "       THEN error('panduck: a multi-document source contains a NULL path') "
+     "       WHEN panduck_reader_function_for(p) IS NULL "
      "       THEN error('panduck: ' || p || ' (' || coalesce(panduck_format_for(p), 'unknown') || "
      "                  ') cannot be read in a multi-document call yet') "
-     "       ELSE CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(p)) "
+     "       ELSE CASE WHEN panduck_reader_extension_for(p) IS NULL "
+     "                 OR panduck_ensure_extension(panduck_reader_extension_for(p)) "
      "            THEN 'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
      "                               ELSE '' END || "
      "                 ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || ')' "
@@ -550,7 +574,12 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "    WHEN output_format = 'text' AND panduck_ensure_extension('duck_block_utils')"
      "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(src) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
-     "    ELSE error('panduck: doc_render supports md, html and text; ' || output_format ||"
+     // output_format IS COALESCED (round-2 error() audit): a caller can write
+     // doc_render(src, NULL), which matches none of the WHEN clauses above (each requires
+     // output_format to literally equal a string, and NULL = 'md' is NULL, not TRUE) and
+     // falls to this ELSE with output_format itself NULL. Without the coalesce the
+     // concatenation is NULL and error(NULL) silently returns NULL instead of raising.
+     "    ELSE error('panduck: doc_render supports md, html and text; ' || coalesce(output_format, '<NULL>') ||"
      "               ' is unsupported or its extension is not installed')"
      "  END))"},
 
@@ -701,15 +730,22 @@ WITH lvl AS (
     SELECT page_number, element_idx, element_type, text, font_size
     FROM read_pdf_elements(
         src,
+        -- pages IS COALESCED IN BOTH error() MESSAGES BELOW (round-2 error() audit): a
+        -- caller can write read_pdf_blocks(src, pages := NULL) despite the '' default,
+        -- which matches neither the '' branch nor either regexp_matches branch (NULL
+        -- compared or matched against anything is NULL, not TRUE) and falls to ELSE with
+        -- pages itself NULL. Without the coalesce the concatenation is NULL and error(NULL)
+        -- silently returns NULL instead of raising, passing a NULL first_page/last_page
+        -- into read_pdf_elements rather than the named "pages must be N or N-M" refusal.
         first_page := CASE WHEN pages = '' THEN 1
                            WHEN regexp_matches(pages, '^[0-9]+(-[0-9]+)?$')
                                THEN split_part(pages, '-', 1)::INTEGER
-                           ELSE error('panduck: pages must be N or N-M, got ' || pages) END,
+                           ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END,
         last_page := CASE WHEN pages = '' THEN 2147483647
                           WHEN regexp_matches(pages, '^[0-9]+$') THEN pages::INTEGER
                           WHEN regexp_matches(pages, '^[0-9]+-[0-9]+$')
                               THEN split_part(pages, '-', 2)::INTEGER
-                          ELSE error('panduck: pages must be N or N-M, got ' || pages) END)
+                          ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END)
 ), e AS (
     -- A page_break BLOCK opens each page, which is how duck_block_utils models pagination:
     -- duck_blocks_get_pages and duck_blocks_page_rows scan for element_type='page_break'
@@ -770,6 +806,20 @@ const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
                                           R"SQL(
 SELECT * FROM query(
     CASE
+        -- `pages` ON A PLURAL SOURCE IS REFUSED OUTRIGHT, deliberately BEFORE the
+        -- single-format `pages` guard below and BEFORE the format is ever resolved.
+        -- Review round 2: the existing guard below only rejects `pages` when the
+        -- resolved format is not 'pdf' -- which means read_panduck_doc('*.pdf',
+        -- pages := '2') currently PASSES it, because the format resolves to 'pdf' even
+        -- though the source is a glob. That is forward-safety, not redundancy: the
+        -- moment PDF (or any format) gains a plural arm, that combination would start
+        -- silently dropping `pages` again, the identical defect class. Subsuming the
+        -- glob case here, ahead of any format resolution, closes that off pre-emptively
+        -- rather than waiting for it to be found the same way Finding 3 was.
+        WHEN pages <> '' AND (typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR))
+            THEN error('panduck: pages applies to a single document; ' ||
+                       coalesce(src::VARCHAR, '<NULL>') || ' names more than one')
+
         -- `pages` WAS ACCEPTED AND IGNORED BY EVERY FORMAT. It has been declared here
         -- since this macro was written and was never referenced in the body, so
         -- pages := '2' and pages := 'utter nonsense' both returned the whole document.
@@ -782,13 +832,25 @@ SELECT * FROM query(
         -- exists to name. panduck_resolved_format(src::VARCHAR, format) still resolves
         -- correctly for a bare glob STRING here -- '*.odt' ends in '.odt' same as
         -- 'x.odt' does -- because this guard runs before src is expanded into a list.
+        --
+        -- panduck_resolved_format(...) is PROVABLY NON-NULL whenever this WHEN selects:
+        -- the condition itself requires it to literally not equal 'pdf', which cannot be
+        -- true for a NULL value (NULL <> 'pdf' is NULL, not TRUE) -- so no coalesce is
+        -- needed on the interpolation below. Verified in the round-2 error() audit.
         WHEN pages <> '' AND panduck_resolved_format(src::VARCHAR, format) <> 'pdf'
             THEN error('panduck: pages applies only to paginated formats (pdf); ' ||
                        panduck_resolved_format(src::VARCHAR, format) || ' has no pages')
 
+        -- src::VARCHAR IS COALESCED HERE (round-2 error() audit) because this branch is
+        -- reachable with a NULL src: a caller forcing format := 'data' explicitly makes
+        -- panduck_resolved_format resolve to 'data' regardless of src, e.g.
+        -- read_panduck_doc(NULL, format := 'data'). Without the coalesce, the
+        -- concatenation is NULL, error(NULL) returns NULL instead of raising (DuckDB
+        -- behaviour: error(NULL) IS NULL is true), and the CASE silently produces NULL
+        -- SQL text instead of the named refusal.
         WHEN panduck_resolved_format(src::VARCHAR, format) = 'data'
-            THEN error('panduck: ' || src::VARCHAR || ' is a data format, not a document. ' ||
-                       'Use read_panduck_table instead.')
+            THEN error('panduck: ' || coalesce(src::VARCHAR, '<NULL>') ||
+                       ' is a data format, not a document. Use read_panduck_table instead.')
 
         -- PLURAL SOURCES. Resolved to a path list, then one arm per path. This branch runs
         -- only when the source is not a single plain path, so a caller naming one file
@@ -799,11 +861,17 @@ SELECT * FROM query(
         -- expanded into a list. Placed BEFORE the generic branch below, which requires a
         -- resolvable single format and would misfire on a list or a glob string.
         --
-        -- The bare-glob empty-match raise below is now REDUNDANT: panduck_source_list
-        -- raises per-element as it expands each glob, which is the only place that still
-        -- has each element's own boundary before flatten() erases it (see that macro's
-        -- comment). Kept anyway because it is what catches a bare glob matching nothing,
-        -- and it costs nothing once the list is already known to be empty.
+        -- CORRECTED IN ROUND 2: this comment previously claimed the bare-glob empty-match
+        -- raise below was "what catches a bare glob matching nothing". That is no longer
+        -- true and saying so was left standing as a stale claim. panduck_source_list now
+        -- raises per element BEFORE returning (see that macro's comment), including for a
+        -- bare unmatched glob -- so the error() below is *dead* for that case: the
+        -- exception fires inside panduck_source_list, before len(...) is ever evaluated
+        -- out here. The one case this dispatch-level check still catches on its own is a
+        -- literal empty-list ARGUMENT, e.g. read_panduck_doc([]) -- flatten() over zero
+        -- elements raises nothing per-element (there is nothing to iterate), so len(...) =
+        -- 0 genuinely reaches here. src::VARCHAR is non-NULL whenever this fires: the only
+        -- way in is a real (non-NULL) empty list, whose ::VARCHAR cast is the string '[]'.
         WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
             THEN CASE WHEN len(panduck_source_list(src)) = 0
                  THEN error('panduck: no files matched ' || src::VARCHAR)
@@ -815,9 +883,23 @@ SELECT * FROM query(
         -- single-element list generates exactly the same SQL the hand-built string used
         -- to, because with_filename := false is a no-op projection -- byte-identical,
         -- asserted by doc_namespace.test, reader_registry.test and html_reader.test.
+        --
+        -- THE EXTENSION-NULL CHECK IS HOISTED (round-2 error() audit), mirroring the
+        -- identical fix in panduck_read_arms: a user can register a doc reader with
+        -- panduck_register_doc_reader('', function, extensions) -- an empty reader_ext,
+        -- meaning "no companion extension needed". panduck_reader_extension_for then
+        -- answers NULL, panduck_ensure_extension(NULL) answers NULL (not TRUE), and the
+        -- old ELSE concatenated that NULL into the message, so error(NULL) silently
+        -- returned NULL instead of raising. Hoisting the IS NULL check into the WHEN means
+        -- a NULL reader_ext takes the SAME path a real extension that loaded fine would,
+        -- which is correct: no companion extension means nothing to ensure. Once past this
+        -- hoist, reader_extension_for(src::VARCHAR) is guaranteed NON-NULL in the ELSE
+        -- below (the OR would otherwise have already selected the THEN), so no coalesce is
+        -- needed there.
         WHEN panduck_reader_function_for(src::VARCHAR) IS NOT NULL
              AND panduck_resolved_format(src::VARCHAR, format) = panduck_format_for(src::VARCHAR)
-            THEN CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(src::VARCHAR))
+            THEN CASE WHEN panduck_reader_extension_for(src::VARCHAR) IS NULL
+                      OR panduck_ensure_extension(panduck_reader_extension_for(src::VARCHAR))
                  THEN panduck_read_arms([src::VARCHAR], filename)
                  ELSE error('panduck: ' || src::VARCHAR || ' needs the ' ||
                             panduck_reader_extension_for(src::VARCHAR) || ' extension') END
@@ -930,8 +1012,12 @@ SELECT * FROM query(
         -- resolves a single article -- which IS a document, and reaches panduck as HTML.
         --
         -- An error naming the alternative beats both silence and a plausible wrong answer.
+        --
+        -- src::VARCHAR IS COALESCED (round-2 error() audit): reachable with a NULL src via
+        -- read_panduck_doc(NULL, format := 'zim'), same shape as the 'data' guard above.
         WHEN panduck_resolved_format(src::VARCHAR, format) = 'zim'
-            THEN error('panduck: ' || src::VARCHAR || ' is a ZIM archive -- a corpus of many ' ||
+            THEN error('panduck: ' || coalesce(src::VARCHAR, '<NULL>') ||
+                       ' is a ZIM archive -- a corpus of many ' ||
                        'articles, not one document. Use the zim extension to index or ' ||
                        'search it, and read a single article once resolved.')
 
@@ -967,15 +1053,30 @@ SELECT * FROM query(
         -- silently wrong rather than loudly missing. That is precisely how doc_search
         -- silently degraded md/html/blocks/pandoc to text in duck_block_utils, and it is
         -- how .yaml behaved here until this branch existed.
+        -- src::VARCHAR IS COALESCED BELOW (round-2 error() audit): this branch is reachable
+        -- with a NULL src through its own first clause -- read_panduck_doc(NULL) with the
+        -- default format := 'auto' satisfies (format_for(NULL) IS NULL AND
+        -- nullif('auto','auto') IS NULL), both true, independent of sitting_duck being
+        -- installed. Without the coalesce, a fresh session without sitting_duck would
+        -- concatenate NULL and error(NULL) would silently return NULL instead of raising.
         WHEN (panduck_format_for(src::VARCHAR) IS NULL AND nullif(format, 'auto') IS NULL)
              OR panduck_resolved_format(src::VARCHAR, format) = 'code'
             THEN CASE WHEN panduck_ensure_extension('sitting_duck')
              THEN 'SELECT ' || panduck_block_cols() ||
                   ' FROM (SELECT block AS b FROM ast_to_blocks(' || panduck_quote(src::VARCHAR) || '))'
-             ELSE error('panduck: no reader for ' || src::VARCHAR ||
+             ELSE error('panduck: no reader for ' || coalesce(src::VARCHAR, '<NULL>') ||
                         ' and sitting_duck (the fallback) is not installed') END
 
-        ELSE error('panduck: ' || src::VARCHAR || ' resolves to format ''' ||
+        -- src::VARCHAR IS COALESCED HERE TOO (round-2 error() audit): reachable with a NULL
+        -- src whenever an explicit, unrecognised `format` is also given -- e.g.
+        -- read_panduck_doc(NULL, format := 'bogus') skips every WHEN above (each compares
+        -- against a specific resolved format that 'bogus' never matches) and lands here.
+        -- panduck_resolved_format(...) itself is provably non-NULL by this point: were it
+        -- NULL, that would require format = 'auto' AND format_for(src::VARCHAR) IS NULL,
+        -- which is exactly the fallback branch's own first clause above -- so anything
+        -- reaching this final ELSE already has a non-NULL resolved format. src::VARCHAR
+        -- does not have that guarantee, hence the coalesce.
+        ELSE error('panduck: ' || coalesce(src::VARCHAR, '<NULL>') || ' resolves to format ''' ||
                    panduck_resolved_format(src::VARCHAR, format) ||
                    ''' but read_panduck_doc has no branch for it -- the registry claims ' ||
                    'the format and dispatch does not handle it. This is a panduck bug.')
@@ -992,8 +1093,17 @@ const DefaultTableMacro READ_TABLE_MACRO = {DEFAULT_SCHEMA,
                                             R"SQL(
 SELECT * FROM query(
     CASE
+        -- THE EXTENSION-NULL CHECK IS HOISTED (round-2 error() audit), the same fix as
+        -- READ_DOC_MACRO's generic branch and panduck_read_arms: panduck_register_table_reader
+        -- shares RegisterBind with the doc-reader registration and accepts an empty
+        -- reader_ext the same way, so panduck_reader_extension_for(src) can answer NULL here
+        -- too. Without the hoist, panduck_ensure_extension(NULL) answers NULL, the ELSE
+        -- concatenates that NULL into the message, and error(NULL) silently returns NULL
+        -- instead of raising. src itself is guaranteed non-NULL whenever this WHEN selects:
+        -- panduck_reader_function_for(NULL) answers NULL, which fails the IS NOT NULL half.
         WHEN panduck_reader_kind_for(src) = 'table' AND panduck_reader_function_for(src) IS NOT NULL
-            THEN CASE WHEN panduck_ensure_extension(panduck_reader_extension_for(src))
+            THEN CASE WHEN panduck_reader_extension_for(src) IS NULL
+                      OR panduck_ensure_extension(panduck_reader_extension_for(src))
                  THEN 'SELECT * FROM ' || panduck_reader_function_for(src) ||
                       '(' || panduck_quote(src) || ')'
                  ELSE error('panduck: ' || src || ' needs the ' ||

@@ -251,26 +251,69 @@ SELECT count(*) FROM (
 ----
 2
 
-# DOCUMENT ORDER IS MONOTONE ACROSS PAGES: every block on page 1 precedes every block on
-# page 2. This is the half that makes the numbering the DOCUMENT's ordering rather than
-# merely a dense sequence -- a reader that emitted blocks grouped by type, or that sorted
-# them, would satisfy the density assertions above and fail this one.
-query I
-SELECT (SELECT max(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
-        WHERE attributes['page_number'] = '1')
-     < (SELECT min(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
-        WHERE attributes['page_number'] = '2');
-----
-true
+# DOCUMENT ORDER IS MONOTONE ACROSS PAGES, asserted through the RANGE MACHINERY.
+#
+# These two assertions used to filter on attributes['page_number'] over content blocks. When
+# that per-block attribute was dropped (markers became the only carrier), BOTH KEPT PASSING
+# AND STOPPED MEANING ANYTHING: the monotone check silently degraded to comparing the two
+# marker offsets (max=0 vs min=28), and the "marker opens its page" check became a tautology,
+# a min over a single-row set. Caught by measuring what they evaluated after the change
+# rather than by trusting that green meant unchanged.
+#
+# Rewritten to derive page membership the way a consumer must now derive it -- from
+# duck_blocks_page_rows' ranges -- so they assert the property THROUGH the path that has to
+# keep working, not through an attribute panduck happens to emit.
 
-# Each page's break marker opens its page rather than closing the previous one: the break
-# carrying page_number = N is the FIRST element_order among all blocks of page N.
-query II
-SELECT b.attributes['page_number'],
-       b.element_order = (SELECT min(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf') p
-                          WHERE p.attributes['page_number'] = b.attributes['page_number'])
-FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b
-WHERE b.element_type = 'page_break' ORDER BY b.element_order;
+# The ranges PARTITION the stream: every one of the 45 blocks falls in exactly one page, and
+# no block falls in none or two. A range that overlapped, or that stopped short of the end,
+# fails here and cannot be masked by a count.
+query I
+WITH bl AS (SELECT list(b ORDER BY b.element_order) AS l FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b),
+     pr AS (SELECT * FROM duck_blocks_page_rows((SELECT l FROM bl)))
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf') x
+WHERE (SELECT count(*) FROM pr
+       WHERE x.element_order >= pr.start_order AND x.element_order <= pr.end_order) <> 1;
 ----
-1	true
-2	true
+0
+
+# ...and they run in document order with the sizes the fixture actually has. Pinning both
+# page numbers and both counts means a reader that merged the pages, or that assigned the
+# first page's blocks to the second, fails rather than still summing to 45.
+query III
+WITH bl AS (SELECT list(b ORDER BY b.element_order) AS l FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b)
+SELECT page_number, start_order,
+       (SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf') x
+        WHERE x.element_order >= pr.start_order AND x.element_order <= pr.end_order)
+FROM duck_blocks_page_rows((SELECT l FROM bl)) pr ORDER BY page_number;
+----
+1	0	28
+2	28	17
+
+# THE MARKER IS NOW THE ONLY CARRIER. Asserted directly, because it is the whole point of
+# the change: content blocks must NOT carry page_number, or the redundancy is back.
+query II
+SELECT count(*) FILTER (WHERE attributes['page_number'] IS NOT NULL),
+       count(*) FILTER (WHERE attributes['page_number'] IS NOT NULL AND element_type <> 'page_break')
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+2	0
+
+# A DOCUMENT WITH NO MARKERS REPORTS ZERO PAGES, NOT ONE.
+#
+# duckeye's edge case, and the one that matters most to it: it renders markdown, HTML, docx
+# and ZIM articles that have no pagination at all. "No page information" and "one page" are
+# different facts, and a markerless document reporting one page would give every non-PDF
+# document a phantom page -- the exact defect the page axis was created to remove. panduck
+# is not the implementer of page_rows, but it is the producer whose emission decides the
+# answer, so it is pinned on this side too.
+query I
+SELECT count(*) FROM duck_blocks_page_rows(
+    (SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/constructs.odt') b));
+----
+0
+
+query I
+SELECT count(*) FROM duck_blocks_page_rows(
+    (SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/pandoc_pstyle.docx') b));
+----
+0

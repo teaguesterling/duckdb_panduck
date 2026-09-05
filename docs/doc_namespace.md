@@ -348,6 +348,25 @@ name.
 
 ### `element_order` is per document
 
+**The contract, stated rather than left incidental.** `element_order` is dense from 0 over
+the list a reader **emits**, *including any synthetic elements the reader inserts* — the
+`page_break` markers `read_pdf_blocks` adds are numbered in the same sequence as the content
+around them, not on a separate axis. The reader's output is the source document as far as
+any consumer is concerned; there is no earlier ordering a consumer can see.
+
+That distinction decides what functions may do with it. Functions that **project** — a table
+of contents, a heading list, a section slice — carry `element_order` through *unrenumbered*,
+gaps and all, so it stays a join key back to the emitted list. Functions that **construct** a
+standalone document — assemble, merge, reorder — renumber, and say so.
+
+This is duck_block_utils' ruling as vocabulary owner, confirmed by Teague. `read_pdf_blocks`
+conforms today and `test/sql/pdf_reader.test` pins it: dense `0..44` with no gaps or repeats,
+markers *inside* that run rather than appended, verified by an `EXCEPT` against `range(0,45)`
+that forces exactly the two marker positions to be the holes. The alternative reading —
+unrenumbered relative to whatever function produced the rows — is not one the spec can hold,
+because a producer inserting markers could then never conform and `page_break` would be
+unrepresentable.
+
 It is the position of a block within **its own** document. Making it global would break
 every consumer that uses it to reconstruct one document's order — `doc_section`,
 `doc_container` and the pandoc writer among them:
@@ -375,6 +394,23 @@ ORDER BY filename, element_order LIMIT 4;
 --  test/fixtures/constructs.docx  2  text
 --  test/fixtures/constructs.docx  3  bold
 ```
+
+### Pages are carried by markers, not by every block
+
+`read_pdf_blocks` emits one `page_break` block per page, carrying
+`attributes['page_number']`. **Content blocks do not carry it.** They did once, as a panduck
+convention, so that `WHERE attributes['page_number'] = '2'` worked without a join; that was
+ruled redundant emission, since the marker is what `duck_blocks_page_rows` and
+`duck_blocks_get_pages` actually read.
+
+Select pages at the reader — `read_pdf_blocks(src, first_page, last_page)` — which never
+parses the pages you did not ask for. Filtering blocks by page after the fact would mean
+parsing the whole document to discard most of it.
+
+A document with **no** markers reports **zero** pages, not one. "No page information" and
+"one page" are different facts, and every non-paginated format — markdown, HTML, docx — must
+answer zero, or it acquires a phantom page.
+
 
 ### A glob matching nothing raises
 

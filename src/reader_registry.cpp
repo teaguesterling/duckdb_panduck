@@ -1155,11 +1155,15 @@ WITH lvl AS (
     -- TYPE_PAGE = "page_break" is canonical vocabulary and panduck's own EPUB reader
     -- already emits it (epub_reader.cpp:629), so this reader was the outlier.
     --
-    -- The per-block page_number is KEPT as well, because filtering rows by page directly is
-    -- what a caller reaches for first. It is NOT canonical -- the vocabulary publishes no
-    -- ATTR_ constant for it, which is exactly why the original divergence was invisible to
-    -- check-vocabulary -- so it is a panduck convention pending a ruling from
-    -- duck_block_utils rather than something to rely on across extensions.
+    -- THE MARKER IS THE ONLY CARRIER OF page_number. It was once stamped on every block too,
+    -- as a panduck convention, so that a caller could filter rows by page without a join.
+    -- duck_block_utils ruled that excessive (the marker is what their page machinery reads;
+    -- the per-block copy is redundant emission), Teague confirmed it, and duckeye -- the
+    -- consumer whose page-level retrieval was the reason to hesitate -- confirmed by grep
+    -- that it reads the attribute NOWHERE: its only occurrence is duckeye WRITING markers of
+    -- its own, which this reader now makes unnecessary. Selecting pages happens at the
+    -- reader via first_page/last_page, so filtering blocks by page would already mean
+    -- parsing the whole document to discard most of it.
     SELECT page_number, element_idx, element_type, text, font_size,
            row_number() OVER (ORDER BY page_number, element_idx) - 1 AS ord
     FROM (SELECT page_number, -1 AS element_idx, 'page_break' AS element_type,
@@ -1183,7 +1187,8 @@ SELECT 'block' AS kind,
        -- has nothing to compare against, and every arm of that check is about constants that
        -- ARE published rather than keys a producer invented.
        map_from_entries(list_filter([
-           {k: 'page_number', v: e.page_number::VARCHAR},
+           {k: 'page_number', v: CASE WHEN e.element_type = 'page_break'
+                                      THEN e.page_number::VARCHAR END},
            {k: 'heading_level', v: CASE WHEN e.element_type = 'heading' THEN lvl.hl::VARCHAR END},
            {k: 'list_type', v: CASE WHEN e.element_type = 'list_item'
                                     THEN CASE WHEN regexp_matches(e.text, '^\s*\d+\.')

@@ -302,3 +302,34 @@ query I
 SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', 'test/fixtures/constructs_dup.no_ext_needed']);
 ----
 108
+
+# ---------------------------------------------------------------------------
+# ROUND-3 REVIEW ADDITIONS. Two fixes from round 2 had no permanent assertion: the
+# READ_TABLE_MACRO hoist (found and fixed on our own initiative, and read_panduck_table
+# otherwise has ZERO coverage anywhere in test/, so a regression here would be caught by
+# nothing at all) and the `p IS NULL` path guard in panduck_read_arms (verified by hand
+# during review, never pinned).
+# ---------------------------------------------------------------------------
+
+# READ_TABLE_MACRO's NULL-reader_ext hoist: a table reader registered with an empty
+# reader_ext must reach the reader function it names, not collapse into error(NULL) ->
+# query(NULL) -> a generic parser error. read_csv is registered against a path that does
+# not exist, so the assertion is that the FAILURE comes from read_csv's own file
+# resolution (an IO Error naming the pattern) -- proof dispatch actually built and ran
+# 'SELECT * FROM read_csv(...)' rather than silently producing a NULL query string.
+statement ok
+SELECT * FROM panduck_register_table_reader('', 'read_csv', ['tbl_no_ext']);
+
+statement error
+SELECT * FROM read_panduck_table('test/fixtures/does_not_exist.tbl_no_ext');
+----
+No files found that match the pattern
+
+# panduck_read_arms refuses a NULL path element outright rather than letting
+# panduck_reader_function_for(NULL) -> NULL fall into the "cannot be read" arm with the
+# path itself NULL, which would have nulled that message out through the same
+# error(NULL) trap the round-2 fixes above are about.
+statement error
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt', NULL]);
+----
+a multi-document source contains a NULL path

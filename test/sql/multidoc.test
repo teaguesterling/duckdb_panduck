@@ -4,6 +4,25 @@
 
 require panduck
 
+# INSTALL BUT DELIBERATELY DO NOT LOAD. The distinction is the whole point of the gate this
+# file asserts, and it is not cosmetic:
+#
+#   panduck_ensure_extension  ->  TryAutoLoadExtension  ->  LOADs an INSTALLED extension.
+#                                 It cannot INSTALL one. Measured: with an empty
+#                                 extension_directory, panduck_ensure_extension('webbed')
+#                                 returns FALSE.
+#
+# So the arms below need webbed present on disk, but must NOT have it loaded -- loading it
+# here would hide a regression in the per-arm gate, which is exactly what the mixed-format
+# assertions exist to catch.
+#
+# Without the INSTALL this file passes on a developer machine whose shared ~/.duckdb profile
+# happens to hold webbed, and fails in a clean container -- or worse, passes there too but
+# only because some other test file installed it first, making the result depend on file
+# execution order. register_reader.test failed CI for precisely that reason.
+statement ok
+INSTALL webbed;
+
 # panduck_glob is the one primitive this feature needs in C++. DuckDB's own glob is a TABLE
 # function, and dispatch cannot use it: a table function's arguments must be literals, so
 # neither `LATERAL read_odt_blocks(g.file)` nor `query((SELECT ... FROM glob(...)))` binds.

@@ -1022,7 +1022,22 @@ const DefaultTableMacro DOC_CONTAINER_MACRO = {DEFAULT_SCHEMA,
                                                {"src", "id", nullptr},
                                                {{"format", "'auto'"}, {nullptr, nullptr}},
                                                R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+WITH b AS (SELECT * FROM read_panduck_doc(
+    -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
+    -- element_order, which RESTARTS per document, so a glob or a list does not widen the
+    -- section -- it stacks several documents at the same element_order values with no
+    -- filename to separate them. Measured before this guard: '*.html' returned 12 rows at
+    -- element_order 0,0,0,1,1,1,... from three different documents.
+    --
+    -- The test is the SOURCE STRING, not how many files the read touches: the same idiom
+    -- read_panduck_doc uses for its own plural branches, so the two agree on what "plural"
+    -- means. The message names the alternative, because a caller who globbed wanted
+    -- provenance and read_panduck_doc(..., filename := true) is the thing that gives it.
+    CASE WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
+         THEN error('panduck: doc_container takes a single document; element_order restarts '
+                    'per document, so a glob or list interleaves them. Use '
+                    'read_panduck_doc(src, filename := true) for multiple documents')
+         ELSE src::VARCHAR END, format := format)),
 c AS (SELECT element_order AS o, level AS lv
       FROM b WHERE attributes['id'] = id
       ORDER BY element_order LIMIT 1),
@@ -1041,7 +1056,22 @@ const DefaultTableMacro DOC_SECTION_MACRO = {DEFAULT_SCHEMA,
                                              {"src", "section", nullptr},
                                              {{"format", "'auto'"}, {nullptr, nullptr}},
                                              R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(src, format := format)),
+WITH b AS (SELECT * FROM read_panduck_doc(
+    -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
+    -- element_order, which RESTARTS per document, so a glob or a list does not widen the
+    -- section -- it stacks several documents at the same element_order values with no
+    -- filename to separate them. Measured before this guard: '*.html' returned 12 rows at
+    -- element_order 0,0,0,1,1,1,... from three different documents.
+    --
+    -- The test is the SOURCE STRING, not how many files the read touches: the same idiom
+    -- read_panduck_doc uses for its own plural branches, so the two agree on what "plural"
+    -- means. The message names the alternative, because a caller who globbed wanted
+    -- provenance and read_panduck_doc(..., filename := true) is the thing that gives it.
+    CASE WHEN typeof(src) LIKE '%[]' OR panduck_is_glob(src::VARCHAR)
+         THEN error('panduck: doc_section takes a single document; element_order restarts '
+                    'per document, so a glob or list interleaves them. Use '
+                    'read_panduck_doc(src, filename := true) for multiple documents')
+         ELSE src::VARCHAR END, format := format)),
 h AS (SELECT element_order AS o,
              coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl
       FROM b

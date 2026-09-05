@@ -960,3 +960,51 @@ SELECT count(*) FROM read_panduck_doc('test/fixtures/sections.html',
     reader_params := MAP{'ignore_errors': 'true', 'maximum_file_size': '999999999'});
 ----
 9
+
+# ---------------------------------------------------------------------------
+# doc_section AND doc_container REFUSE A PLURAL SOURCE.
+#
+# They slice by element_order, which restarts per document, so a glob or a list does not
+# produce a section -- it produces several documents' blocks interleaved at the same
+# element_order values, with no filename column to tell them apart. Measured before the
+# guard existed: doc_section('sections.html','Alpha') gave 4 rows and
+# doc_section('*.html','Alpha') gave 12, at element_order 0,0,0,1,1,1,2,2,2,3,3,3 mixing
+# three documents. That is silently wrong output, which is the failure class this whole
+# namespace has been closing.
+#
+# Refusing by name costs one branch. The multi-document path is read_panduck_doc with
+# filename := true, which keeps provenance, and the message says so rather than leaving the
+# caller to guess what to do instead.
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/*.html', 'Alpha');
+----
+doc_section takes a single document
+
+statement error
+SELECT count(*) FROM doc_section(['test/fixtures/sections.html', 'test/fixtures/constructs.html'], 'Alpha');
+----
+doc_section takes a single document
+
+statement error
+SELECT count(*) FROM doc_container('test/fixtures/*.html', 'intro');
+----
+doc_container takes a single document
+
+statement error
+SELECT count(*) FROM doc_container(['test/fixtures/containers.html', 'test/fixtures/sections.html'], 'intro');
+----
+doc_container takes a single document
+
+# THE SINGLE-DOCUMENT PATH IS UNTOUCHED -- the negative control. A guard that refused
+# everything would satisfy the four assertions above and break the feature.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha');
+----
+4
+
+# A path containing no glob metacharacter still works even though it names a directory that
+# does: the guard must key on the SOURCE string, not on whether the read touches many files.
+query I
+SELECT count(*) > 0 FROM doc_container('test/fixtures/containers.html', 'intro');
+----
+true

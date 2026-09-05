@@ -511,7 +511,6 @@ namespace {
 struct TxRow {
 	std::string kind, element_type, content;
 	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
-	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
 	int32_t element_order = 0;
@@ -546,7 +545,6 @@ void BuildRows(const std::string &src, std::vector<TxRow> &rows) {
 			row.encoding = block.encoding;
 		}
 		row.attributes = block.attributes;
-		row.has_level = true;
 		row.level = block.level > 0 ? block.level : 1;
 		row.element_order = order++;
 		const int32_t block_level = row.level;
@@ -558,7 +556,6 @@ void BuildRows(const std::string &src, std::vector<TxRow> &rows) {
 			child.element_type = inl.element_type;
 			child.content = inl.content;
 			child.attributes = inl.attributes;
-			child.has_level = true;
 			child.level = inl.level > 0 ? inl.level : block_level + 1;
 			child.element_order = order++;
 			rows.push_back(std::move(child));
@@ -597,7 +594,7 @@ void TxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(0, count, Value(row.kind));
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
-		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
+		output.SetValue(3, count, Value::INTEGER(row.level));
 		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));

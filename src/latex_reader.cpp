@@ -1497,7 +1497,6 @@ struct BlockRow {
 	std::string kind;
 	std::string element_type;
 	std::string content;
-	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
 	int32_t element_order = 0;
@@ -1568,7 +1567,6 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 		// rather than recomputed here, because a run nested inside another run is deeper
 		// again and only the parser knows by how much.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
-		row.has_level = true;
 		row.level = block_level;
 		rows.push_back(std::move(row));
 
@@ -1577,7 +1575,6 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 			child.kind = DuckBlockTypes::KIND_INLINE;
 			child.element_type = inl.element_type;
 			child.content = inl.content;
-			child.has_level = true;
 			child.level = inl.level > block_level ? inl.level : block_level + 1;
 			child.element_order = order++;
 			if (!inl.href.empty()) {
@@ -1637,7 +1634,7 @@ void LatexReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &outp
 		// Empty content is NULL, per the duck_block convention for containers whose text
 		// lives in structured inline children.
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
-		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
+		output.SetValue(3, count, Value::INTEGER(row.level));
 		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));

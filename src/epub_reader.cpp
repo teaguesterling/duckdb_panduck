@@ -943,7 +943,6 @@ struct EpubRow {
 	//! one element_type that needs a different encoding was the one the emitter could not
 	//! express.
 	std::string encoding = DuckBlockTypes::ENCODING_TEXT;
-	bool has_level = false;
 	int32_t level = 0;
 	std::map<std::string, std::string> attributes;
 	int32_t element_order = 0;
@@ -1012,7 +1011,6 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 		}
 		// Every element carries a structural level; an inline is a CHILD of its block.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
-		row.has_level = true;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));
 
@@ -1021,7 +1019,6 @@ unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input
 			child.kind = DuckBlockTypes::KIND_INLINE;
 			child.element_type = inl.element_type;
 			child.content = inl.content;
-			child.has_level = true;
 			child.level = block_level + 1;
 			child.element_order = order++;
 			if (!inl.href.empty()) {
@@ -1045,7 +1042,7 @@ void EpubScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		output.SetValue(0, count, Value(row.kind));
 		output.SetValue(1, count, Value(row.element_type));
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
-		output.SetValue(3, count, row.has_level ? Value::INTEGER(row.level) : Value(LogicalType::INTEGER));
+		output.SetValue(3, count, Value::INTEGER(row.level));
 		output.SetValue(4, count, Value(row.encoding));
 		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
 		output.SetValue(6, count, Value::INTEGER(row.element_order));

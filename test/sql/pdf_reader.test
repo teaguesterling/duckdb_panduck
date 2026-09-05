@@ -201,3 +201,76 @@ statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', filename := NULL);
 ----
 cannot use NULL as argument for "filename"
+
+# ---------------------------------------------------------------------------
+# element_order IS THE DOCUMENT'S ORDERING, STATED EXPLICITLY.
+#
+# read_pdf_blocks does not pass through read_pdf_elements' numbering. It assigns its own,
+# because it INTERLEAVES synthetic page_break blocks into the stream -- so relative to that
+# intermediate it renumbers, while relative to the PDF itself it preserves document order.
+# That was correct incidentally: undocumented, unasserted, and only surfaced when
+# duck_block_utils began writing an element_order recovery contract into the spec.
+#
+# These assertions pin the property either way the contract lands. If it means "unrenumbered
+# relative to the SOURCE DOCUMENT", they are the proof panduck conforms. If it means
+# "unrenumbered relative to whatever produced the rows", they are the assertions that will
+# go red and say so, instead of the divergence being discovered by a consumer.
+#
+# WHY NOT JUST count(*): a count cannot tell a dense 0..n-1 run from a sparse one, and
+# cannot see whether the page_break markers sit INSIDE the sequence or were appended after
+# it. Both are the failure this pins.
+
+# Dense, 0-based, contiguous, no duplicates -- asserted as one row so a gap, a repeat and an
+# off-by-one are three different failures rather than one ambiguous count.
+query IIII
+SELECT count(*), min(element_order), max(element_order), count(DISTINCT element_order)
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+45	0	44	45
+
+# The page_break markers are IN the sequence, not outside it. NEGATIVE CONTROL: dropping
+# them must leave a HOLE. If page breaks were appended after the content blocks, or numbered
+# on a separate axis, this would still be contiguous and the assertion above would not care.
+query I
+SELECT count(*) = 0 FROM (
+  SELECT element_order FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
+  WHERE element_type <> 'page_break'
+  EXCEPT
+  SELECT * FROM range(0, 45)
+);
+----
+true
+
+query I
+SELECT count(*) FROM (
+  SELECT * FROM range(0, 45)
+  EXCEPT
+  SELECT element_order FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
+  WHERE element_type <> 'page_break'
+);
+----
+2
+
+# DOCUMENT ORDER IS MONOTONE ACROSS PAGES: every block on page 1 precedes every block on
+# page 2. This is the half that makes the numbering the DOCUMENT's ordering rather than
+# merely a dense sequence -- a reader that emitted blocks grouped by type, or that sorted
+# them, would satisfy the density assertions above and fail this one.
+query I
+SELECT (SELECT max(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
+        WHERE attributes['page_number'] = '1')
+     < (SELECT min(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf')
+        WHERE attributes['page_number'] = '2');
+----
+true
+
+# Each page's break marker opens its page rather than closing the previous one: the break
+# carrying page_number = N is the FIRST element_order among all blocks of page N.
+query II
+SELECT b.attributes['page_number'],
+       b.element_order = (SELECT min(element_order) FROM read_pdf_blocks('test/fixtures/two_pages.pdf') p
+                          WHERE p.attributes['page_number'] = b.attributes['page_number'])
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf') b
+WHERE b.element_type = 'page_break' ORDER BY b.element_order;
+----
+1	true
+2	true

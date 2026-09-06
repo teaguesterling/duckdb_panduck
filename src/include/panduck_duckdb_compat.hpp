@@ -63,6 +63,25 @@ void SetNullHandlingCompat(FUNC &fn, FunctionNullHandling value, long) {
 }
 
 //! Call this rather than either spelling: `SetNullHandling(fn, SPECIAL_HANDLING)`.
+//!
+//! AND THE GREP THAT FINDS A LINE THAT DID NOT is on the ASSIGNMENT, not the setter:
+//!
+//!     grep -rnE '\.(null_handling|stability|varargs|bind|serialize) *=' src/
+//!
+//! Searching for `SetNullHandling` finds only code that is ALREADY converted, which is
+//! exactly how this shim existed while one line still assigned the member directly --
+//! compiling clean against the v1.5.5 pin and breaking the v2.0 canary. A compile break
+//! surfaces only the FIRST such line, so the grep matters more than the error message.
+//! Run over panduck 2026-09-06: the only hit is the guarded fallback below, which is the
+//! one place the raw assignment belongs.
+//!
+//! `varargs` is the member that would genuinely need a branch like this one -- v1.5's
+//! SimpleFunction has a public field and no SetVarArgs. The others (stability,
+//! return_type) already have setters on the v1.5 pin and need no shim at all. If panduck
+//! ever needs more of these, duckdb_yaml's src/include/duckdb_compat.hpp is the fleet's
+//! most complete set rather than a reason to grow another one here.
+//!
+//! Class and grep documented in duckdb_markdown docs/duckdb_v2_migration.md:495-535.
 template <typename FUNC>
 void SetNullHandling(FUNC &fn, FunctionNullHandling value) {
 	SetNullHandlingCompat(fn, value, 0);

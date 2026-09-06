@@ -3,12 +3,27 @@
 #
 name: Main Extension Distribution Pipeline
 on:
+  # `push` IS RESTRICTED TO main. Unrestricted, a branch push and that branch's
+  # `pull_request` event both fire on the same commit, so every PR commit was built
+  # TWICE -- two full matrices competing for the same runners. A branch with no PR now
+  # gets no run, which is the intended trade: open the PR and it is built once.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
+# github.event_name IS PART OF THE KEY, and leaving it out is why this repo kept
+# reporting red on green commits. `push` and `workflow_dispatch` on the same ref share
+# a ref and a sha, so with cancel-in-progress they shared a group and each cancelled
+# the other -- and GitHub reports a CANCELLED job on a commit as a FAILURE. Both merge
+# runs for PRs #12 and #13 died this way, leaving main's tip with no completed run at
+# all while every local gate was green.
+#
+# Diagnosed in webbed from the identical symptom, and confirmed in duck_block_utils,
+# where adding this one component let a dispatch and a push run for the same sha
+# complete side by side, both green.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:

@@ -222,19 +222,32 @@ true
 # read_pdf_blocks went straight to read_pdf_elements. Each is a second door, and by this
 # file's own argument a control that reads as protection while being walked around is worse
 # than no control.
+# USES A CORE READER ON PURPOSE. This first asserted the toml path, and the negative
+# control -- reading the file once policy allows it -- FAILED IN CI with
+# `panduck: toml needs the toml extension`. It passed locally only because this machine's
+# ~/.duckdb profile has toml installed; the CI image does not, and the unittest binary is
+# built with ENABLE_EXTENSION_AUTOLOADING=0 so nothing fetches it.
+#
+# The policy assertion above it passed either way, because the gate fires BEFORE the
+# companion extension is needed -- so the half that broke was the control, which is the half
+# that proves the refusal was policy rather than a missing extension. Writing the fixture
+# here with core CSV keeps both halves meaningful with no optional dependency.
 statement ok
-SET panduck_disabled_readers = 'toml';
+COPY (SELECT 1 AS a, 'x' AS b) TO '__TEST_DIR__/policy.csv' (FORMAT csv, HEADER);
+
+statement ok
+SET panduck_disabled_readers = 'data';
 
 statement error
-SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
 ----
-reader for format 'toml' is disabled
+reader for format 'data' is disabled
 
 statement ok
 RESET panduck_disabled_readers;
 
 query I
-SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
 ----
 1
 

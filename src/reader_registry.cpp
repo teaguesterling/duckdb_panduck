@@ -76,6 +76,35 @@ bool IsIdentifier(const std::string &s) {
 	return true;
 }
 
+//! Is `s` a function name safe to interpolate BARE into generated SQL?
+//!
+//! `function` names a table function to call, so it cannot be quoted the way a VARCHAR
+//! argument is -- it has to be emitted as an identifier. That makes it the one piece of
+//! registration data with no quoting to hide behind, and it was validated nowhere: a
+//! registration could store `read_odt_blocks('x') UNION ALL SELECT ...` and every later
+//! read of that extension would run it, in a process shared with sessions that never
+//! registered anything.
+//!
+//! WHAT IS ALLOWED WAS SETTLED BY SURVEY, not by taste. Every `function` in the builtin
+//! registry (12 of them), in every test, and in every documented example is a PLAIN
+//! identifier -- read_odt_blocks, read_csv, st_read. No schema-qualified example exists
+//! anywhere in the repo. One dot is permitted as a deliberate superset, because
+//! my_schema.my_reader is a legitimate thing to register and refusing it would be a new
+//! limitation rather than a fix. Anything else -- parentheses, whitespace, a semicolon, a
+//! quote, an empty string -- is refused.
+bool IsQualifiedIdentifier(const std::string &s) {
+	auto dot = s.find('.');
+	if (dot == std::string::npos) {
+		return IsIdentifier(s);
+	}
+	// Exactly one dot: schema.function. A second would be a catalog reference, which no
+	// reader registers and which this deliberately does not try to reason about.
+	if (s.find('.', dot + 1) != std::string::npos) {
+		return false;
+	}
+	return IsIdentifier(s.substr(0, dot)) && IsIdentifier(s.substr(dot + 1));
+}
+
 //! Does `arg` actually hold a value of `arg_type`?
 //!
 //! BOOLEAN AND INTEGER ARE RENDERED BARE -- unquoted -- so an unchecked `arg` under either
@@ -518,6 +547,15 @@ unique_ptr<FunctionData> RegisterBind(ClientContext &, TableFunctionBindInput &i
 	auto result = make_uniq<RegisterBindData>();
 	result->reader_ext = input.inputs[0].GetValue<string>();
 	result->function = input.inputs[1].GetValue<string>();
+	// VALIDATED IN THE BIND, like `options` below and for the same reason: RegisterScan is
+	// the only writer and runs after this returns, so a throw here leaves the registry
+	// untouched rather than storing a row and failing later.
+	if (!readers::IsQualifiedIdentifier(result->function)) {
+		throw InvalidInputException("panduck: '%s' is not a valid function name; a reader function is "
+		                            "interpolated directly into generated SQL, so it must be a plain or "
+		                            "schema-qualified identifier",
+		                            result->function);
+	}
 	result->kind = KIND;
 	for (auto &v : ListValue::GetChildren(input.inputs[2])) {
 		result->exts.push_back(v.GetValue<string>());

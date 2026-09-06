@@ -60,12 +60,13 @@ static constexpr const char *SOURCE_USER = "user";
 //! before emitting. There is no path from an OPTION to arbitrary SQL, which is a shorter
 //! security argument than any a stored fragment could offer.
 //!
-//! THAT ARGUMENT COVERS `options` ONLY. The sibling field `ReaderEntry::function` is also
-//! registration data, and it is interpolated bare into the generated SQL with no validation
-//! at all -- a registration can put arbitrary SQL there. That is pre-existing (since
-//! 27cd39d) and tracked as a separate follow-up; reaching it already requires the ability to
-//! run `CALL panduck_register_doc_reader`. Registration as a whole is therefore NOT safe:
-//! `options` is.
+//! THE SIBLING FIELD `ReaderEntry::function` IS COVERED SEPARATELY, and differently. It
+//! names a table function to call, so it is interpolated BARE -- there is no quoting to hide
+//! behind. It was validated nowhere until #5: a registration could store
+//! `read_odt_blocks('x') UNION ALL SELECT ...` and every later read of that extension ran
+//! it. It is now checked at registration by IsQualifiedIdentifier, which permits a plain or
+//! one-dot identifier and nothing else -- the shapes a survey of the builtin registry, every
+//! test and every documented example actually found.
 struct ReaderOption {
 	std::string intent;   //!< panduck's vocabulary: "attributes"
 	std::string value;    //!< the intent's value: "all"

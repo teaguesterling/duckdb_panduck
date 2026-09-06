@@ -467,13 +467,16 @@ registry's format for it, then the registry key with its dot stripped, then `cod
 third link exists so a reader registered with an *empty* `reader_ext` — which has no format —
 is still nameable, rather than being mistaken for the `code` fallback and refused with it.
 
-**A caveat that has not been fully closed.** Registration *replaces* a registry row rather
-than shadowing it, so re-registering an extension can change the name policy knows it by.
-Where the key and the format differ — `.md` is format `markdown` — re-registering `.md` with
-an empty `reader_ext` renames it to `md`, and a denylist naming `markdown` stops applying.
-Setting `panduck_allow_registration = false` closes this, and the two settings are best
-treated as a pair rather than independent knobs. Tracked as
-[issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
+**A registration cannot rename a source out of a denylist.** Registration *replaces* a
+registry row rather than shadowing it, so the name policy uses is taken from a map of what
+panduck **natively** calls each extension, frozen when the registry is constructed and
+unreachable from any statement a user can write. Re-registering `.md` still answers
+`markdown`, even though the live row no longer carries a format at all.
+
+Built-in beats live, deliberately: pointing `.md` at some other reader does not escape a
+`markdown` denylist, because the operator disabled *reading markdown files*. An extension
+panduck does not ship a reader for has no native name, so it keeps its own — its
+`reader_ext`, or failing that its registry key.
 
 ### A glob matching nothing raises
 

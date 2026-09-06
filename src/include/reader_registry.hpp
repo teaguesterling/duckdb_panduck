@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -111,10 +112,29 @@ public:
 	bool Lookup(const std::string &ext, ReaderEntry &out);
 	void Register(const ReaderEntry &entry);
 
+	//! What panduck NATIVELY calls this extension, frozen at construction and never
+	//! mutated. Empty for an extension panduck does not ship a reader for.
+	//!
+	//! POLICY NEEDS A NAME A REGISTRATION CANNOT CHANGE. Register() REPLACES a row rather
+	//! than shadowing it, and the policy name came from that row -- so re-registering an
+	//! extension renamed it, and a denylist stopped applying to it:
+	//!
+	//!     SET panduck_disabled_readers = 'markdown';
+	//!     CALL panduck_register_doc_reader('', 'read_markdown_blocks', ['.md']);
+	//!     -- policy name became 'md'; the denylist no longer matched
+	//!
+	//! Measured. This map is consulted first, so '.md' answers 'markdown' whatever the
+	//! live row says.
+	std::string BuiltinFormat(const std::string &ext);
+
 private:
 	ReaderRegistry();
 	std::mutex lock;
 	std::vector<ReaderEntry> entries;
+	//! ext -> format, populated from `entries` at the END of the constructor, when every
+	//! row is still SOURCE_BUILTIN. Const after that by convention: nothing but the
+	//! constructor writes it, which is what makes it trustworthy.
+	std::map<std::string, std::string> builtin_format;
 };
 
 } // namespace readers

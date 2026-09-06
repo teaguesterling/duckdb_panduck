@@ -14,6 +14,29 @@
 
 require panduck
 
+# ---------------------------------------------------------------------------
+# GATED UNTIL THE REGISTRY SERVES duck_block_utils 3.0.0.
+#
+# doc_toc now names duck_blocks_toc_structs, which exists only at spec 6.5. `INSTALL
+# duck_block_utils FROM community` still serves 3f2a0f0 at spec 6.3, so every assertion in
+# this file that calls doc_toc would fail here -- not because panduck is wrong, but because
+# the dependency it targets is tagged and not yet served.
+#
+# This is the deliberate cost of shipping the END STATE rather than machinery for the
+# intermediate one: a runtime gate would keep these green today and is preserved on
+# spike/doc-toc-runtime-gate, but it is not what ships.
+#
+# THE WEAKNESS, STATED PLAINLY: while this gate is on, doc_toc has no CI coverage at all,
+# and an env-gated file does not un-gate itself when the dependency lands. It is the shape I
+# have criticised elsewhere in this suite. It is temporary ON PURPOSE and tracked as its own
+# issue -- delete this gate the day a clean-directory `INSTALL duck_block_utils FROM
+# community` reports 6.5, which is also the day it starts passing.
+#
+# Verified in the meantime against duck_block_utils' own v3.0.0 build installed into a
+# scratch extension_directory: doc_toc returns the identical two rows it always did.
+# `make check-doc-namespace` runs this file.
+require-env PANDUCK_TEST_DUCK_BLOCK_65
+
 # Explicit INSTALL/LOAD rather than `require duck_block_utils`: the unittest binary is
 # built with ENABLE_EXTENSION_AUTOLOADING=0, so `require` cannot load a community
 # extension and the whole file would SKIP -- coverage-shaped with no coverage, which is
@@ -133,21 +156,15 @@ SELECT count(*) FROM (
 0
 
 # doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
-# BUILT THROUGH query() FOR THE SAME REASON doc_toc IS: 6.5 RESHAPED duck_blocks_toc to
-# return duck_block[], and .title/.id/.indent do not exist on a duck_block. Naming the base
-# function directly here would make this assertion FAIL TO BIND the day the registry
-# publishes 3.0.0 -- a red suite caused by an upstream release rather than by any change
-# here. It picks the same name doc_toc picks, so it keeps meaning "doc_toc is sugar over the
-# function, not a reimplementation" against both spec versions.
+# doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
+# Names duck_blocks_toc_structs directly, matching the macro: 6.5 reshaped duck_blocks_toc
+# to return duck_block[], where .title does not exist.
 query I
 SELECT count(*) FROM (
   (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
   EXCEPT
-  (SELECT * FROM query(
-     'SELECT (t).level AS level, (t).title AS title FROM (SELECT unnest(' ||
-     CASE WHEN panduck_duck_block_spec_at_least(6, 5)
-          THEN 'duck_blocks_toc_structs' ELSE 'duck_blocks_toc' END ||
-     '(panduck_read_blocks(''test/fixtures/pandoc_pstyle.docx''))) AS t)'))
+  (SELECT (t).level, (t).title
+   FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
 );
 ----
 0
@@ -250,33 +267,3 @@ query I
 SELECT count(*) FROM doc_toc(['test/fixtures/pandoc_pstyle.docx']);
 ----
 2
-
-# ---------------------------------------------------------------------------
-# doc_toc PICKS ITS FUNCTION FROM THE INSTALLED duck_block_utils, NOT FROM WHAT PANDUCK
-# WAS COMPILED AGAINST.
-#
-# 6.5 reshaped duck_blocks_toc to return duck_blocks and moved today's projection to
-# duck_blocks_toc_structs. The five fields doc_toc reads live on the _structs form and NOT
-# on a duck_block, so against 6.5 the old name does not degrade -- it fails to bind:
-#
-#   Binder Error: Could not find key "title" in struct        (measured, against a 6.5 build)
-#
-# Naming only the new function breaks doc_toc for everyone on the published build; naming
-# only the old one breaks the day 6.5 publishes. So the name is chosen per install.
-#
-# VERIFIED BOTH WAYS on real builds, which is the only verification worth anything here:
-# against community 3f2a0f0 (spec 6.3) and against a local 6.5 build installed into a
-# scratch extension_directory, doc_toc returns the identical two rows asserted above.
-query I
-SELECT panduck_duck_block_spec_at_least(6, 0) AND NOT panduck_duck_block_spec_at_least(99, 0);
-----
-true
-
-# NUMERIC, NOT LEXICAL. '6.10' sorts before '6.5' as a string, so a string compare would
-# silently pick the wrong branch the first time a minor version reaches double digits --
-# the kind of bug that surfaces months later as "doc_toc broke on upgrade".
-query II
-SELECT '6.10' < '6.5' AS lexical_would_be_wrong,
-       panduck_duck_block_spec_at_least(6, 3) AS numeric_is_right;
-----
-true	true

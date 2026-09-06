@@ -836,33 +836,28 @@ SELECT * FROM query(
                'document, so a glob or list interleaves them. Use '
                'read_panduck_doc(src, filename := true) for multiple documents')
     WHEN panduck_ensure_extension('duck_block_utils')
-    -- THE FUNCTION NAME IS CHOSEN AT QUERY TIME, against whatever duck_block_utils is
-    -- INSTALLED, because that is the only thing that decides which name resolves.
+    -- SWAPPED TO duck_blocks_toc_structs, the END STATE, not gated on the installed build.
     --
-    -- duck_block_utils 6.5 reshaped duck_blocks_toc to return duck_blocks and moved today's
-    -- projection to duck_blocks_toc_structs. The five fields doc_toc reads -- level, title,
-    -- id, indent, element_order -- exist on the _structs form and NOT on a duck_block, so
-    -- against 6.5 the old name does not degrade, it FAILS TO BIND.
+    -- duck_block_utils 6.5 reshaped duck_blocks_toc to return duck_block[] and moved this
+    -- projection to duck_blocks_toc_structs. The five fields below exist on the _structs
+    -- form and NOT on a duck_block, so against 6.5 the old name fails to bind:
     --
-    -- Naming only the new function would break doc_toc for every user still on the
-    -- published build, which at the time of writing is what `INSTALL duck_block_utils FROM
-    -- community` still serves: 3f2a0f0, spec 6.3, no _structs at all. Naming only the old
-    -- one breaks the moment 6.5 publishes. Choosing per install is the only spelling with no
-    -- broken window in either direction, and it costs one catalog lookup per doc_toc call.
+    --     Binder Error: Could not find key "title" in struct
     --
-    -- VERIFIED ON BOTH: against community 3f2a0f0 and against a local 6.5 build installed
-    -- into a scratch extension_directory, doc_toc returns the identical two rows. The
-    -- _structs form was separately confirmed to match the old one on VALUES, not merely on
-    -- type, through the parquet bridge -- see issue #3.
+    -- A runtime gate on duck_block_spec_version() was built and verified on two real
+    -- installs; it is preserved on branch spike/doc-toc-runtime-gate. It is NOT used here,
+    -- by Teague's call: the registry maintainers review and merge in batches, so panduck's
+    -- first publish and duck_block_utils 3.0.0 land together, and dispatch machinery would
+    -- be guarding a window that never opens for anyone who installs after that.
     --
-    -- REMOVE THE FALLBACK when the floor moves past 6.5; until then deleting it is a
-    -- regression for anyone who has not upgraded.
+    -- THE CASE THAT LEAVES UNCOVERED, recorded rather than glossed: a user who already has
+    -- duck_block_utils 2.0.0 and installs panduck without running UPDATE EXTENSIONS. That
+    -- is not an intermediate state that closes on its own -- it persists until that user
+    -- updates. Judged small enough not to carry permanent dispatch for on a first publish
+    -- with no existing users. If it shows up in an issue, the gate branch is the fix.
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(' ||
-         CASE WHEN panduck_duck_block_spec_at_least(6, 5)
-              THEN 'duck_blocks_toc_structs' ELSE 'duck_blocks_toc' END ||
-         '(panduck_read_blocks(' ||
+         'FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks(' ||
          panduck_quote(panduck_source_list(src)[1]) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
     ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')

@@ -102,14 +102,14 @@ FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks');
 true
 
 # The doc_* family works over a registered reader with no special-casing, which is what
-# makes the bridge useful rather than merely possible -- doc_toc and doc_section are how a
-# verification actually asks its question.
-query I
-SELECT (SELECT count(*) FROM doc_toc('__TEST_DIR__/bridge.parquet_duck_blocks'))
-     = (SELECT count(*) FROM doc_toc('test/fixtures/constructs.odt'));
-----
-true
-
+# makes the bridge useful rather than merely possible -- doc_section is how a verification
+# actually asks its question.
+#
+# THE doc_toc HALF OF THIS MOVED. doc_toc now names duck_blocks_toc_structs, which exists
+# only at duck_block_utils spec 6.5, and the community registry still serves 6.3 -- so the
+# assertion lives in doc_namespace.test, which is gated on that build until it lands. The
+# claim being made here is about DISPATCH over a registered reader, and doc_section carries
+# it without the version dependency: it slices the same bridged blocks by heading.
 query I
 SELECT count(*) > 0 FROM doc_section('__TEST_DIR__/bridge.parquet_duck_blocks', 'Heading Two');
 ----

@@ -317,3 +317,40 @@ SELECT count(*) FROM duck_blocks_page_rows(
     (SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/pandoc_pstyle.docx') b));
 ----
 0
+
+# ---------------------------------------------------------------------------
+# read_pdf_blocks HONOURS THE READER POLICY.
+#
+# It is a PUBLIC entry point, not only a dispatch target, so read_panduck_doc's gate does not
+# cover it: before this, with pdf disabled, read_panduck_doc('x.pdf') refused while
+# read_pdf_blocks('x.pdf') went straight to read_pdf_elements. A second door onto the same
+# content. Asserted here rather than in reader_policy.test because that file cannot load the
+# pdf community extension, which is why the gate shipped untested the first time.
+statement ok
+SET panduck_disabled_readers = 'pdf';
+
+statement error
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+reader for format 'pdf' is disabled
+
+# The allowlist reaches it too, not just the denylist.
+statement ok
+RESET panduck_disabled_readers;
+
+statement ok
+SET panduck_enabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+reader for format 'pdf' is disabled
+
+statement ok
+RESET panduck_enabled_readers;
+
+# NEGATIVE CONTROL: the exact same call reads once policy allows it.
+query I
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+45

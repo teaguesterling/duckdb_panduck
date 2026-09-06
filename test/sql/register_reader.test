@@ -173,3 +173,71 @@ SELECT (SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blo
      = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
 ----
 true
+
+# ---------------------------------------------------------------------------
+# THE `function` FIELD IS VALIDATED AT REGISTRATION.
+#
+# It is interpolated BARE into generated SQL -- it has to be, it names a table function to
+# call -- and until this it was validated nowhere, so a registration could put arbitrary SQL
+# there. Demonstrated executing before the check existed: the payload below reached
+# panduck_read_arms verbatim and appended its own UNION ALL to the generated read.
+#
+# It crosses no privilege boundary, which is why it was a follow-up (#5) rather than a
+# release blocker: reaching it already requires the ability to run
+# CALL panduck_register_doc_reader, i.e. arbitrary SQL. The value of the check is that a
+# registry entry can no longer turn one caller's registration into every later reader's SQL,
+# in a process shared by sessions that never registered anything.
+#
+# WHAT SHAPES ARE ALLOWED was settled by survey rather than by guess, which is why this was
+# deferred once: every `function` in the builtin registry, in every test, and in every
+# documented example is a PLAIN IDENTIFIER (read_odt_blocks, read_csv, st_read, and 12
+# builtins). No schema-qualified example exists anywhere. Dotted is allowed as a deliberate
+# superset -- myschema.my_reader is a legitimate thing to register and refusing it would be
+# a new limitation -- and nothing beyond that.
+statement error
+CALL panduck_register_doc_reader('webbed',
+  'read_odt_blocks(''x'') UNION ALL SELECT ''block'',''p'',''PWNED'',1,''text'',MAP{},999 FROM range(1) -- ',
+  ['.pwn3']);
+----
+not a valid function name
+
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_odt_blocks; DROP TABLE t', ['.pwn4']);
+----
+not a valid function name
+
+statement error
+CALL panduck_register_table_reader('spatial', 'st_read(''x'')', ['.pwn5']);
+----
+not a valid function name
+
+statement error
+CALL panduck_register_doc_reader('webbed', '', ['.pwn6']);
+----
+not a valid function name
+
+# AND THE REFUSAL LEAVES THE REGISTRY UNTOUCHED, which is a different claim from "it
+# errors" and the one the code comment actually makes. Validation happens in the BIND;
+# RegisterScan is the only writer and runs after the bind returns, so a throw must mean no
+# row was stored. Asserted by counting rows for the rejected extensions rather than by
+# trusting that an error implies nothing happened -- a validator that threw AFTER writing
+# would pass every assertion above and still leave a poisoned entry behind.
+query I
+SELECT count(*) FROM panduck_reader_registry()
+WHERE ext IN ('.pwn3', '.pwn4', '.pwn5', '.pwn6');
+----
+0
+
+# NEGATIVE CONTROLS -- the shapes the survey found in real use must still register.
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.okplain']);
+
+statement ok
+CALL panduck_register_doc_reader('webbed', 'my_schema.read_html_blocks', ['.okdotted']);
+
+query II
+SELECT ext, function FROM panduck_reader_registry()
+WHERE ext IN ('.okplain', '.okdotted') ORDER BY ext;
+----
+.okdotted	my_schema.read_html_blocks
+.okplain	read_html_blocks

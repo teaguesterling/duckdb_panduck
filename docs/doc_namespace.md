@@ -412,6 +412,69 @@ A document with **no** markers reports **zero** pages, not one. "No page informa
 answer zero, or it acquires a phantom page.
 
 
+## Policy settings
+
+Three settings gate what panduck will do at runtime. **Every default preserves the
+behaviour described everywhere else in this document** — registration allowed, every reader
+on — so a deployment that sets nothing sees no change.
+
+| setting | type | default | effect |
+|---|---|---|---|
+| `panduck_allow_registration` | BOOLEAN | `true` | when false, `panduck_register_doc_reader` and `panduck_register_table_reader` refuse |
+| `panduck_enabled_readers` | VARCHAR | `'*'` | allowlist of reader **format** names; `'*'` means all |
+| `panduck_disabled_readers` | VARCHAR | `''` | denylist of format names, applied **after** the allowlist |
+
+```sql
+SET panduck_disabled_readers = 'pdf,zim';   -- everything except those two
+SET panduck_enabled_readers  = 'markdown';  -- only markdown
+SET panduck_allow_registration = false;     -- no new readers at runtime
+```
+
+Lists are comma-separated and tolerate whitespace and case — `' ODT , rtf '` works, because a
+hand-typed `SET` is the whole interface. A name panduck does not know is inert rather than
+an error. A format in **both** lists is refused: the denylist applies last, so a reader
+cannot smuggle itself back on.
+
+**This is defence in depth, not a privilege boundary.** Reaching registration already
+requires the ability to run `CALL panduck_register_doc_reader` — that is, arbitrary SQL — and
+the `function` name is validated as an identifier, so a registration cannot inject SQL. These
+settings exist for the deployment that does not want runtime registration *at all*, or wants
+a particular reader off: an embedder exposing panduck to untrusted SQL, where "you already
+need arbitrary SQL to reach it" is not the reassurance it is for a local session.
+
+**A disabled reader raises. It does not fall through.** The `code` fallback answers any
+source no other reader claimed, and it answers with a syntax-highlighted parse tree — so a
+reader that were merely *skipped* when disabled would hand back a tree of the document's own
+text with no error at all. `code` is itself a nameable format, which makes
+`SET panduck_disabled_readers = 'code'` the difference between *"read documents, or tell me
+you cannot"* and *"read documents, or hand back a parse tree"*.
+
+**What the gate covers, and what it does not.** It covers every *dispatching* entry point —
+`read_panduck_doc`, `read_panduck_table`, `read_pdf_blocks`, `panduck_read_blocks` and the
+whole `doc_*` family — on single, glob and list sources alike. It is applied **per path**, and
+a plural source is refused rather than filtered: a mixed list is not silently reduced to its
+allowed members, because the caller asked for every document in it.
+
+**It does not cover panduck's own format readers called directly.** `read_odt_blocks`,
+`read_rtf_blocks`, `read_docx_blocks` and the rest of that family — including their `_string`
+variants — bypass these settings entirely, because dispatch is not in their path. Measured:
+with `panduck_disabled_readers = 'odt'`, `read_odt_blocks('x.odt')` still returns its rows.
+A deployment relying on these settings must also restrict those functions by other means.
+Closing that gap is [issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
+
+**How a source is named for policy.** In order: an explicit `format :=` argument, then the
+registry's format for it, then the registry key with its dot stripped, then `code`. The
+third link exists so a reader registered with an *empty* `reader_ext` — which has no format —
+is still nameable, rather than being mistaken for the `code` fallback and refused with it.
+
+**A caveat that has not been fully closed.** Registration *replaces* a registry row rather
+than shadowing it, so re-registering an extension can change the name policy knows it by.
+Where the key and the format differ — `.md` is format `markdown` — re-registering `.md` with
+an empty `reader_ext` renames it to `md`, and a denylist naming `markdown` stops applying.
+Setting `panduck_allow_registration = false` closes this, and the two settings are best
+treated as a pair rather than independent knobs. Tracked as
+[issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
+
 ### A glob matching nothing raises
 
 Zero rows would be indistinguishable from a corpus that happens to be empty, and core does

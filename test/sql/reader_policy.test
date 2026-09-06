@@ -1,0 +1,301 @@
+# name: test/sql/reader_policy.test
+# description: settings that gate runtime registration and individual readers
+# group: [sql]
+
+#
+# DEFENCE IN DEPTH, not a privilege boundary. `function` is validated at registration and
+# options are rendered from structured data, so a registration cannot inject SQL. These
+# settings exist for the deployment that does not want runtime registration AT ALL, or wants
+# a specific reader off -- an embedder exposing panduck to untrusted SQL, where "you already
+# need arbitrary SQL to reach it" is not the reassurance it is for a local session.
+#
+# Every default preserves today's behaviour exactly: registration allowed, all readers on.
+#
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# DEFAULTS. Asserted first, because a setting whose default changed behaviour would be a
+# far worse bug than any it prevents.
+query III
+SELECT current_setting('panduck_allow_registration'),
+       current_setting('panduck_enabled_readers'),
+       current_setting('panduck_disabled_readers');
+----
+true	*	(empty)
+
+# ---------------------------------------------------------------------------
+# panduck_allow_registration = false REFUSES BOTH REGISTRATION FUNCTIONS.
+statement ok
+SET panduck_allow_registration = false;
+
+statement error
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.policy1']);
+----
+runtime reader registration is disabled
+
+statement error
+CALL panduck_register_table_reader('spatial', 'st_read', ['.policy2']);
+----
+runtime reader registration is disabled
+
+# AND NOTHING WAS STORED -- the refusal happens in the bind, before the registry is written,
+# which is a different claim from "it errored".
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext IN ('.policy1', '.policy2');
+----
+0
+
+# Re-enabling restores it, so this is a policy knob and not a one-way latch.
+statement ok
+SET panduck_allow_registration = true;
+
+statement ok
+CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.policy1']);
+
+query I
+SELECT count(*) FROM panduck_reader_registry() WHERE ext = '.policy1';
+----
+1
+
+# ---------------------------------------------------------------------------
+# A DISABLED READER RAISES. IT DOES NOT FALL THROUGH.
+#
+# This is the property that matters most. An unrecognised source lands on the CODE fallback
+# and comes back as a syntax-highlighted parse tree -- so a "disabled" reader that quietly
+# degraded into that would hand back a tree of the document's own syntax instead of the
+# document, with no error. Silently wrong output is exactly what this whole namespace has
+# been closing, and a security control that produces it would be worse than no control.
+statement ok
+SET panduck_disabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+# ...and the disabled reader is the only one affected.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+----
+true
+
+statement ok
+RESET panduck_disabled_readers;
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+true
+
+# ---------------------------------------------------------------------------
+# THE ALLOWLIST. '*' means all; a list means only those.
+statement ok
+SET panduck_enabled_readers = 'rtf,markdown';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+----
+true
+
+# THE DENYLIST APPLIES AFTER THE ALLOWLIST, so a format in both is refused. Asserted because
+# "both set" is the case where a reader could otherwise smuggle itself back on.
+statement ok
+SET panduck_disabled_readers = 'rtf';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+----
+reader for format 'rtf' is disabled
+
+statement ok
+RESET panduck_enabled_readers;
+
+statement ok
+RESET panduck_disabled_readers;
+
+# ---------------------------------------------------------------------------
+# THE CODE FALLBACK IS A FORMAT AND CAN BE TURNED OFF, which is the single most useful thing
+# here: it is the branch that answers a source nothing else claimed, and it answers with a
+# parse tree rather than a refusal. An operator who wants "read documents, or say you
+# cannot" turns off 'code'.
+statement ok
+SET panduck_disabled_readers = 'code';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.source.md.nosuchreader');
+----
+reader for format 'code' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# ---------------------------------------------------------------------------
+# WHITESPACE AND CASE are tolerated in the lists, because a hand-typed SET is the whole
+# interface and ' ODT , rtf ' is what a person writes.
+statement ok
+SET panduck_disabled_readers = ' ODT , rtf ';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+----
+reader for format 'rtf' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# An unknown name in either list is inert rather than an error: the lists are policy, and a
+# format panduck does not have is simply one that cannot be read anyway.
+statement ok
+SET panduck_disabled_readers = 'no_such_format';
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+true
+
+# ---------------------------------------------------------------------------
+# THE POLICY IS NOT BYPASSABLE BY SPELLING THE SOURCE DIFFERENTLY.
+#
+# The first version of this guard lived only on the single-path branch, and every assertion
+# above passed while a GLOB READ THE DISABLED FORMAT ANYWAY: '*.odt' returned 180 rows and
+# ['constructs.odt'] returned 54, with odt disabled. A control that any glob walks around is
+# worse than no control, because it reads as protection.
+#
+# The plural branch funnels through panduck_read_arms_opt rather than through the format
+# CASE, so the gate has to live in the builder too -- and it is per PATH, because a mixed
+# list must not be readable just for containing one allowed format.
+statement ok
+SET panduck_disabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt');
+----
+is disabled
+
+statement error
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt']);
+----
+is disabled
+
+# A MIXED LIST IS REFUSED FOR THE DISABLED MEMBER, not silently reduced to the allowed ones.
+# Dropping the odt and returning the rtf would be the silent-data-loss shape this repo has
+# spent its whole cycle removing -- the caller asked for both documents.
+statement error
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/pandoc_outlinelevel.rtf', 'test/fixtures/constructs.odt']);
+----
+is disabled
+
+# ...and a plural read of only ALLOWED formats still works, so the gate is per-path and not
+# "any list is refused once anything is disabled".
+query I
+SELECT count(*) > 0 FROM read_panduck_doc(['test/fixtures/pandoc_outlinelevel.rtf']);
+----
+true
+
+statement ok
+RESET panduck_disabled_readers;
+
+# The same source that was refused reads normally once policy allows it -- the negative
+# control for all four assertions above.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/*.odt');
+----
+true
+
+# ---------------------------------------------------------------------------
+# EVERY PUBLIC ENTRY POINT IS GATED, NOT JUST read_panduck_doc.
+#
+# The first version gated the doc dispatcher and nothing else, so two public functions read
+# the same content with the policy off. Measured while it was true: with toml disabled,
+# read_panduck_table('config.toml') still returned its row; with pdf disabled,
+# read_pdf_blocks went straight to read_pdf_elements. Each is a second door, and by this
+# file's own argument a control that reads as protection while being walked around is worse
+# than no control.
+statement ok
+SET panduck_disabled_readers = 'toml';
+
+statement error
+SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+----
+reader for format 'toml' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+query I
+SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+----
+1
+
+# ---------------------------------------------------------------------------
+# A READER REGISTERED WITH AN EMPTY reader_ext IS NOT THE CODE FALLBACK.
+#
+# It has no format -- RegistryFieldFun maps an empty reader_ext to NULL -- so coalescing
+# straight to 'code' made `SET panduck_disabled_readers='code'` refuse it with "reader for
+# format 'code' is disabled", naming a fallback that was never going to run. Collateral
+# damage AND a misleading message. It now answers NULL, the gate is not taken, and it reads.
+#
+# It is named instead by its REGISTRY KEY with the dot stripped, so it is gateable rather
+# than either collateral damage or unreachable by policy.
+#
+# NAMING IT MATTERS FOR MORE THAN TIDINESS. Answering NULL here -- the first attempt at
+# fixing the 'code' collateral kill -- opened a one-statement bypass of the entire control,
+# because registration REPLACES a builtin row rather than shadowing it:
+#
+#     SET panduck_disabled_readers = 'odt';
+#     CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
+#     SELECT count(*) FROM read_panduck_doc('...constructs.odt');   -- 54 rows, measured
+#
+# Both halves are asserted below.
+statement ok
+INSTALL parquet;
+
+statement ok
+LOAD parquet;
+
+statement ok
+CALL panduck_register_doc_reader('', 'read_parquet', ['.zzpolicy']);
+
+statement ok
+COPY (SELECT * FROM read_panduck_doc('test/fixtures/constructs.odt') ORDER BY element_order)
+  TO '__TEST_DIR__/pol.zzpolicy' (FORMAT parquet);
+
+statement ok
+SET panduck_disabled_readers = 'code';
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+----
+true
+
+statement ok
+RESET panduck_disabled_readers;
+
+# A FORMATLESS READER IS GATEABLE BY ITS KEY -- the positive half.
+statement ok
+SET panduck_disabled_readers = 'zzpolicy';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+----
+reader for format 'zzpolicy' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# NOT ASSERTED HERE: re-registering a BUILTIN key. Doing so replaces the builtin row
+# process-wide and the unittest binary shares one process, so the assertion broke
+# multidoc.test three files later. The property it would pin is real and only partly fixed
+# -- see the naming note above and issue #16 -- so it wants a test that does not clobber a
+# builtin, not a test that clobbers one quietly.

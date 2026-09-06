@@ -14,6 +14,29 @@
 
 require panduck
 
+# ---------------------------------------------------------------------------
+# GATED UNTIL THE REGISTRY SERVES duck_block_utils 3.0.0.
+#
+# doc_toc now names duck_blocks_toc_structs, which exists only at spec 6.5. `INSTALL
+# duck_block_utils FROM community` still serves 3f2a0f0 at spec 6.3, so every assertion in
+# this file that calls doc_toc would fail here -- not because panduck is wrong, but because
+# the dependency it targets is tagged and not yet served.
+#
+# This is the deliberate cost of shipping the END STATE rather than machinery for the
+# intermediate one: a runtime gate would keep these green today and is preserved on
+# spike/doc-toc-runtime-gate, but it is not what ships.
+#
+# THE WEAKNESS, STATED PLAINLY: while this gate is on, doc_toc has no CI coverage at all,
+# and an env-gated file does not un-gate itself when the dependency lands. It is the shape I
+# have criticised elsewhere in this suite. It is temporary ON PURPOSE and tracked as its own
+# issue -- delete this gate the day a clean-directory `INSTALL duck_block_utils FROM
+# community` reports 6.5, which is also the day it starts passing.
+#
+# Verified in the meantime against duck_block_utils' own v3.0.0 build installed into a
+# scratch extension_directory: doc_toc returns the identical two rows it always did.
+# `make check-doc-namespace` runs this file.
+require-env PANDUCK_TEST_DUCK_BLOCK_65
+
 # Explicit INSTALL/LOAD rather than `require duck_block_utils`: the unittest binary is
 # built with ENABLE_EXTENSION_AUTOLOADING=0, so `require` cannot load a community
 # extension and the whole file would SKIP -- coverage-shaped with no coverage, which is
@@ -133,12 +156,15 @@ SELECT count(*) FROM (
 0
 
 # doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
+# doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
+# Names duck_blocks_toc_structs directly, matching the macro: 6.5 reshaped duck_blocks_toc
+# to return duck_block[], where .title does not exist.
 query I
 SELECT count(*) FROM (
   (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
   EXCEPT
   (SELECT (t).level, (t).title
-   FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
+   FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
 );
 ----
 0

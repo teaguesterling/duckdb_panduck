@@ -836,9 +836,28 @@ SELECT * FROM query(
                'document, so a glob or list interleaves them. Use '
                'read_panduck_doc(src, filename := true) for multiple documents')
     WHEN panduck_ensure_extension('duck_block_utils')
+    -- SWAPPED TO duck_blocks_toc_structs, the END STATE, not gated on the installed build.
+    --
+    -- duck_block_utils 6.5 reshaped duck_blocks_toc to return duck_block[] and moved this
+    -- projection to duck_blocks_toc_structs. The five fields below exist on the _structs
+    -- form and NOT on a duck_block, so against 6.5 the old name fails to bind:
+    --
+    --     Binder Error: Could not find key "title" in struct
+    --
+    -- A runtime gate on duck_block_spec_version() was built and verified on two real
+    -- installs; it is preserved on branch spike/doc-toc-runtime-gate. It is NOT used here,
+    -- by Teague's call: the registry maintainers review and merge in batches, so panduck's
+    -- first publish and duck_block_utils 3.0.0 land together, and dispatch machinery would
+    -- be guarding a window that never opens for anyone who installs after that.
+    --
+    -- THE CASE THAT LEAVES UNCOVERED, recorded rather than glossed: a user who already has
+    -- duck_block_utils 2.0.0 and installs panduck without running UPDATE EXTENSIONS. That
+    -- is not an intermediate state that closes on its own -- it persists until that user
+    -- updates. Judged small enough not to carry permanent dispatch for on a first publish
+    -- with no existing users. If it shows up in an issue, the gate branch is the fix.
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' ||
+         'FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks(' ||
          panduck_quote(panduck_source_list(src)[1]) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
     ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
@@ -981,6 +1000,26 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // That leaves it UNGATEABLE, which is a real limitation and the honest one: it has no
     // name for a policy to refuse it by. A reader registered WITH a reader_ext is gateable
     // under that extension's name.
+    // IS THE INSTALLED duck_block_utils AT LEAST THIS SPEC VERSION?
+    //
+    // Asked of duck_block_spec_version(), which is duck_block_utils' own published scalar and
+    // present in every build panduck has ever seen, so the question is answered by the
+    // INSTALLED extension rather than by whatever panduck compiled against. Compared
+    // numerically, not as strings: '6.10' sorts before '6.5' lexically and would silently
+    // pick the wrong branch the first time a minor version reaches double digits.
+    //
+    // NOT a C++ catalog lookup, though "does this function exist" is the more direct
+    // question. DuckDB's Catalog::GetEntry takes an EntryLookupInfo in v1.5.5, and this repo
+    // has already been bitten once this week by an executor API that v2.0 removed -- see
+    // RegistryFieldFun. duck_block_spec_version() is a stable public surface in both.
+    {DEFAULT_SCHEMA,
+     "panduck_duck_block_spec_at_least",
+     {"maj", "min", nullptr},
+     {{nullptr, nullptr}},
+     "coalesce(try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) > maj "
+     "  OR (try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) = maj "
+     "      AND try_cast(split_part(duck_block_spec_version(), '.', 2) AS INTEGER) >= min), false)"},
+
     {DEFAULT_SCHEMA,
      "panduck_policy_format",
      {"src", "fmt", nullptr},

@@ -449,15 +449,31 @@ text with no error at all. `code` is itself a nameable format, which makes
 `SET panduck_disabled_readers = 'code'` the difference between *"read documents, or tell me
 you cannot"* and *"read documents, or hand back a parse tree"*.
 
-**The gate covers every public entry point**, not just `read_panduck_doc`: `read_panduck_table`,
-`read_pdf_blocks`, `panduck_read_blocks`, and the whole `doc_*` family, on single, glob and
-list sources alike. It is applied **per path**, and a plural source is refused rather than
-filtered — a mixed list is not silently reduced to its allowed members, because the caller
-asked for every document in it.
+**What the gate covers, and what it does not.** It covers every *dispatching* entry point —
+`read_panduck_doc`, `read_panduck_table`, `read_pdf_blocks`, `panduck_read_blocks` and the
+whole `doc_*` family — on single, glob and list sources alike. It is applied **per path**, and
+a plural source is refused rather than filtered: a mixed list is not silently reduced to its
+allowed members, because the caller asked for every document in it.
 
-**One reader shape cannot be gated:** a doc reader registered with an *empty* `reader_ext`
-has no format name for a policy to refuse it by, so it is unaffected by either list.
-Registering with a `reader_ext` gives it a name, and it is then gateable under that name.
+**It does not cover panduck's own format readers called directly.** `read_odt_blocks`,
+`read_rtf_blocks`, `read_docx_blocks` and the rest of that family — including their `_string`
+variants — bypass these settings entirely, because dispatch is not in their path. Measured:
+with `panduck_disabled_readers = 'odt'`, `read_odt_blocks('x.odt')` still returns its rows.
+A deployment relying on these settings must also restrict those functions by other means.
+Closing that gap is [issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
+
+**How a source is named for policy.** In order: an explicit `format :=` argument, then the
+registry's format for it, then the registry key with its dot stripped, then `code`. The
+third link exists so a reader registered with an *empty* `reader_ext` — which has no format —
+is still nameable, rather than being mistaken for the `code` fallback and refused with it.
+
+**A caveat that has not been fully closed.** Registration *replaces* a registry row rather
+than shadowing it, so re-registering an extension can change the name policy knows it by.
+Where the key and the format differ — `.md` is format `markdown` — re-registering `.md` with
+an empty `reader_ext` renames it to `md`, and a denylist naming `markdown` stops applying.
+Setting `panduck_allow_registration = false` closes this, and the two settings are best
+treated as a pair rather than independent knobs. Tracked as
+[issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
 
 ### A glob matching nothing raises
 

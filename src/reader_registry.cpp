@@ -358,7 +358,7 @@ using readers::ReaderRegistry;
 // registry is a subquery, and query() rejects subqueries in its argument -- which is
 // exactly the expression dispatch has to build. See reader_registry.hpp.
 
-enum class Field { FORMAT, FUNCTION, READER_EXT, KIND };
+enum class Field { FORMAT, FUNCTION, READER_EXT, KIND, EXT };
 
 template <Field F>
 void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -393,6 +393,9 @@ void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
 			break;
 		case Field::KIND:
 			value = &entry.kind;
+			break;
+		case Field::EXT:
+			value = &entry.ext;
 			break;
 		case Field::FORMAT:
 			break;
@@ -982,7 +985,26 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "panduck_policy_format",
      {"src", "fmt", nullptr},
      {{nullptr, nullptr}},
+     // The fallback chain, and each link is load-bearing:
+     //
+     //   1. the resolved format          -- what a builtin, or a user entry with a
+     //                                      reader_ext, is known as
+     //   2. the REGISTRY KEY, dot stripped -- what an entry with NO format is known as
+     //   3. 'code'                       -- only when nothing claimed the source at all
+     //
+     // LINK 2 IS THE ONE WITH SCARS. It was 'code' at first, which killed a formatless
+     // reader whenever the fallback was disabled, naming a branch that would never have run.
+     // Replacing it with NULL fixed that and opened a ONE-STATEMENT BYPASS of the whole
+     // control: registration REPLACES a builtin row rather than shadowing it, so
+     //
+     //     SET panduck_disabled_readers = 'odt';
+     //     CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
+     //
+     // gave the row an empty format, NULL here, and odt read again -- 54 rows, measured.
+     // Naming the entry by its key answers both: a formatless reader has a name, so it is
+     // gateable rather than collateral damage, and re-registering '.odt' still answers 'odt'.
      "coalesce(panduck_resolved_format(src, fmt), "
+     "         ltrim(panduck_registry_key_for(src), '.'), "
      "         CASE WHEN panduck_reader_function_for(src) IS NULL THEN 'code' END)"},
 
     {DEFAULT_SCHEMA,
@@ -1972,6 +1994,10 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                                       RegistryFieldFun<Field::READER_EXT>));
 	loader.RegisterFunction(ScalarFunction("panduck_reader_kind_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                                       RegistryFieldFun<Field::KIND>));
+	// The registry KEY the source matched ('.odt', 'zim://'). Exposed so policy can name an
+	// entry that has no format -- see panduck_policy_format.
+	loader.RegisterFunction(ScalarFunction("panduck_registry_key_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                       RegistryFieldFun<Field::EXT>));
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_can_read", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, CanReadFun));
 	// SPECIAL_HANDLING, and it is load-bearing rather than a formality. Under DuckDB's

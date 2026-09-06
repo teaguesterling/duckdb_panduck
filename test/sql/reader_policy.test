@@ -246,9 +246,18 @@ SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
 # format 'code' is disabled", naming a fallback that was never going to run. Collateral
 # damage AND a misleading message. It now answers NULL, the gate is not taken, and it reads.
 #
-# That leaves such a reader UNGATEABLE, which is the honest limitation rather than a hidden
-# one: it has no name for a policy to refuse it by. Registering WITH a reader_ext gives it
-# one. Asserted so the trade is visible if anyone changes it.
+# It is named instead by its REGISTRY KEY with the dot stripped, so it is gateable rather
+# than either collateral damage or unreachable by policy.
+#
+# NAMING IT MATTERS FOR MORE THAN TIDINESS. Answering NULL here -- the first attempt at
+# fixing the 'code' collateral kill -- opened a one-statement bypass of the entire control,
+# because registration REPLACES a builtin row rather than shadowing it:
+#
+#     SET panduck_disabled_readers = 'odt';
+#     CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
+#     SELECT count(*) FROM read_panduck_doc('...constructs.odt');   -- 54 rows, measured
+#
+# Both halves are asserted below.
 statement ok
 INSTALL parquet;
 
@@ -272,3 +281,21 @@ true
 
 statement ok
 RESET panduck_disabled_readers;
+
+# A FORMATLESS READER IS GATEABLE BY ITS KEY -- the positive half.
+statement ok
+SET panduck_disabled_readers = 'zzpolicy';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+----
+reader for format 'zzpolicy' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# NOT ASSERTED HERE: re-registering a BUILTIN key. Doing so replaces the builtin row
+# process-wide and the unittest binary shares one process, so the assertion broke
+# multidoc.test three files later. The property it would pin is real and only partly fixed
+# -- see the naming note above and issue #16 -- so it wants a test that does not clobber a
+# builtin, not a test that clobbers one quietly.

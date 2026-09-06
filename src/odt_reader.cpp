@@ -1,4 +1,5 @@
 #include "doc_metadata.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 #include "odt_reader.hpp"
 
@@ -741,8 +742,9 @@ struct OdtGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-unique_ptr<FunctionData> OdtBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                 panduck::BindNames &names) {
+unique_ptr<FunctionData> OdtBind(ClientContext &context, TableFunctionBindInput &input,
+                                 vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "odt");
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::INTEGER,

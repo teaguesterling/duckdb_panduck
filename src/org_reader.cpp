@@ -1,4 +1,5 @@
 #include "org_reader.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
 #include "block_json.hpp"
@@ -573,8 +574,9 @@ void BuildRows(const std::string &src, std::vector<OrgRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> OrgFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                     panduck::BindNames &names) {
+unique_ptr<FunctionData> OrgFileBind(ClientContext &context, TableFunctionBindInput &input,
+                                     vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "org");
 	OrgColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -587,8 +589,9 @@ unique_ptr<FunctionData> OrgFileBind(ClientContext &, TableFunctionBindInput &in
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> OrgStringBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> OrgStringBind(ClientContext &context, TableFunctionBindInput &input,
                                        vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "org");
 	OrgColumns(return_types, names);
 	auto result = make_uniq<OrgBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

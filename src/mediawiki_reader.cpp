@@ -1,4 +1,5 @@
 #include "mediawiki_reader.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
 #include "block_json.hpp"
@@ -829,8 +830,9 @@ void BuildRows(const std::string &src, std::vector<MwRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> MwFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                    panduck::BindNames &names) {
+unique_ptr<FunctionData> MwFileBind(ClientContext &context, TableFunctionBindInput &input,
+                                    vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "mediawiki");
 	MwColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -843,8 +845,9 @@ unique_ptr<FunctionData> MwFileBind(ClientContext &, TableFunctionBindInput &inp
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> MwStringBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      panduck::BindNames &names) {
+unique_ptr<FunctionData> MwStringBind(ClientContext &context, TableFunctionBindInput &input,
+                                      vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "mediawiki");
 	MwColumns(return_types, names);
 	auto result = make_uniq<MwBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

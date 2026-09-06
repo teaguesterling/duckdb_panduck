@@ -1,0 +1,91 @@
+# name: test/sql/reader_policy_mutation.test
+# description: a registration cannot rename a source out of a denylist
+# group: [sql]
+
+#
+# THIS FILE MUTATES THE BUILTIN REGISTRY, WHICH IS WHY IT RUNS ALONE.
+#
+# The property under test is that re-registering a builtin extension cannot change the name
+# policy knows it by. Proving it requires actually performing that re-registration -- and
+# Register() REPLACES the row in a process-wide registry that every other file in the
+# unittest binary shares. Asserting it inside the default suite broke reader_registry.test:142
+# three files later, and there is no way to restore the original row through the public API:
+# a user registration always sets format = reader_ext, while the builtin '.odt' row is
+# format 'odt' with reader_ext 'panduck'.
+#
+# So it is gated and run by `make check-policy`, in a process of its own, exactly as
+# pdf_reader.test is gated for a different reason. A test that cannot be isolated and is run
+# anyway is how one file's registration silently invalidates another file's assertion --
+# the failure this repo already tracks as issue #10.
+#
+
+require panduck
+
+require-env PANDUCK_TEST_POLICY_MUTATION
+
+# ---------------------------------------------------------------------------
+# THE MEASURED BYPASS. Both forms below read again, before the fix:
+#
+#   SET panduck_disabled_readers = 'odt';
+#   CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
+#   SELECT count(*) FROM read_panduck_doc('...constructs.odt');   -- 54 rows
+#   SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt'); -- 180 rows
+#
+# '.odt' was closed first by naming a formatless entry after its registry key -- but only
+# because key and format coincide there. '.md' is format 'markdown', so the same trick
+# renamed it to 'md' and a denylist naming 'markdown' stopped applying.
+
+statement ok
+SET panduck_disabled_readers = 'odt';
+
+statement ok
+CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
+
+# The live row really was clobbered -- this is what made the bypass work, asserted so the
+# test cannot pass by the registration having silently failed.
+query II
+SELECT panduck_format_for('a.odt') IS NULL, panduck_builtin_format_for('a.odt');
+----
+true	odt
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/*.odt');
+----
+reader for format 'odt' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# ...and the re-registered reader still WORKS once policy allows it, so the refusal is
+# policy rather than a side effect of having clobbered the row.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.odt');
+----
+true
+
+# ---------------------------------------------------------------------------
+# THE CASE THE REGISTRY-KEY FIX DID NOT COVER: key '.md', format 'markdown'.
+statement ok
+SET panduck_disabled_readers = 'markdown';
+
+statement ok
+CALL panduck_register_doc_reader('', 'read_markdown_blocks', ['.md']);
+
+query III
+SELECT panduck_format_for('a.md') IS NULL, panduck_builtin_format_for('a.md'),
+       panduck_policy_format('a.md', 'auto');
+----
+true	markdown	markdown
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.source.md');
+----
+reader for format 'markdown' is disabled
+
+statement ok
+RESET panduck_disabled_readers;

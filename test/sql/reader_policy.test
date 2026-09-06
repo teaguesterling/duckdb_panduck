@@ -329,3 +329,111 @@ RESET panduck_disabled_readers;
 # multidoc.test three files later. The property it would pin is real and only partly fixed
 # -- see the naming note above and issue #16 -- so it wants a test that does not clobber a
 # builtin, not a test that clobbers one quietly.
+
+# ---------------------------------------------------------------------------
+# A REGISTRATION CANNOT RENAME A SOURCE OUT OF A DENYLIST.
+#
+# Register() REPLACES a registry row rather than shadowing it, and the policy name used to
+# come from that row -- so re-registering an extension renamed it and the denylist stopped
+# matching. Two measured forms, both now closed:
+#
+#   SET panduck_disabled_readers = 'odt';
+#   CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);   -- read again: 54 rows
+#
+#   SET panduck_disabled_readers = 'markdown';
+#   CALL panduck_register_doc_reader('', 'read_markdown_blocks', ['.md']);
+#   -- policy name became 'md'; 'markdown' no longer matched
+#
+# The first was closed by naming a formatless entry after its registry key. That fixed '.odt'
+# ONLY BECAUSE key and format coincide there, and left '.md' -> 'markdown' open. Policy now
+# asks what panduck NATIVELY calls the extension, from a map frozen when the registry is
+# constructed, which no registration can reach.
+
+# The frozen map itself: native names, no mutation involved.
+query III
+SELECT panduck_builtin_format_for('a.md'), panduck_builtin_format_for('a.odt'),
+       panduck_builtin_format_for('a.no_such_ext') IS NULL;
+----
+markdown	odt	true
+
+# ...and it is what the policy chain reports.
+query II
+SELECT panduck_policy_format('a.md', 'auto'), panduck_policy_format('a.odt', 'auto');
+----
+markdown	odt
+
+# THE BYPASS ITSELF IS ASSERTED IN A SEPARATE PROCESS. Proving that a re-registration
+# cannot rename a source requires actually re-registering a BUILTIN extension, and Register()
+# replaces the row in a PROCESS-WIDE registry that every later test file in this binary
+# shares -- doing it here broke reader_registry.test:142. See test/sql/reader_policy_mutation.test
+# and `make check-policy`, which runs it in a process of its own.
+
+# AN EXPLICIT format := STILL WINS, so the frozen map hardens the default path without
+# taking the override away.
+query I
+SELECT panduck_policy_format('a.md', 'html');
+----
+html
+
+# ---------------------------------------------------------------------------
+# panduck's OWN READERS HONOUR THE POLICY TOO.
+#
+# They are public table functions, so they are a second door onto exactly the content
+# read_panduck_doc gates -- and a stronger case than read_pdf_blocks was, because
+# read_odt_blocks is not a wrapper: it IS the reader dispatch routes to. Measured while they
+# were open: with odt disabled, read_panduck_doc refused and read_odt_blocks returned its 54
+# rows, and an allowlist naming only 'odt' still let read_rtf_blocks return 14.
+#
+# Gated in each reader's BIND, so a disabled reader fails before any file is opened and
+# fails with panduck's named error rather than the reader's own IO error.
+statement ok
+SET panduck_disabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# THE ALLOWLIST REACHES THEM TOO, and reaches a reader OTHER than the one it names -- the
+# form that proves it is an allowlist rather than a denylist in disguise.
+statement ok
+SET panduck_enabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf');
+----
+reader for format 'rtf' is disabled
+
+# ...and the one format the allowlist DOES name still reads.
+query I
+SELECT count(*) > 0 FROM read_odt_blocks('test/fixtures/constructs.odt');
+----
+true
+
+statement ok
+RESET panduck_enabled_readers;
+
+# THE _string VARIANTS ARE GATED AS WELL. They take no path at all, so nothing about
+# dispatch or file resolution is involved -- an easy family to miss, and the one a consumer
+# holding a document in a column would reach for.
+statement ok
+SET panduck_disabled_readers = 'latex';
+
+statement error
+SELECT count(*) FROM read_latex_blocks_string('\section{a}');
+----
+reader for format 'latex' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# NEGATIVE CONTROL for the whole section: every one of them reads by default.
+query III
+SELECT (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt')),
+       (SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')),
+       (SELECT count(*) FROM read_latex_blocks_string('\section{a}'));
+----
+54	14	1

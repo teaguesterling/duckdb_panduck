@@ -139,6 +139,17 @@ test_roundtrip:
 check-doc-namespace:
 	PANDUCK_TEST_DUCK_BLOCK_65=1 ./build/release/test/unittest "test/sql/doc_namespace.test"
 
+# check-policy -- the reader-policy assertions that MUTATE the builtin registry.
+#
+# Proving that a re-registration cannot rename a source out of a denylist means actually
+# re-registering a builtin extension, and Register() replaces the row in a PROCESS-WIDE
+# registry every other test file in the unittest binary shares. Run inside the default suite
+# it broke reader_registry.test three files later, and the original row cannot be restored
+# through the public API. So it runs alone, here.
+.PHONY: check-policy
+check-policy:
+	PANDUCK_TEST_POLICY_MUTATION=1 ./build/release/test/unittest "test/sql/reader_policy_mutation.test"
+
 .PHONY: check-pdf
 check-pdf:
 	PANDUCK_TEST_PDF=1 ./build/release/test/unittest "test/sql/pdf_reader.test"

@@ -1,4 +1,5 @@
 #include "textile_reader.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
 #include "block_json.hpp"
@@ -563,8 +564,9 @@ void BuildRows(const std::string &src, std::vector<TxRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> TxFileBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                    panduck::BindNames &names) {
+unique_ptr<FunctionData> TxFileBind(ClientContext &context, TableFunctionBindInput &input,
+                                    vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "textile");
 	TxColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -577,8 +579,9 @@ unique_ptr<FunctionData> TxFileBind(ClientContext &, TableFunctionBindInput &inp
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> TxStringBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      panduck::BindNames &names) {
+unique_ptr<FunctionData> TxStringBind(ClientContext &context, TableFunctionBindInput &input,
+                                      vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "textile");
 	TxColumns(return_types, names);
 	auto result = make_uniq<TxBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

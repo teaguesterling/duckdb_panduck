@@ -313,6 +313,19 @@ ReaderRegistry::ReaderRegistry() {
 			    ReaderEntry {NormalizeExt(f.extensions[j]), f.format, "panduck", f.reader, KIND_DOC, SOURCE_BUILTIN});
 		}
 	}
+	// FROZEN HERE, at the one moment every row is still builtin. Register() runs only
+	// after construction, so nothing a user does can reach this map -- which is the
+	// entire point: see BuiltinFormat's comment for the bypass it closes.
+	for (auto &e : entries) {
+		if (!e.format.empty()) {
+			builtin_format[e.ext] = e.format;
+		}
+	}
+}
+
+std::string ReaderRegistry::BuiltinFormat(const std::string &ext) {
+	auto it = builtin_format.find(ext);
+	return it == builtin_format.end() ? std::string() : it->second;
 }
 
 std::vector<ReaderEntry> ReaderRegistry::Entries() {
@@ -359,6 +372,27 @@ using readers::ReaderRegistry;
 // exactly the expression dispatch has to build. See reader_registry.hpp.
 
 enum class Field { FORMAT, FUNCTION, READER_EXT, KIND, EXT };
+
+//! What panduck NATIVELY calls this source's extension -- from the map frozen at registry
+//! construction, so a registration cannot change the answer. Empty string becomes NULL, as
+//! for every other registry scalar, so callers can coalesce past it.
+//!
+//! Deliberately NOT a Field of RegistryFieldFun: that reads the LIVE entry, and reading the
+//! live entry is exactly the thing this exists to avoid.
+void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+	auto paths = UnifiedVectorFormat::GetData<string_t>(input);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		auto fmt = ReaderRegistry::Get().BuiltinFormat(ExtOfPath(paths[idx].GetString()));
+		result.SetValue(i, fmt.empty() ? Value() : Value(fmt));
+	}
+}
 
 template <Field F>
 void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -1031,18 +1065,31 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      //   2. the REGISTRY KEY, dot stripped -- what an entry with NO format is known as
      //   3. 'code'                       -- only when nothing claimed the source at all
      //
-     // LINK 2 IS THE ONE WITH SCARS. It was 'code' at first, which killed a formatless
-     // reader whenever the fallback was disabled, naming a branch that would never have run.
-     // Replacing it with NULL fixed that and opened a ONE-STATEMENT BYPASS of the whole
-     // control: registration REPLACES a builtin row rather than shadowing it, so
+     // LINK 2 IS THE FROZEN ONE, and it is why this is not merely a coalesce. The chain
+     // started as `resolved_format, then 'code'`, which killed a formatless reader whenever
+     // the fallback was disabled. Replacing 'code' with NULL fixed that and opened a
+     // ONE-STATEMENT BYPASS of the entire control, because Register() REPLACES a row rather
+     // than shadowing it:
      //
      //     SET panduck_disabled_readers = 'odt';
      //     CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
      //
-     // gave the row an empty format, NULL here, and odt read again -- 54 rows, measured.
-     // Naming the entry by its key answers both: a formatless reader has a name, so it is
-     // gateable rather than collateral damage, and re-registering '.odt' still answers 'odt'.
-     "coalesce(panduck_resolved_format(src, fmt), "
+     // gave the row an empty format, NULL here, and odt read again -- 54 rows, and 180
+     // through a glob. Naming by the registry KEY closed that for '.odt' and NOT in general:
+     // where key and format differ, re-registering '.md' renamed it from 'markdown' to 'md'
+     // and a denylist naming 'markdown' stopped applying. Also measured.
+     //
+     // So policy asks what panduck NATIVELY calls the extension, from a map frozen at
+     // registry construction that no registration can reach. A builtin format cannot be
+     // renamed out of a denylist by any statement a user can write.
+     //
+     // BUILTIN BEATS LIVE, deliberately. Pointing '.md' at some other reader does not
+     // escape a 'markdown' denylist -- the operator disabled reading markdown files, and
+     // that is what they get. A reader for an extension panduck does NOT ship keeps its own
+     // name through links 3 and 4.
+     "coalesce(nullif(fmt, 'auto'), "
+     "         panduck_builtin_format_for(src), "
+     "         panduck_format_for(src), "
      "         ltrim(panduck_registry_key_for(src), '.'), "
      "         CASE WHEN panduck_reader_function_for(src) IS NULL THEN 'code' END)"},
 
@@ -2020,6 +2067,16 @@ void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
 
 } // namespace
 
+namespace readers {
+void RequireReaderEnabled(ClientContext &context, const char *format) {
+	if (!ReaderFormatEnabled(context, format)) {
+		throw InvalidInputException("panduck: reader for format '%s' is disabled "
+		                            "(see panduck_enabled_readers and panduck_disabled_readers)",
+		                            format);
+	}
+}
+} // namespace readers
+
 void RegisterReaderRegistry(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun));
@@ -2033,6 +2090,10 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                                       RegistryFieldFun<Field::READER_EXT>));
 	loader.RegisterFunction(ScalarFunction("panduck_reader_kind_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                                       RegistryFieldFun<Field::KIND>));
+	// What panduck NATIVELY calls this extension, from the frozen map. Policy consults this
+	// FIRST so a re-registration cannot rename a source out of a denylist.
+	loader.RegisterFunction(
+	    ScalarFunction("panduck_builtin_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR, BuiltinFormatFun));
 	// The registry KEY the source matched ('.odt', 'zim://'). Exposed so policy can name an
 	// entry that has no format -- see panduck_policy_format.
 	loader.RegisterFunction(ScalarFunction("panduck_registry_key_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,

@@ -139,6 +139,19 @@ private:
 
 } // namespace readers
 
+namespace readers {
+//! Throw unless policy allows this FORMAT to read.
+//!
+//! For panduck's OWN readers, which are public table functions and therefore a second door
+//! onto the same content that read_panduck_doc gates. Measured before this existed: with
+//! `panduck_disabled_readers = 'odt'`, read_panduck_doc refused and read_odt_blocks returned
+//! its 54 rows. read_odt_blocks is not a wrapper -- it IS the reader dispatch routes to.
+//!
+//! Called from each reader's BIND rather than its scan, so a disabled reader fails before
+//! any file is opened, and fails with panduck's named error rather than the reader's own.
+void RequireReaderEnabled(ClientContext &context, const char *format);
+} // namespace readers
+
 void RegisterReaderRegistry(ExtensionLoader &loader);
 
 } // namespace duckdb

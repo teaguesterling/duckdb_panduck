@@ -2067,6 +2067,16 @@ void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
 
 } // namespace
 
+namespace readers {
+void RequireReaderEnabled(ClientContext &context, const char *format) {
+	if (!ReaderFormatEnabled(context, format)) {
+		throw InvalidInputException("panduck: reader for format '%s' is disabled "
+		                            "(see panduck_enabled_readers and panduck_disabled_readers)",
+		                            format);
+	}
+}
+} // namespace readers
+
 void RegisterReaderRegistry(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun));

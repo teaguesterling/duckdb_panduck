@@ -1,4 +1,5 @@
 #include "block_json.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 #include "latex_reader.hpp"
 
@@ -1593,6 +1594,7 @@ void BuildRows(const std::string &source, std::vector<BlockRow> &rows) {
 
 unique_ptr<FunctionData> LatexFileBind(ClientContext &context, TableFunctionBindInput &input,
                                        vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "latex");
 	LatexColumns(return_types, names);
 
 	auto path = input.inputs[0].GetValue<string>();
@@ -1613,8 +1615,9 @@ unique_ptr<FunctionData> LatexFileBind(ClientContext &context, TableFunctionBind
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> LatexStringBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> LatexStringBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "latex");
 	LatexColumns(return_types, names);
 	auto result = make_uniq<LatexReaderBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

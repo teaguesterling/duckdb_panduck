@@ -1,4 +1,5 @@
 #include "block_json.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 #include "epub_reader.hpp"
 
@@ -959,8 +960,9 @@ struct EpubGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-unique_ptr<FunctionData> EpubBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                  panduck::BindNames &names) {
+unique_ptr<FunctionData> EpubBind(ClientContext &context, TableFunctionBindInput &input,
+                                  vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "epub");
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::INTEGER,

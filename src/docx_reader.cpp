@@ -1,4 +1,5 @@
 #include "doc_metadata.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 #include "docx_reader.hpp"
 
@@ -764,8 +765,9 @@ struct DocxGlobalState : public GlobalTableFunctionState {
 	}
 };
 
-unique_ptr<FunctionData> DocxBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                  panduck::BindNames &names) {
+unique_ptr<FunctionData> DocxBind(ClientContext &context, TableFunctionBindInput &input,
+                                  vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "docx");
 	// Column order mirrors the duck_block struct, so a row casts straight to duck_block
 	// and read_panduck_doc's flat branch can SELECT * it through.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};

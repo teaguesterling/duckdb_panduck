@@ -1,4 +1,5 @@
 #include "ipynb_reader.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
 #include "duck_block_types.hpp"
@@ -344,8 +345,9 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 	}
 }
 
-unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> IpynbFileBind(ClientContext &context, TableFunctionBindInput &input,
                                        vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "ipynb");
 	IpynbColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
@@ -358,8 +360,9 @@ unique_ptr<FunctionData> IpynbFileBind(ClientContext &, TableFunctionBindInput &
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> IpynbStringBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> IpynbStringBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "ipynb");
 	IpynbColumns(return_types, names);
 	auto result = make_uniq<IpynbBindData>();
 	BuildRows(input.inputs[0].GetValue<string>(), result->rows);

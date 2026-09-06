@@ -1,4 +1,5 @@
 #include "pandoc_reader.hpp"
+#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
 #include "duck_block_types.hpp"
@@ -40,8 +41,9 @@ unique_ptr<FunctionData> BindFromJson(const string &json, vector<LogicalType> &r
 	return std::move(result);
 }
 
-unique_ptr<FunctionData> PandocFileBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> PandocFileBind(ClientContext &context, TableFunctionBindInput &input,
                                         vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "pandoc");
 	auto path = input.inputs[0].GetValue<string>();
 	std::ifstream in(path, std::ios::binary);
 	if (!in) {
@@ -51,8 +53,9 @@ unique_ptr<FunctionData> PandocFileBind(ClientContext &, TableFunctionBindInput 
 	return BindFromJson(json, return_types, names);
 }
 
-unique_ptr<FunctionData> PandocStringBind(ClientContext &, TableFunctionBindInput &input,
+unique_ptr<FunctionData> PandocStringBind(ClientContext &context, TableFunctionBindInput &input,
                                           vector<LogicalType> &return_types, panduck::BindNames &names) {
+	readers::RequireReaderEnabled(context, "pandoc");
 	return BindFromJson(input.inputs[0].GetValue<string>(), return_types, names);
 }
 

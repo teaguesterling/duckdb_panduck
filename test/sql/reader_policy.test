@@ -374,3 +374,66 @@ query I
 SELECT panduck_policy_format('a.md', 'html');
 ----
 html
+
+# ---------------------------------------------------------------------------
+# panduck's OWN READERS HONOUR THE POLICY TOO.
+#
+# They are public table functions, so they are a second door onto exactly the content
+# read_panduck_doc gates -- and a stronger case than read_pdf_blocks was, because
+# read_odt_blocks is not a wrapper: it IS the reader dispatch routes to. Measured while they
+# were open: with odt disabled, read_panduck_doc refused and read_odt_blocks returned its 54
+# rows, and an allowlist naming only 'odt' still let read_rtf_blocks return 14.
+#
+# Gated in each reader's BIND, so a disabled reader fails before any file is opened and
+# fails with panduck's named error rather than the reader's own IO error.
+statement ok
+SET panduck_disabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt');
+----
+reader for format 'odt' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# THE ALLOWLIST REACHES THEM TOO, and reaches a reader OTHER than the one it names -- the
+# form that proves it is an allowlist rather than a denylist in disguise.
+statement ok
+SET panduck_enabled_readers = 'odt';
+
+statement error
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf');
+----
+reader for format 'rtf' is disabled
+
+# ...and the one format the allowlist DOES name still reads.
+query I
+SELECT count(*) > 0 FROM read_odt_blocks('test/fixtures/constructs.odt');
+----
+true
+
+statement ok
+RESET panduck_enabled_readers;
+
+# THE _string VARIANTS ARE GATED AS WELL. They take no path at all, so nothing about
+# dispatch or file resolution is involved -- an easy family to miss, and the one a consumer
+# holding a document in a column would reach for.
+statement ok
+SET panduck_disabled_readers = 'latex';
+
+statement error
+SELECT count(*) FROM read_latex_blocks_string('\section{a}');
+----
+reader for format 'latex' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# NEGATIVE CONTROL for the whole section: every one of them reads by default.
+query III
+SELECT (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt')),
+       (SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')),
+       (SELECT count(*) FROM read_latex_blocks_string('\section{a}'));
+----
+54	14	1

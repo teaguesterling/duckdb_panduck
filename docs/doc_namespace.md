@@ -455,12 +455,11 @@ whole `doc_*` family — on single, glob and list sources alike. It is applied *
 a plural source is refused rather than filtered: a mixed list is not silently reduced to its
 allowed members, because the caller asked for every document in it.
 
-**It does not cover panduck's own format readers called directly.** `read_odt_blocks`,
-`read_rtf_blocks`, `read_docx_blocks` and the rest of that family — including their `_string`
-variants — bypass these settings entirely, because dispatch is not in their path. Measured:
-with `panduck_disabled_readers = 'odt'`, `read_odt_blocks('x.odt')` still returns its rows.
-A deployment relying on these settings must also restrict those functions by other means.
-Closing that gap is [issue #16](https://github.com/teaguesterling/duckdb_panduck/issues/16).
+**It covers panduck's own format readers called directly too** — `read_odt_blocks`,
+`read_rtf_blocks`, `read_docx_blocks` and the rest of that family, including their `_string`
+variants, which take no path at all. Each is gated in its **bind**, so a disabled reader
+fails before any file is opened and fails with panduck's named error rather than the
+reader's own IO error.
 
 **How a source is named for policy.** In order: an explicit `format :=` argument, then the
 registry's format for it, then the registry key with its dot stripped, then `code`. The

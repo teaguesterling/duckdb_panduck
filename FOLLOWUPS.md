@@ -141,19 +141,3 @@ so `register_reader.test`'s registrations are still present when `reader_registr
 Verified to be an ordering *sensitivity*, not an ordering *requirement* — both files pass
 alone and in suite order — but a future test that registers something could silently
 invalidate an assertion in another file.
-
-### 10. Reader policy: panduck's own format readers are ungated
-
-[#16](https://github.com/teaguesterling/duckdb_panduck/issues/16), remaining half.
-`read_odt_blocks`, `read_rtf_blocks`, `read_docx_blocks` and the rest of that family —
-including their `_string` variants — bypass `panduck_enabled_readers` /
-`panduck_disabled_readers` entirely, because dispatch is not in their path. Measured: with
-`panduck_disabled_readers = 'odt'`, `read_odt_blocks('x.odt')` returns its 54 rows.
-
-Stronger case than `read_pdf_blocks` was: `read_odt_blocks` is not a wrapper, it is the
-reader `read_panduck_doc` dispatches **to**. Deferred because it is ~19 bind functions across
-12 files with no shared adapter — `panduck::BindNames` is a version-compat type alias, not a
-choke point — so it wants its own review pass.
-
-The *other* half of #16 — a registration renaming a source out of a denylist — is fixed:
-policy now names a source from a builtin map frozen at registry construction.

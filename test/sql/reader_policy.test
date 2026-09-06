@@ -14,6 +14,23 @@
 
 require panduck
 
+# WHY THIS FILE AVOIDS .rtf, WHICH WOULD OTHERWISE BE THE OBVIOUS FIXTURE.
+#
+# reader_registry.test:328 re-registers '.rtf' with reader_ext 'panduck', and a user
+# registration sets format = reader_ext -- so after that file runs, '.rtf' has FORMAT
+# 'panduck' in the process-wide registry. This file then asked for an allowlist of
+# 'rtf,markdown' and got `reader for format 'panduck' is disabled`.
+#
+# It went green on Linux and RED ON macOS arm64, because the two platforms enumerate the
+# test directory in different orders, so the polluting file runs before this one on only one
+# of them. A latent order dependency that a single platform cannot reveal.
+#
+# '.docx' and '.tex' are the extensions no test re-registers; this file uses '.docx' and
+# '.odt'. The real fix is per-file registry isolation -- issue #10 -- and the frozen builtin
+# map on the #16 branch makes policy immune to exactly this by naming a source from what
+# panduck NATIVELY calls it rather than from the live row. Until one of those lands, the
+# fixture choice is the guard.
+
 # ---------------------------------------------------------------------------
 # DEFAULTS. Asserted first, because a setting whose default changed behaviour would be a
 # far worse bug than any it prevents.
@@ -76,7 +93,7 @@ reader for format 'odt' is disabled
 
 # ...and the disabled reader is the only one affected.
 query I
-SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.docx');
 ----
 true
 
@@ -91,7 +108,7 @@ true
 # ---------------------------------------------------------------------------
 # THE ALLOWLIST. '*' means all; a list means only those.
 statement ok
-SET panduck_enabled_readers = 'rtf,markdown';
+SET panduck_enabled_readers = 'docx,markdown';
 
 statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
@@ -99,19 +116,19 @@ SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
 reader for format 'odt' is disabled
 
 query I
-SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.docx');
 ----
 true
 
 # THE DENYLIST APPLIES AFTER THE ALLOWLIST, so a format in both is refused. Asserted because
 # "both set" is the case where a reader could otherwise smuggle itself back on.
 statement ok
-SET panduck_disabled_readers = 'rtf';
+SET panduck_disabled_readers = 'docx';
 
 statement error
-SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.docx');
 ----
-reader for format 'rtf' is disabled
+reader for format 'docx' is disabled
 
 statement ok
 RESET panduck_enabled_readers;
@@ -137,9 +154,9 @@ RESET panduck_disabled_readers;
 
 # ---------------------------------------------------------------------------
 # WHITESPACE AND CASE are tolerated in the lists, because a hand-typed SET is the whole
-# interface and ' ODT , rtf ' is what a person writes.
+# interface and ' ODT , docx ' is what a person writes.
 statement ok
-SET panduck_disabled_readers = ' ODT , rtf ';
+SET panduck_disabled_readers = ' ODT , docx ';
 
 statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
@@ -147,9 +164,9 @@ SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt');
 reader for format 'odt' is disabled
 
 statement error
-SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf');
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.docx');
 ----
-reader for format 'rtf' is disabled
+reader for format 'docx' is disabled
 
 statement ok
 RESET panduck_disabled_readers;
@@ -189,17 +206,17 @@ SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.odt']);
 is disabled
 
 # A MIXED LIST IS REFUSED FOR THE DISABLED MEMBER, not silently reduced to the allowed ones.
-# Dropping the odt and returning the rtf would be the silent-data-loss shape this repo has
+# Dropping the odt and returning the docx would be the silent-data-loss shape this repo has
 # spent its whole cycle removing -- the caller asked for both documents.
 statement error
-SELECT count(*) FROM read_panduck_doc(['test/fixtures/pandoc_outlinelevel.rtf', 'test/fixtures/constructs.odt']);
+SELECT count(*) FROM read_panduck_doc(['test/fixtures/constructs.docx', 'test/fixtures/constructs.odt']);
 ----
 is disabled
 
 # ...and a plural read of only ALLOWED formats still works, so the gate is per-path and not
 # "any list is refused once anything is disabled".
 query I
-SELECT count(*) > 0 FROM read_panduck_doc(['test/fixtures/pandoc_outlinelevel.rtf']);
+SELECT count(*) > 0 FROM read_panduck_doc(['test/fixtures/constructs.docx']);
 ----
 true
 
@@ -222,19 +239,32 @@ true
 # read_pdf_blocks went straight to read_pdf_elements. Each is a second door, and by this
 # file's own argument a control that reads as protection while being walked around is worse
 # than no control.
+# USES A CORE READER ON PURPOSE. This first asserted the toml path, and the negative
+# control -- reading the file once policy allows it -- FAILED IN CI with
+# `panduck: toml needs the toml extension`. It passed locally only because this machine's
+# ~/.duckdb profile has toml installed; the CI image does not, and the unittest binary is
+# built with ENABLE_EXTENSION_AUTOLOADING=0 so nothing fetches it.
+#
+# The policy assertion above it passed either way, because the gate fires BEFORE the
+# companion extension is needed -- so the half that broke was the control, which is the half
+# that proves the refusal was policy rather than a missing extension. Writing the fixture
+# here with core CSV keeps both halves meaningful with no optional dependency.
 statement ok
-SET panduck_disabled_readers = 'toml';
+COPY (SELECT 1 AS a, 'x' AS b) TO '__TEST_DIR__/policy.csv' (FORMAT csv, HEADER);
+
+statement ok
+SET panduck_disabled_readers = 'data';
 
 statement error
-SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
 ----
-reader for format 'toml' is disabled
+reader for format 'data' is disabled
 
 statement ok
 RESET panduck_disabled_readers;
 
 query I
-SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
 ----
 1
 

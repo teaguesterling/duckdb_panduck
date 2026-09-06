@@ -2010,7 +2010,17 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	ScalarFunction option_for("panduck_reader_option_for",
 	                          {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                          ReaderOptionForFun);
-	option_for.null_handling = FunctionNullHandling::SPECIAL_HANDLING;
+	// THROUGH THE COMPAT SHIM, whose own comment says to call it rather than either
+	// spelling. Written as a direct member assignment, this compiled against the v1.5.5
+	// pin and BROKE THE v2.0 CANARY -- v2.0 moved null_handling behind SetNullHandling()
+	// as part of encapsulating function properties:
+	//
+	//     error: 'class duckdb::ScalarFunction' has no member named 'null_handling'
+	//
+	// The canary is advisory and only runs on push to main and dispatch, so it reported
+	// this hours after the merge -- and community-extensions builds every release PR
+	// against v2.0 with no per-extension opt-out, so it would have been red there too.
+	panduck::SetNullHandling(option_for, FunctionNullHandling::SPECIAL_HANDLING);
 	loader.RegisterFunction(option_for);
 	loader.RegisterFunction(ScalarFunction("panduck_render_params",
 	                                       {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)},

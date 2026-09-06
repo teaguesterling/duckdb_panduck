@@ -241,3 +241,33 @@ query I
 SELECT count(*) FROM doc_toc(['test/fixtures/pandoc_pstyle.docx']);
 ----
 2
+
+# ---------------------------------------------------------------------------
+# doc_toc PICKS ITS FUNCTION FROM THE INSTALLED duck_block_utils, NOT FROM WHAT PANDUCK
+# WAS COMPILED AGAINST.
+#
+# 6.5 reshaped duck_blocks_toc to return duck_blocks and moved today's projection to
+# duck_blocks_toc_structs. The five fields doc_toc reads live on the _structs form and NOT
+# on a duck_block, so against 6.5 the old name does not degrade -- it fails to bind:
+#
+#   Binder Error: Could not find key "title" in struct        (measured, against a 6.5 build)
+#
+# Naming only the new function breaks doc_toc for everyone on the published build; naming
+# only the old one breaks the day 6.5 publishes. So the name is chosen per install.
+#
+# VERIFIED BOTH WAYS on real builds, which is the only verification worth anything here:
+# against community 3f2a0f0 (spec 6.3) and against a local 6.5 build installed into a
+# scratch extension_directory, doc_toc returns the identical two rows asserted above.
+query I
+SELECT panduck_duck_block_spec_at_least(6, 0) AND NOT panduck_duck_block_spec_at_least(99, 0);
+----
+true
+
+# NUMERIC, NOT LEXICAL. '6.10' sorts before '6.5' as a string, so a string compare would
+# silently pick the wrong branch the first time a minor version reaches double digits --
+# the kind of bug that surfaces months later as "doc_toc broke on upgrade".
+query II
+SELECT '6.10' < '6.5' AS lexical_would_be_wrong,
+       panduck_duck_block_spec_at_least(6, 3) AS numeric_is_right;
+----
+true	true

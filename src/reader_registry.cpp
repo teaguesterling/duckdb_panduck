@@ -836,9 +836,33 @@ SELECT * FROM query(
                'document, so a glob or list interleaves them. Use '
                'read_panduck_doc(src, filename := true) for multiple documents')
     WHEN panduck_ensure_extension('duck_block_utils')
+    -- THE FUNCTION NAME IS CHOSEN AT QUERY TIME, against whatever duck_block_utils is
+    -- INSTALLED, because that is the only thing that decides which name resolves.
+    --
+    -- duck_block_utils 6.5 reshaped duck_blocks_toc to return duck_blocks and moved today's
+    -- projection to duck_blocks_toc_structs. The five fields doc_toc reads -- level, title,
+    -- id, indent, element_order -- exist on the _structs form and NOT on a duck_block, so
+    -- against 6.5 the old name does not degrade, it FAILS TO BIND.
+    --
+    -- Naming only the new function would break doc_toc for every user still on the
+    -- published build, which at the time of writing is what `INSTALL duck_block_utils FROM
+    -- community` still serves: 3f2a0f0, spec 6.3, no _structs at all. Naming only the old
+    -- one breaks the moment 6.5 publishes. Choosing per install is the only spelling with no
+    -- broken window in either direction, and it costs one catalog lookup per doc_toc call.
+    --
+    -- VERIFIED ON BOTH: against community 3f2a0f0 and against a local 6.5 build installed
+    -- into a scratch extension_directory, doc_toc returns the identical two rows. The
+    -- _structs form was separately confirmed to match the old one on VALUES, not merely on
+    -- type, through the parquet bridge -- see issue #3.
+    --
+    -- REMOVE THE FALLBACK when the floor moves past 6.5; until then deleting it is a
+    -- regression for anyone who has not upgraded.
     THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks(' ||
+         'FROM (SELECT unnest(' ||
+         CASE WHEN panduck_duck_block_spec_at_least(6, 5)
+              THEN 'duck_blocks_toc_structs' ELSE 'duck_blocks_toc' END ||
+         '(panduck_read_blocks(' ||
          panduck_quote(panduck_source_list(src)[1]) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
     ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
@@ -981,6 +1005,26 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // That leaves it UNGATEABLE, which is a real limitation and the honest one: it has no
     // name for a policy to refuse it by. A reader registered WITH a reader_ext is gateable
     // under that extension's name.
+    // IS THE INSTALLED duck_block_utils AT LEAST THIS SPEC VERSION?
+    //
+    // Asked of duck_block_spec_version(), which is duck_block_utils' own published scalar and
+    // present in every build panduck has ever seen, so the question is answered by the
+    // INSTALLED extension rather than by whatever panduck compiled against. Compared
+    // numerically, not as strings: '6.10' sorts before '6.5' lexically and would silently
+    // pick the wrong branch the first time a minor version reaches double digits.
+    //
+    // NOT a C++ catalog lookup, though "does this function exist" is the more direct
+    // question. DuckDB's Catalog::GetEntry takes an EntryLookupInfo in v1.5.5, and this repo
+    // has already been bitten once this week by an executor API that v2.0 removed -- see
+    // RegistryFieldFun. duck_block_spec_version() is a stable public surface in both.
+    {DEFAULT_SCHEMA,
+     "panduck_duck_block_spec_at_least",
+     {"maj", "min", nullptr},
+     {{nullptr, nullptr}},
+     "coalesce(try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) > maj "
+     "  OR (try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) = maj "
+     "      AND try_cast(split_part(duck_block_spec_version(), '.', 2) AS INTEGER) >= min), false)"},
+
     {DEFAULT_SCHEMA,
      "panduck_policy_format",
      {"src", "fmt", nullptr},

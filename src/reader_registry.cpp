@@ -76,6 +76,81 @@ bool IsIdentifier(const std::string &s) {
 	return true;
 }
 
+
+//! POLICY SETTINGS. Defence in depth, not a privilege boundary.
+//!
+//! `function` is validated at registration and options render from structured data, so a
+//! registration cannot inject SQL. These exist for the deployment that does not want runtime
+//! registration AT ALL, or wants a particular reader off -- an embedder exposing panduck to
+//! untrusted SQL, where "you already need arbitrary SQL to reach it" is not the reassurance
+//! it is for a local session.
+//!
+//! EVERY DEFAULT PRESERVES TODAY'S BEHAVIOUR: registration allowed, every reader on. A
+//! security control whose default changed what documents read would cost more than it buys.
+constexpr const char *SETTING_ALLOW_REGISTRATION = "panduck_allow_registration";
+constexpr const char *SETTING_ENABLED_READERS = "panduck_enabled_readers";
+constexpr const char *SETTING_DISABLED_READERS = "panduck_disabled_readers";
+
+//! Lowercase, trim, and split a comma list. ' ODT , rtf ' is what a person types into a SET,
+//! and refusing it would make the setting hostile for no gain.
+std::vector<std::string> SplitPolicyList(const std::string &raw) {
+	std::vector<std::string> out;
+	std::string cur;
+	auto flush = [&]() {
+		size_t b = cur.find_first_not_of(" \t");
+		size_t e = cur.find_last_not_of(" \t");
+		if (b != std::string::npos) {
+			out.push_back(cur.substr(b, e - b + 1));
+		}
+		cur.clear();
+	};
+	for (char c : raw) {
+		if (c == ',') {
+			flush();
+		} else {
+			cur += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		}
+	}
+	flush();
+	return out;
+}
+
+std::string PolicySetting(ClientContext &context, const char *name) {
+	Value v;
+	if (!context.TryGetCurrentSetting(name, v) || v.IsNull()) {
+		return "";
+	}
+	return v.ToString();
+}
+
+//! Is this FORMAT allowed to read? Allowlist first ('*' means all), denylist after, so a
+//! format named in both is refused -- otherwise a reader could smuggle itself back on.
+bool ReaderFormatEnabled(ClientContext &context, const std::string &format) {
+	auto lower = format;
+	for (auto &c : lower) {
+		c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+	}
+	auto enabled = PolicySetting(context, SETTING_ENABLED_READERS);
+	if (enabled != "*" && !enabled.empty()) {
+		auto allow = SplitPolicyList(enabled);
+		if (std::find(allow.begin(), allow.end(), lower) == allow.end()) {
+			return false;
+		}
+	}
+	auto denied = SplitPolicyList(PolicySetting(context, SETTING_DISABLED_READERS));
+	return std::find(denied.begin(), denied.end(), lower) == denied.end();
+}
+
+//! SQL-visible form, so the dispatch macro can refuse BEFORE the code fallback claims the
+//! source. A NULL format is not gated here -- dispatch has its own name for that.
+inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	UnaryExecutor::ExecuteWithNulls<string_t, bool>(
+	    args.data[0], result, args.size(), [&](string_t fmt, ValidityMask &mask, idx_t idx) {
+		    return ReaderFormatEnabled(context, fmt.GetString());
+	    });
+}
+
 //! Is `s` a function name safe to interpolate BARE into generated SQL?
 //!
 //! `function` names a table function to call, so it cannot be quoted the way a VARCHAR
@@ -540,13 +615,21 @@ struct RegisterGlobalState : public GlobalTableFunctionState {
 };
 
 template <const char *KIND>
-unique_ptr<FunctionData> RegisterBind(ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &return_types,
+unique_ptr<FunctionData> RegisterBind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
                                       panduck::BindNames &names) {
 	names = {"ext", "reader_ext", "function", "kind"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 	auto result = make_uniq<RegisterBindData>();
 	result->reader_ext = input.inputs[0].GetValue<string>();
 	result->function = input.inputs[1].GetValue<string>();
+	// POLICY FIRST, before any validation message: a deployment that has turned registration
+	// off should hear that, not a critique of the name it passed.
+	Value allow;
+	if (context.TryGetCurrentSetting(readers::SETTING_ALLOW_REGISTRATION, allow) && !allow.IsNull() &&
+	    !allow.GetValue<bool>()) {
+		throw InvalidInputException(
+		    "panduck: runtime reader registration is disabled (SET panduck_allow_registration = true to allow it)");
+	}
 	// VALIDATED IN THE BIND, like `options` below and for the same reason: RegisterScan is
 	// the only writer and runs after this returns, so a throw here leaves the registry
 	// untouched rather than storing a row and failing later.
@@ -877,6 +960,22 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "     THEN error('panduck: cannot use NULL as argument for \"filename\"') "
      "     WHEN reader_params IS NULL "
      "     THEN error('panduck: cannot use NULL as argument for \"reader_params\"') "
+     // POLICY, PER PATH. The dispatcher's gate sits on the single-path branch, and the
+     // PLURAL branch does not pass through it -- it funnels straight here -- so a guard
+     // only there was walked around by spelling the source as a glob: with odt disabled,
+     // '*.odt' returned 180 rows and ['constructs.odt'] returned 54. Every single-path
+     // assertion passed while that was true, which is why the bypass got written at all.
+     //
+     // Per PATH, and a REFUSAL rather than a filter: a mixed list must not become
+     // readable by containing one allowed format, and dropping the disallowed members
+     // would silently return fewer documents than were asked for -- the data-loss shape
+     // this builder already carries three other guards against.
+     "     WHEN len(list_filter(paths, lambda p: NOT panduck_reader_enabled("
+     "              coalesce(panduck_format_for(p), 'code')))) > 0 "
+     "     THEN error('panduck: reader for format ''' || "
+     "                coalesce(panduck_format_for(list_filter(paths, lambda p: "
+     "                  NOT panduck_reader_enabled(coalesce(panduck_format_for(p), 'code')))[1]), 'code') || "
+     "                ''' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') "
      "     ELSE "
      "array_to_string(list_transform(paths, lambda p: "
      "  CASE WHEN p IS NULL "
@@ -1416,6 +1515,23 @@ SELECT * FROM query(
                  THEN error('panduck: no files matched ' || src::VARCHAR)
                  ELSE panduck_read_arms_opt(panduck_source_list(src), filename, 'attributes', attributes, reader_params := reader_params) END
 
+        -- POLICY: A DISABLED READER RAISES, AND IT RAISES HERE -- above every format branch
+        -- and above the code fallback, which is the whole point. The fallback answers any
+        -- source nothing else claimed, so a reader that was merely "skipped" when disabled
+        -- would come back as a syntax-highlighted parse tree of the document's own text,
+        -- with no error. A security control that produces silently wrong output is worse
+        -- than no control.
+        --
+        -- Placed AFTER the plural branch so src is known scalar here; the plural path is
+        -- gated inside panduck_read_arms_opt, which both branches funnel through.
+        -- coalesce(..., 'code') so the fallback is itself a nameable format: turning off
+        -- 'code' is the difference between "read documents, or say you cannot" and "read
+        -- documents, or hand back a parse tree".
+        WHEN NOT panduck_reader_enabled(coalesce(panduck_resolved_format(src::VARCHAR, format), 'code'))
+            THEN error('panduck: reader for format ''' ||
+                       coalesce(panduck_resolved_format(src::VARCHAR, format), 'code') ||
+                       ''' is disabled (see panduck_enabled_readers and panduck_disabled_readers)')
+
         -- GENERIC: the registry names a table function that emits duck_blocks, so call
         -- it. One path for builtin flat readers (rtf, markdown) and for anything a user
         -- registered with panduck_register_doc_reader. panduck_read_arms with a
@@ -1837,6 +1953,25 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                                                          {"param", LogicalType::VARCHAR},
 	                                                          {"arg", LogicalType::VARCHAR},
 	                                                          {"arg_type", LogicalType::VARCHAR}}));
+	// POLICY SETTINGS, registered before the functions they gate. Defaults preserve today's
+	// behaviour exactly -- see the note on readers::SETTING_ALLOW_REGISTRATION.
+	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
+	config.AddExtensionOption(readers::SETTING_ALLOW_REGISTRATION,
+	                          "Allow panduck_register_doc_reader/panduck_register_table_reader to add "
+	                          "readers at runtime",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption(readers::SETTING_ENABLED_READERS,
+	                          "Comma-separated allowlist of reader FORMATS ('*' for all). Applied before "
+	                          "panduck_disabled_readers",
+	                          LogicalType::VARCHAR, Value("*"));
+	config.AddExtensionOption(readers::SETTING_DISABLED_READERS,
+	                          "Comma-separated denylist of reader FORMATS, applied after "
+	                          "panduck_enabled_readers. 'code' turns off the fallback that returns a "
+	                          "parse tree for sources no reader claimed",
+	                          LogicalType::VARCHAR, Value(""));
+	loader.RegisterFunction(
+	    ScalarFunction("panduck_reader_enabled", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, readers::ReaderEnabledFun));
+
 	TableFunction reg_doc("panduck_register_doc_reader", {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar},
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	reg_doc.named_parameters["options"] = option_list;

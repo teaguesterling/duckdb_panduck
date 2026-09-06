@@ -412,6 +412,53 @@ A document with **no** markers reports **zero** pages, not one. "No page informa
 answer zero, or it acquires a phantom page.
 
 
+## Policy settings
+
+Three settings gate what panduck will do at runtime. **Every default preserves the
+behaviour described everywhere else in this document** — registration allowed, every reader
+on — so a deployment that sets nothing sees no change.
+
+| setting | type | default | effect |
+|---|---|---|---|
+| `panduck_allow_registration` | BOOLEAN | `true` | when false, `panduck_register_doc_reader` and `panduck_register_table_reader` refuse |
+| `panduck_enabled_readers` | VARCHAR | `'*'` | allowlist of reader **format** names; `'*'` means all |
+| `panduck_disabled_readers` | VARCHAR | `''` | denylist of format names, applied **after** the allowlist |
+
+```sql
+SET panduck_disabled_readers = 'pdf,zim';   -- everything except those two
+SET panduck_enabled_readers  = 'markdown';  -- only markdown
+SET panduck_allow_registration = false;     -- no new readers at runtime
+```
+
+Lists are comma-separated and tolerate whitespace and case — `' ODT , rtf '` works, because a
+hand-typed `SET` is the whole interface. A name panduck does not know is inert rather than
+an error. A format in **both** lists is refused: the denylist applies last, so a reader
+cannot smuggle itself back on.
+
+**This is defence in depth, not a privilege boundary.** Reaching registration already
+requires the ability to run `CALL panduck_register_doc_reader` — that is, arbitrary SQL — and
+the `function` name is validated as an identifier, so a registration cannot inject SQL. These
+settings exist for the deployment that does not want runtime registration *at all*, or wants
+a particular reader off: an embedder exposing panduck to untrusted SQL, where "you already
+need arbitrary SQL to reach it" is not the reassurance it is for a local session.
+
+**A disabled reader raises. It does not fall through.** The `code` fallback answers any
+source no other reader claimed, and it answers with a syntax-highlighted parse tree — so a
+reader that were merely *skipped* when disabled would hand back a tree of the document's own
+text with no error at all. `code` is itself a nameable format, which makes
+`SET panduck_disabled_readers = 'code'` the difference between *"read documents, or tell me
+you cannot"* and *"read documents, or hand back a parse tree"*.
+
+**The gate covers every public entry point**, not just `read_panduck_doc`: `read_panduck_table`,
+`read_pdf_blocks`, `panduck_read_blocks`, and the whole `doc_*` family, on single, glob and
+list sources alike. It is applied **per path**, and a plural source is refused rather than
+filtered — a mixed list is not silently reduced to its allowed members, because the caller
+asked for every document in it.
+
+**One reader shape cannot be gated:** a doc reader registered with an *empty* `reader_ext`
+has no format name for a policy to refuse it by, so it is unaffected by either list.
+Registering with a `reader_ext` gives it a name, and it is then gateable under that name.
+
 ### A glob matching nothing raises
 
 Zero rows would be indistinguishable from a corpus that happens to be empty, and core does

@@ -212,3 +212,63 @@ query I
 SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/*.odt');
 ----
 true
+
+# ---------------------------------------------------------------------------
+# EVERY PUBLIC ENTRY POINT IS GATED, NOT JUST read_panduck_doc.
+#
+# The first version gated the doc dispatcher and nothing else, so two public functions read
+# the same content with the policy off. Measured while it was true: with toml disabled,
+# read_panduck_table('config.toml') still returned its row; with pdf disabled,
+# read_pdf_blocks went straight to read_pdf_elements. Each is a second door, and by this
+# file's own argument a control that reads as protection while being walked around is worse
+# than no control.
+statement ok
+SET panduck_disabled_readers = 'toml';
+
+statement error
+SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+----
+reader for format 'toml' is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+query I
+SELECT count(*) FROM read_panduck_table('test/fixtures/config.toml');
+----
+1
+
+# ---------------------------------------------------------------------------
+# A READER REGISTERED WITH AN EMPTY reader_ext IS NOT THE CODE FALLBACK.
+#
+# It has no format -- RegistryFieldFun maps an empty reader_ext to NULL -- so coalescing
+# straight to 'code' made `SET panduck_disabled_readers='code'` refuse it with "reader for
+# format 'code' is disabled", naming a fallback that was never going to run. Collateral
+# damage AND a misleading message. It now answers NULL, the gate is not taken, and it reads.
+#
+# That leaves such a reader UNGATEABLE, which is the honest limitation rather than a hidden
+# one: it has no name for a policy to refuse it by. Registering WITH a reader_ext gives it
+# one. Asserted so the trade is visible if anyone changes it.
+statement ok
+INSTALL parquet;
+
+statement ok
+LOAD parquet;
+
+statement ok
+CALL panduck_register_doc_reader('', 'read_parquet', ['.zzpolicy']);
+
+statement ok
+COPY (SELECT * FROM read_panduck_doc('test/fixtures/constructs.odt') ORDER BY element_order)
+  TO '__TEST_DIR__/pol.zzpolicy' (FORMAT parquet);
+
+statement ok
+SET panduck_disabled_readers = 'code';
+
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+----
+true
+
+statement ok
+RESET panduck_disabled_readers;

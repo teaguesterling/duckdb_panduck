@@ -52,14 +52,15 @@ without complaint:
 and webbed globs natively (36 rows), so base dispatch did this too. Documented in
 `docs/doc_namespace.md`; the guard is the follow-up.
 
-Related inconsistency, also undocumented until now: `doc_toc`, `doc_render` and
-`read_panduck_table` *reject* a list, but with leaked internal binder errors
+Related inconsistency, now partly fixed: `doc_toc` and `doc_render` accept a one-element
+list and refuse a plural one by name. `read_panduck_table` still *rejects* any list with a
+leaked internal binder error
 (`replace(VARCHAR[], ...)` for the first two, `panduck_reader_kind_for(VARCHAR[])` for the
 third), while `panduck_read_blocks`, `doc_section` and `doc_container` accept one.
 
 ## Security-adjacent
 
-### 4. `ReaderEntry::function` is interpolated bare into generated SQL
+### 4. ~~`ReaderEntry::function` is interpolated bare into generated SQL~~ — FIXED
 
 [#5](https://github.com/teaguesterling/duckdb_panduck/issues/5)
 Validated nowhere. Demonstrated executing:
@@ -69,7 +70,7 @@ Validated nowhere. Demonstrated executing:
     SELECT panduck_read_arms(['x.pwn2'], false);
     -->  SELECT * FROM read_odt_blocks('x.pwn2') UNION ALL SELECT ... 999 ... ('x.pwn2')
 
-Pre-existing since `27cd39d`; present in `READ_TABLE_MACRO` too. **Crosses no privilege
+**Closed.** Validated at registration by `IsQualifiedIdentifier` (plain or one-dot identifier), after a survey found every `function` in the builtin registry, every test and every doc example is a plain identifier. Pre-existing since `27cd39d`. **Crosses no privilege
 boundary** — reaching it already requires the ability to run `CALL
 panduck_register_doc_reader`, i.e. arbitrary SQL. That is why it is a follow-up and not a
 blocker. `src/include/reader_registry.hpp` now says so rather than implying registration is
@@ -128,6 +129,10 @@ Also `src/include/duck_block_types.hpp:180`: the `CreateBlock` overload "for blo
 level" passes `Value()` (NULL). Under this ruling it is a footgun rather than a shortcut.
 
 ### 9. Per-file registry isolation in the test suite
+
+(Also `reader_policy.test` leaves `.policy1` and `.zzpolicy` registered, alongside
+`register_reader.test`'s entries. No current assertion is affected — every whole-registry
+count is `WHERE`-filtered — but it widens the same gap.)
 
 [#10](https://github.com/teaguesterling/duckdb_panduck/issues/10)
 The reader registry is process-wide and the unittest binary runs every file in one process,

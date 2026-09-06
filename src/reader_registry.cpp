@@ -76,7 +76,6 @@ bool IsIdentifier(const std::string &s) {
 	return true;
 }
 
-
 //! POLICY SETTINGS. Defence in depth, not a privilege boundary.
 //!
 //! `function` is validated at registration and options render from structured data, so a
@@ -146,9 +145,8 @@ bool ReaderFormatEnabled(ClientContext &context, const std::string &format) {
 inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	UnaryExecutor::ExecuteWithNulls<string_t, bool>(
-	    args.data[0], result, args.size(), [&](string_t fmt, ValidityMask &mask, idx_t idx) {
-		    return ReaderFormatEnabled(context, fmt.GetString());
-	    });
+	    args.data[0], result, args.size(),
+	    [&](string_t fmt, ValidityMask &mask, idx_t idx) { return ReaderFormatEnabled(context, fmt.GetString()); });
 }
 
 //! Is `s` a function name safe to interpolate BARE into generated SQL?
@@ -615,8 +613,8 @@ struct RegisterGlobalState : public GlobalTableFunctionState {
 };
 
 template <const char *KIND>
-unique_ptr<FunctionData> RegisterBind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                                      panduck::BindNames &names) {
+unique_ptr<FunctionData> RegisterBind(ClientContext &context, TableFunctionBindInput &input,
+                                      vector<LogicalType> &return_types, panduck::BindNames &names) {
 	names = {"ext", "reader_ext", "function", "kind"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 	auto result = make_uniq<RegisterBindData>();
@@ -1969,8 +1967,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                          "panduck_enabled_readers. 'code' turns off the fallback that returns a "
 	                          "parse tree for sources no reader claimed",
 	                          LogicalType::VARCHAR, Value(""));
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_reader_enabled", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, readers::ReaderEnabledFun));
+	loader.RegisterFunction(ScalarFunction("panduck_reader_enabled", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
+	                                       readers::ReaderEnabledFun));
 
 	TableFunction reg_doc("panduck_register_doc_reader", {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar},
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);

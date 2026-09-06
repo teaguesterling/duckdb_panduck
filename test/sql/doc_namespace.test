@@ -133,12 +133,21 @@ SELECT count(*) FROM (
 0
 
 # doc_toc is exactly the composition it claims to be -- sugar, not a reimplementation.
+# BUILT THROUGH query() FOR THE SAME REASON doc_toc IS: 6.5 RESHAPED duck_blocks_toc to
+# return duck_block[], and .title/.id/.indent do not exist on a duck_block. Naming the base
+# function directly here would make this assertion FAIL TO BIND the day the registry
+# publishes 3.0.0 -- a red suite caused by an upstream release rather than by any change
+# here. It picks the same name doc_toc picks, so it keeps meaning "doc_toc is sugar over the
+# function, not a reimplementation" against both spec versions.
 query I
 SELECT count(*) FROM (
   (SELECT level, title FROM doc_toc('test/fixtures/pandoc_pstyle.docx'))
   EXCEPT
-  (SELECT (t).level, (t).title
-   FROM (SELECT unnest(duck_blocks_toc(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))) AS t))
+  (SELECT * FROM query(
+     'SELECT (t).level AS level, (t).title AS title FROM (SELECT unnest(' ||
+     CASE WHEN panduck_duck_block_spec_at_least(6, 5)
+          THEN 'duck_blocks_toc_structs' ELSE 'duck_blocks_toc' END ||
+     '(panduck_read_blocks(''test/fixtures/pandoc_pstyle.docx''))) AS t)'))
 );
 ----
 0

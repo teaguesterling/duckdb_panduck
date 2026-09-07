@@ -15,12 +15,19 @@ SELECT panduck_version() IS NOT NULL;
 ----
 true
 
-# The pandoc-types AST version this build's mapping targets. test/pandoc/
-# check_pandoc_alignment.py asserts this same value against a real pandoc binary.
+# The pandoc-types AST version this build's mapping targets, as INTEGER[] -- the shape
+# pandoc's own `pandoc-api-version` field takes. It returned the VARCHAR '1.23' until #7,
+# which is wrong for the one thing the name promises: an envelope built with it raises
+# `parsing [] failed, expected Array, but encountered String` and pandoc refuses the
+# document. It also dropped the PATCH component the AST struct already carried.
+#
+# test/pandoc/check_pandoc_alignment.py asserts the same version against a real pandoc
+# binary, and is unaffected by this: it reads API_VERSION_* out of pandoc_ast_map.hpp
+# directly rather than calling this function.
 query I
 SELECT panduck_pandoc_api_version();
 ----
-1.23
+[1, 23, 1]
 
 # The duck_block struct panduck's readers must emit. This header is a copy of the
 # contract owned by duck_block_utils; asserting it here means a drift between the two

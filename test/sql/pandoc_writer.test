@@ -329,3 +329,68 @@ SELECT contains(panduck_blocks_to_pandoc_ast((SELECT bl FROM b)).blocks::VARCHAR
        contains(panduck_blocks_to_pandoc_ast((SELECT bl FROM b)).blocks::VARCHAR, '"Math","c":[{"t":"InlineMath"},"MATH_PAYLOAD"]');
 ----
 true	true
+
+# ---------------------------------------------------------------------------
+# panduck_pandoc_api_version() RETURNS THE SHAPE PANDOC WANTS, AND AGREES WITH THE STRUCT.
+#
+# It returned the VARCHAR '1.23' until #7 -- wrong for the one thing its name promises.
+# Building an envelope with it yields `parsing [] failed, expected Array, but encountered
+# String` and pandoc refuses the document. It also dropped the PATCH component that the AST
+# struct carried, so two spellings of one fact disagreed.
+#
+# The equality is the assertion that matters: a hardcoded [1,23,1] here would pass while the
+# two drifted apart again, which is exactly how they came to differ.
+query II
+SELECT panduck_pandoc_api_version(),
+       panduck_pandoc_api_version()
+         = (panduck_blocks_to_pandoc_ast(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')))."pandoc-api-version";
+----
+[1, 23, 1]	true
+
+# ---------------------------------------------------------------------------
+# panduck_pandoc_ast_json() EMITS A DOCUMENT PANDOC ACCEPTS.
+#
+# to_json() on the AST struct does not: `meta` and `blocks` hold JSON inside VARCHAR, so it
+# escapes their contents as strings while pandoc-api-version serialises as a real array, and
+# pandoc rejects the result with `parsing Map ~Text failed, expected Object, but encountered
+# String`. Declaring the fields LogicalType::JSON() does not fix it -- measured, the alias
+# does not survive a STRUCT here in either load order.
+#
+# ASSERTED ON STRUCTURE, NOT ON A PREFIX. The failing form starts with the same
+# {"pandoc-api-version":[1,23,1] as the working one; what distinguishes them is whether meta
+# and blocks are objects or escaped strings. So this checks the JSON parses AND that the two
+# fields come back as container types.
+statement ok
+INSTALL json;
+
+statement ok
+LOAD json;
+
+query III
+SELECT json_valid(panduck_pandoc_ast_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))),
+       json_type(panduck_pandoc_ast_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')), '$.meta'),
+       json_type(panduck_pandoc_ast_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')), '$.blocks');
+----
+true	OBJECT	ARRAY
+
+# NEGATIVE CONTROL: to_json() on the struct still produces the broken shape, so the
+# assertion above is discriminating between two live behaviours rather than describing one.
+query II
+SELECT json_type(to_json(panduck_blocks_to_pandoc_ast(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')))::VARCHAR, '$.meta'),
+       json_type(to_json(panduck_blocks_to_pandoc_ast(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')))::VARCHAR, '$.blocks');
+----
+VARCHAR	VARCHAR
+
+# NULL IN, NULL OUT -- and that DIVERGES FROM THE WRITER on purpose, which is worth stating
+# because two functions built from the same pieces answering differently is how the
+# meta-drift bug documented in WritePandocAstFun happened.
+#
+# panduck_write_pandoc_ast(path, NULL) writes {"pandoc-api-version":...,"meta":{},"blocks":[]}
+# to disk: it was asked to produce a file, and an empty document is a file. This returns a
+# VALUE, where NULL-in/NULL-out is what every other scalar in SQL does and what a caller
+# composing an expression will expect. Asserted so the difference is a decision on the
+# record rather than something discovered later and "fixed" in whichever direction.
+query I
+SELECT panduck_pandoc_ast_json(NULL) IS NULL;
+----
+true

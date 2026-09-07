@@ -130,15 +130,6 @@ test_roundtrip:
 # sets it. Until the file is wired into a platform-restricted CI job, this is the only
 # place panduck's pdf path is exercised -- which is still a strict improvement on what
 # preceded it, where nothing read a PDF at all.
-# check-doc-namespace -- doc_* assertions that need duck_block_utils >= 3.0.0 (spec 6.5).
-#
-# doc_toc names duck_blocks_toc_structs, which the community registry does not serve yet.
-# Delete the require-env from test/sql/doc_namespace.test and this target the day
-# `INSTALL duck_block_utils FROM community` reports 6.5.
-.PHONY: check-doc-namespace
-check-doc-namespace:
-	PANDUCK_TEST_DUCK_BLOCK_65=1 ./build/release/test/unittest "test/sql/doc_namespace.test"
-
 # check-policy -- the reader-policy assertions that MUTATE the builtin registry.
 #
 # Proving that a re-registration cannot rename a source out of a denylist means actually

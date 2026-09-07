@@ -313,6 +313,28 @@ ReaderRegistry::ReaderRegistry() {
 			    ReaderEntry {NormalizeExt(f.extensions[j]), f.format, "panduck", f.reader, KIND_DOC, SOURCE_BUILTIN});
 		}
 	}
+	// THE ONE BUILTIN OPTION MAPPING: panduck's `attributes` intent onto webbed's spelling.
+	//
+	// Held as DATA on the registry row rather than compiled into dispatch, so a sibling
+	// renaming its parameter is a re-registration rather than a panduck rebuild.
+	//
+	// '*' AND NOT 'classes'. webbed's grammar is
+	// 'default' | 'classes' | '*' | true | false | ['id', ...], where 'default' is
+	// ['id','name','href','src'] and 'classes' is default PLUS 'class'. Only '*' means every
+	// source attribute, which is what panduck's intent 'all' says. Mapping 'all' to
+	// 'classes' would hand back five attributes to a caller who asked for all of them --
+	// silently, with no error -- and that is exactly what panduck's own docs example did
+	// until webbed published the grammar and it could be checked.
+	//
+	// There is no mapping for `attributes := 'default'`: that value is a sentinel that
+	// renders to nothing without consulting the registry, so an unchanged call generates
+	// byte-identical SQL to what it generated before options existed.
+	for (auto &e : entries) {
+		if (e.format == "html" && e.function == "read_html_blocks") {
+			e.options.push_back(ReaderOption {"attributes", "all", "capture_attributes", "*", "VARCHAR"});
+		}
+	}
+
 	// FROZEN HERE, at the one moment every row is still builtin. Register() runs only
 	// after construction, so nothing a user does can reach this map -- which is the
 	// entire point: see BuiltinFormat's comment for the bypass it closes.

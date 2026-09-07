@@ -231,19 +231,20 @@ rather than by rebuilding panduck:
 ```sql
 CALL panduck_register_doc_reader('webbed', 'read_html_blocks', ['.htmltest'],
      options := [{intent: 'attributes', value: 'all',
-                  param: 'capture_attributes', arg: 'classes', arg_type: 'VARCHAR'}]);
+                  param: 'capture_attributes', arg: '*', arg_type: 'VARCHAR'}]);
 
 SELECT panduck_read_arms_opt(['x.htmltest'], false, 'attributes', 'all');
---  SELECT * FROM read_html_blocks('x.htmltest', capture_attributes := 'classes')
+--  SELECT * FROM read_html_blocks('x.htmltest', capture_attributes := '*')
 ```
 
-That is the generated SQL, and it is all panduck promises: the mapping is threaded into the
-call it emits. Whether the *read* then succeeds is the sibling's business. With that
-registration against `webbed` **093856b** and a real page at that extension,
-`read_panduck_doc('page.htmltest', attributes := 'all')` raises
-`Binder Error: Invalid named parameter "capture_attributes" for function read_html_blocks`
-— from webbed, because that build has no such parameter. See "No built-in reader ships an
-`attributes` mapping today" below.
+That is the generated SQL, and it also runs: against **webbed v2.9.0 (`73189d2`)**, which
+is what the community registry serves, `capture_attributes` exists and the read returns the
+document with the option threaded.
+
+That sentence was false for most of this feature's life and is worth the caution: until
+webbed published, the same call raised `Binder Error: Invalid named parameter
+"capture_attributes"` from webbed, and saying otherwise would have described a feature that
+worked nowhere.
 
 `'default'` is a sentinel that renders to nothing **without consulting the registry**, so an
 unchanged call generates byte-identical SQL to what it generated before options existed.
@@ -258,12 +259,19 @@ SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt', attributes
 --  has no mapping for attributes = 'all'
 ```
 
-**No built-in reader ships an `attributes` mapping today.** Measured on this tree by
-sweeping the registry: all 22 `kind='doc'` rows answer that error, `.md` and `.html`
-included. The intent is reachable only through a reader registered with `options :=` — the
-`.htmltest` registration above is not an illustration of a shipped mapping, it *is* the only
-way to get one. Saying so is the point: documenting `attributes := 'all'` as though a
-built-in honoured it would be the same defect `pages` had.
+**`.html` and `.htm` ship a built-in mapping**: `attributes := 'all'` renders
+`capture_attributes := '*'`, webbed's spelling for *every* source attribute. No registration
+needed.
+
+**`'*'` and not `'classes'`**, which this example got wrong until webbed published the
+grammar. webbed accepts `'default' | 'classes' | '*' | true | false | ['id', …]`, where
+`'default'` is `['id','name','href','src']` and `'classes'` is that **plus** `class`. Only
+`'*'` means all of them. Mapping `'all'` onto `'classes'` would hand back five attributes to
+a caller who asked for everything — silently, with no error.
+
+**Every other reader still has no mapping**, and an intent a reader cannot honour raises
+rather than being dropped. That is the point of the error above: a reader that cannot do
+what was asked must say so instead of returning a document quietly missing it.
 
 ### `reader_params := MAP{'name':'value'}` — the escape hatch
 

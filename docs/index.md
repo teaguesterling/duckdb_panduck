@@ -92,13 +92,37 @@ enforces it by feeding every fixture's output to a real pandoc.
 
 ## Installing
 
-panduck is **not yet published** to the DuckDB community extension repository, so for now
-it is built from source — see [Building](https://github.com/teaguesterling/duckdb_panduck#building)
-in the README.
-
-Once published, installation will be:
+panduck is **in** the DuckDB community extension repository —
+[community-extensions#2604](https://github.com/duckdb/community-extensions/pull/2604)
+merged on 2026-09-07:
 
 ```sql
 INSTALL panduck FROM community;
 LOAD panduck;
 ```
+
+**A merged registry PR is not the same as an installable artifact.** The registry builds
+and publishes on its own schedule after merge, so `INSTALL` may report the extension as
+unknown for a while. The only reliable check is to try it in a clean directory:
+
+```sql
+SET extension_directory='/tmp/probe';   -- empty dir, so a local build cannot mask the answer
+INSTALL panduck FROM community;
+LOAD panduck;
+SELECT panduck_version();
+```
+
+If that fails, the artifact has not been served yet — build from source in the meantime, see
+[Building](https://github.com/teaguesterling/duckdb_panduck#building) in the README.
+
+### `doc_toc` needs duck_block_utils 3.0.0 or newer
+
+`doc_toc` calls `duck_blocks_toc_structs`, which exists only at duck_block_utils spec 6.5.
+Against an older build it raises rather than returning wrong rows. Check with:
+
+```sql
+LOAD duck_block_utils;
+SELECT duck_block_spec_version();   -- needs 6.5 or later
+```
+
+Every other panduck function is independent of it.

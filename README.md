@@ -198,6 +198,22 @@ it.
 is the derived dispatch table. Adding a reader means flipping one row from `planned` to
 `implemented` — dispatch picks it up with no code change. See [Dispatch](docs/dispatch.md).
 
+## Installing
+
+```sql
+INSTALL panduck FROM community;
+LOAD panduck;
+```
+
+panduck is in the DuckDB community extension repository as of
+[community-extensions#2604](https://github.com/duckdb/community-extensions/pull/2604)
+(merged 2026-09-07). The registry builds and publishes after merge on its own schedule, so
+if `INSTALL` reports the extension as unknown, the artifact has not been served yet — build
+from source below in the meantime.
+
+`doc_toc` additionally requires **duck_block_utils >= 3.0.0** (spec 6.5); every other
+function is independent of it.
+
 ## Building
 
 Dependencies come from vcpkg (`pugixml` for XML, `miniz` for ZIP containers). The

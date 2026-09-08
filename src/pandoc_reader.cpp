@@ -79,6 +79,45 @@ void PandocScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 
 } // namespace
 
+//! panduck_pandoc_ast_to_blocks(json) -- pandoc AST text to duck_blocks, as a SCALAR.
+//!
+//! EXISTS BECAUSE read_pandoc_blocks_string CANNOT TAKE A COLUMN. It is a table function,
+//! and DuckDB refuses a column argument to one even through LATERAL:
+//!
+//!   Binder Error: Table function "read_pandoc_blocks_string" does not support lateral
+//!   join column parameters ... The function only supports literals as parameters.
+//!
+//! So a consumer holding pandoc JSON in a column -- rows fetched from a table, an API
+//! response, a pipe read into a value -- had no route at all. Reported by duckeye, which
+//! was unaffected only because it passes a literal '/dev/stdin'.
+//!
+//! THE GENERAL SHAPE, which is worth more than this function: swapping a scalar for a table
+//! function is a SILENT change for every literal call site and a HARD BREAK for every column
+//! one, so the blast radius is invisible at the swap and shows up per-consumer later. The
+//! same wall broke duckeye's ZIM path for weeks, and its suite stayed green because the one
+//! assertion expected a non-zero exit -- and a Binder Error is also non-zero.
+//!
+//! Returns a LIST rather than rows: that is what a scalar can do, and it composes with
+//! unnest() when rows are wanted. Named panduck_-prefixed because duck_block_utils owns the
+//! bare `pandoc_ast_to_blocks`, and a name belongs to exactly one extension in this family.
+static void PandocAstToBlocksFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	readers::RequireReaderEnabled(context, "pandoc");
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+	auto json_text = UnifiedVectorFormat::GetData<string_t>(input);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		vector<Value> blocks;
+		PandocBlockConvert::ConvertPandocAstToBlocks(json_text[idx].GetString(), blocks);
+		result.SetValue(i, Value::LIST(DuckBlockTypes::DuckBlockType(), blocks));
+	}
+}
+
 void RegisterPandocReader(ExtensionLoader &loader) {
 	TableFunction file_fn("read_pandoc_blocks", {LogicalType::VARCHAR}, PandocScan, PandocFileBind,
 	                      PandocGlobalState::Init);
@@ -89,6 +128,9 @@ void RegisterPandocReader(ExtensionLoader &loader) {
 	TableFunction string_fn("read_pandoc_blocks_string", {LogicalType::VARCHAR}, PandocScan, PandocStringBind,
 	                        PandocGlobalState::Init);
 	loader.RegisterFunction(string_fn);
+
+	loader.RegisterFunction(ScalarFunction("panduck_pandoc_ast_to_blocks", {LogicalType::VARCHAR},
+	                                       DuckBlockTypes::DuckBlockListType(), PandocAstToBlocksFun));
 }
 
 } // namespace duckdb

@@ -391,3 +391,64 @@ FROM read_pandoc_blocks_string(
 WHERE element_type = 'list';
 ----
 list	bullet	false
+
+# ---------------------------------------------------------------------------
+# panduck_pandoc_ast_to_blocks -- THE SCALAR ROUTE, WHICH IS THE POINT.
+#
+# read_pandoc_blocks_string is a TABLE function, and DuckDB refuses a column argument to one
+# even through LATERAL. So a consumer holding pandoc JSON in a COLUMN -- rows from a table,
+# an API response, a pipe read into a value -- had no route at all.
+#
+# The negative control comes first, because it is the reason this function exists and it
+# would otherwise look like duplication.
+statement error
+WITH d(j) AS (VALUES ('{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[]}'))
+SELECT count(*) FROM d, read_pandoc_blocks_string(d.j);
+----
+only supports literals as parameters
+
+# ...and the scalar takes the same column happily, per row, independently.
+query III
+WITH d(name, j) AS (VALUES
+  ('a', '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"hi"}]}]}'),
+  ('b', '{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Header","c":[1,["",[],[]],[{"t":"Str","c":"H"}]]}]}'))
+SELECT name, len(panduck_pandoc_ast_to_blocks(j)), (panduck_pandoc_ast_to_blocks(j))[1].element_type
+FROM d ORDER BY name;
+----
+a	1	paragraph
+b	1	heading
+
+query I
+SELECT panduck_pandoc_ast_to_blocks(NULL) IS NULL;
+----
+true
+
+# ---------------------------------------------------------------------------
+# ROUND TRIP LOSES NO TEXT, and the block COUNT deliberately is not asserted equal.
+#
+# blocks -> panduck_pandoc_ast_json -> panduck_pandoc_ast_to_blocks yields 21 content-bearing
+# blocks where the original had 14. That is not loss: pandoc's AST splits an inline run into
+# separate nodes -- Str, Space, Str -- where panduck carries one. The two structures are
+# faithful and not isomorphic, so a count equality would be asserting something untrue and a
+# ">= original" would pass while text vanished.
+#
+# What must hold is that no CONTENT disappears, which an EXCEPT states exactly.
+query I
+SELECT count(*) FROM (
+  SELECT (b).content FROM (SELECT unnest(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')) AS b)
+   WHERE (b).content IS NOT NULL
+  EXCEPT
+  SELECT (b).content FROM (SELECT unnest(panduck_pandoc_ast_to_blocks(
+            panduck_pandoc_ast_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')))) AS b)
+   WHERE (b).content IS NOT NULL
+);
+----
+0
+
+# POSITIVE COMPANION: the EXCEPT above is satisfied by both sides being empty.
+query I
+SELECT count(*) > 0 FROM (
+  SELECT (b).content FROM (SELECT unnest(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')) AS b)
+   WHERE (b).content IS NOT NULL);
+----
+true

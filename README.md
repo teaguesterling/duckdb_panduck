@@ -15,8 +15,29 @@ SELECT * FROM read_panduck_doc('docs/*.md', filename := true);  -- a whole corpu
 SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 SELECT * FROM doc_section('report.docx', 'Methods');  -- one section, as duck_blocks
+```
+
+**PDF needs one more extension.** `read_pdf_blocks` is panduck's, but its body calls
+`read_pdf_elements`, which the [`pdf`](https://duckdb.org/community_extensions/extensions/pdf)
+community extension provides:
+
+```sql
+INSTALL pdf; LOAD pdf;   -- once; panduck does not bundle it
+LOAD panduck;
+
 SELECT * FROM read_pdf_blocks('report.pdf', pages := '2-5');  -- PDF, by page
 ```
+
+Without it you get a catalog error naming a function you never typed:
+
+```
+Catalog Error: Table Function with name read_pdf_elements does not exist!
+Did you mean "read_pdf_blocks"?
+```
+
+That is the `pdf` extension being absent, not a problem with your file or your panduck
+install. `read_panduck_doc('report.pdf')` reports the same requirement in panduck's own
+words instead.
 
 **Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki,
 Textile), a Pandoc AST reader that reaches **every format pandoc can read**, document

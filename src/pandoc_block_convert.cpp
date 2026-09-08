@@ -3077,6 +3077,47 @@ static void PandocAstFunction(ClientContext &context, TableFunctionInput &data_p
 	bind_data.done = true;
 }
 
+//! panduck_pandoc_ast_json(blocks) -- the complete pandoc document as JSON TEXT.
+//!
+//! EXISTS BECAUSE to_json() ON THE AST STRUCT PRODUCES A DOCUMENT PANDOC REJECTS. The
+//! struct's `meta` and `blocks` fields hold JSON in VARCHAR, so to_json() escapes their
+//! contents as strings while `pandoc-api-version` serialises as a real array:
+//!
+//!   {"pandoc-api-version":[1,23,1],"meta":"{}","blocks":"[{\"t\":\"Header\"...]"}
+//!
+//! pandoc then refuses it with `parsing Map ~Text failed, expected Object, but encountered
+//! String`. A document that looks right and is not. Declaring the fields as
+//! LogicalType::JSON() does not help -- measured: the alias does not survive being embedded
+//! in a STRUCT here, and the declared type reads back as plain VARCHAR either way, with or
+//! without the json extension loaded and in either load order.
+//!
+//! So rather than leave `.meta::JSON, .blocks::JSON` as folklore a consumer has to
+//! rediscover, this emits the assembled document directly. Composed from the same
+//! BuildMetaJson / BuildBlocksJson / API_VERSION_* pieces as the file writer below, so the
+//! two cannot drift -- which is the defect the writer's own comment records having had.
+static void PandocAstJsonFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	const string api_version = "[" + to_string(pandoc_ast::API_VERSION_MAJOR) + "," +
+	                           to_string(pandoc_ast::API_VERSION_MINOR) + "," +
+	                           to_string(pandoc_ast::API_VERSION_PATCH) + "]";
+	UnifiedVectorFormat blocks_data;
+	args.data[0].ToUnifiedFormat(args.size(), blocks_data);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = blocks_data.sel->get_index(i);
+		if (!blocks_data.validity.RowIsValid(idx)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		auto blocks_val = args.data[0].GetValue(i);
+		if (blocks_val.IsNull()) {
+			result.SetValue(i, Value("{\"pandoc-api-version\":" + api_version + ",\"meta\":{},\"blocks\":[]}"));
+			continue;
+		}
+		auto &blocks_list = ListValue::GetChildren(blocks_val);
+		result.SetValue(i, Value("{\"pandoc-api-version\":" + api_version + ",\"meta\":" + BuildMetaJson(blocks_list) +
+		                         ",\"blocks\":" + BuildBlocksJson(blocks_list) + "}"));
+	}
+}
+
 static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &path_vec = args.data[0];
 	auto &blocks_vec = args.data[1];
@@ -3227,6 +3268,8 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
+	loader.RegisterFunction(ScalarFunction("panduck_pandoc_ast_json", {DuckBlockTypes::DuckBlockListType()},
+	                                       LogicalType::VARCHAR, PandocAstJsonFun));
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
 	write_ast.SetFallible();
 	loader.RegisterFunction(write_ast);

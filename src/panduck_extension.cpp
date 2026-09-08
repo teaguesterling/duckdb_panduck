@@ -42,10 +42,25 @@ inline void PanduckVersionFun(DataChunk &args, ExpressionState &state, Vector &r
 //! panduck_pandoc_api_version() -- the pandoc-types AST version this build's mapping
 //! targets, as "major.minor". The conformance harness compares this against the
 //! "pandoc-api-version" a real pandoc binary emits.
+//! RETURNS INTEGER[], the shape pandoc's `pandoc-api-version` field actually takes.
+//!
+//! It returned the VARCHAR '1.23' until #7. That is not a formatting preference -- it is
+//! wrong for the one thing the name promises. Building a pandoc envelope with it yields
+//!
+//!     parsing [] failed, expected Array, but encountered String
+//!
+//! and pandoc rejects the document. Reported by a consumer who reached for it exactly as
+//! the name suggests, then had to read the value off the AST struct instead.
+//!
+//! It also DROPPED THE PATCH COMPONENT: '1.23' from MAJOR and MINOR, while the struct
+//! emitted {MAJOR, MINOR, PATCH} = [1,23,1]. Two spellings of one fact, disagreeing. Built
+//! from the same three constants now, and a test asserts the helper equals the struct's
+//! field so they cannot drift again.
 inline void PanduckPandocApiVersionFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	const string version = to_string(pandoc_ast::API_VERSION_MAJOR) + "." + to_string(pandoc_ast::API_VERSION_MINOR);
+	vector<Value> parts = {Value::INTEGER(pandoc_ast::API_VERSION_MAJOR), Value::INTEGER(pandoc_ast::API_VERSION_MINOR),
+	                       Value::INTEGER(pandoc_ast::API_VERSION_PATCH)};
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	ConstantVector::GetData<string_t>(result)[0] = StringVector::AddString(result, version);
+	result.SetValue(0, Value::LIST(LogicalType::INTEGER, parts));
 }
 
 //! panduck_duck_block_type() -- the SQL type panduck's readers will emit, rendered as a
@@ -62,8 +77,8 @@ inline void PanduckDuckBlockTypeFun(DataChunk &args, ExpressionState &state, Vec
 static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("panduck_version", {}, LogicalType::VARCHAR, PanduckVersionFun));
 
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_pandoc_api_version", {}, LogicalType::VARCHAR, PanduckPandocApiVersionFun));
+	loader.RegisterFunction(ScalarFunction("panduck_pandoc_api_version", {}, LogicalType::LIST(LogicalType::INTEGER),
+	                                       PanduckPandocApiVersionFun));
 
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_duck_block_type", {}, LogicalType::VARCHAR, PanduckDuckBlockTypeFun));

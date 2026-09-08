@@ -35,6 +35,20 @@ require panduck
 statement ok
 SET extension_directory='__TEST_DIR__/no_extensions_here';
 
+# THIS FILE IS THE PROBE FOR A DUCKDB PROPERTY, NOT JUST FOR #25.
+#
+# The gate works because A MACRO BODY IS BOUND LAZILY, ON INVOCATION: read_pdf_blocks is a
+# wrapper, and when it declines to call panduck_pdf_blocks_impl, read_pdf_elements is never
+# bound at all. That is a property of DuckDB's binder, not of panduck, and it could change
+# under us -- this stack has already had a sibling's function move between two releases.
+#
+# A comment asserting it would rot silently. These assertions do not: if binding ever became
+# eager, read_pdf_blocks would raise `Catalog Error: ... read_pdf_elements does not exist!`
+# and this file would fail naming exactly that. The claim is pinned by the thing it enables
+# rather than by prose, which is the repair for a wrong recorded reason -- the previous one
+# said gating here was impossible and sat in the source discouraging anyone from retrying,
+# while a user hit the catalog error it predicted.
+
 # THE REPORTED CALL, and it must now fail in panduck's words rather than DuckDB's catalog.
 statement error
 SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');

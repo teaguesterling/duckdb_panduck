@@ -1,0 +1,138 @@
+# name: test/sql/pdf_missing_extension.test
+# description: read_pdf_blocks refuses in panduck's own words when the pdf extension is absent
+# group: [sql]
+
+#
+# ISSUE #25, AN EXTERNAL REPORT. A user ran the README's quick-start on Windows/v1.5.5 and got
+#
+#     Catalog Error: Table Function with name read_pdf_elements does not exist!
+#     Did you mean "read_pdf_blocks"?
+#
+# -- an error naming a function they never typed, suggesting the one they DID type. Nothing
+# was wrong with their install: read_pdf_blocks is panduck's, but its body calls
+# read_pdf_elements from the separate `pdf` community extension.
+#
+# THIS FILE RUNS IN THE DEFAULT SUITE ON PURPOSE, ungated, BECAUSE THE DEFAULT SUITE HAS NO
+# pdf EXTENSION. That absence is the precondition -- the one environment where this can be
+# asserted at all. pdf_reader.test is gated behind PANDUCK_TEST_PDF for the opposite reason:
+# it needs pdf present. The two files assert complementary halves and neither can stand in
+# for the other.
+#
+
+require panduck
+
+# SELF-ISOLATING, RATHER THAN ASSUMING THE ENVIRONMENT LACKS pdf.
+#
+# The first version of this file relied on the default suite having no pdf extension. That
+# is true in CI and FALSE on a developer machine whose ~/.duckdb profile has it -- so the
+# assertions passed locally by reading a real PDF and would only have failed somewhere else.
+# Environment-dependent in exactly the way test/sql/reader_policy.test was when it depended
+# on a locally-installed toml.
+#
+# Pointing extension_directory at an empty directory makes the absence a PROPERTY OF THE
+# TEST rather than of the machine: panduck is already loaded by `require` above, and
+# panduck_ensure_extension('pdf') then looks somewhere that cannot contain it.
+statement ok
+SET extension_directory='__TEST_DIR__/no_extensions_here';
+
+# THE REPORTED CALL, and it must now fail in panduck's words rather than DuckDB's catalog.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+panduck: pdf needs the pdf extension
+
+# ...including with `pages`, which is the exact line the README showed.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2-5');
+----
+panduck: pdf needs the pdf extension
+
+# THE OLD ERROR MUST NOT COME BACK. Asserted by name: if the gate regresses, the catalog
+# error returns and this is what distinguishes that from any other failure.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+<REGEX>:.*needs the pdf extension.*
+
+# read_panduck_doc already answered this way and still must -- it is the spelling the README
+# now points at, and the two should not disagree about a missing dependency.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf');
+----
+panduck: pdf needs the pdf extension
+
+# WITH THE EXTENSION ABSENT, THE DEPENDENCY IS REPORTED FIRST -- even for a call whose
+# `pages` argument is also wrong. That ordering is deliberate: pages validation lives in the
+# impl, which cannot run at all without the extension, and telling someone their page range
+# is malformed when the real problem is a missing install would send them to the wrong fix.
+#
+# The complementary half -- that a bad `pages` IS still reported as itself once the extension
+# is present -- is asserted in pdf_reader.test, which runs with pdf loaded. Neither file can
+# make both claims.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := 'nonsense');
+----
+panduck: pdf needs the pdf extension
+
+# ---------------------------------------------------------------------------
+# panduck_dependencies() -- ASK BEFORE BEING SURPRISED.
+#
+# Every entry point now names the extension it needs, but a named error still only arrives
+# after you try something. This is the surface for asking first, in SQL rather than by
+# reading a README, which is what #25's reporter would have needed.
+#
+# DERIVED FROM THE REGISTRY, not a hand-kept list: dispatch already reads `reader_ext` to
+# decide what to load, so this cannot drift from what the code actually requires. A separate
+# list would go stale the first time a reader was added.
+query I
+SELECT count(*) > 5 FROM panduck_dependencies();
+----
+true
+
+# duck_block_utils is NOT a reader and has no registry row, but doc_toc and doc_render call
+# its functions by name at runtime. Listing only reader_ext would have reported panduck as
+# needing nothing for its own doc_* namespace.
+query II
+SELECT extension, required_for FROM panduck_dependencies() WHERE extension = 'duck_block_utils';
+----
+duck_block_utils	doc_toc, doc_render
+
+# 'core' AND 'panduck' MUST NOT APPEAR. Neither is installable: 'core' is DuckDB's own
+# csv/parquet readers and has no duckdb_extensions() row, so it reported installed=false --
+# a dependency listed as missing that can never be satisfied is worse than not listing it.
+query I
+SELECT count(*) FROM panduck_dependencies() WHERE extension IN ('core', 'panduck');
+----
+0
+
+# The formats each one enables are named, so the answer says WHY it is needed.
+#
+# ASSERTED BY CONTAINMENT, NOT BY EXACT STRING. The registry is process-wide and every test
+# file in this binary shares it, so a registration elsewhere -- html_attributes.test binds
+# '.htmltest' to webbed, and a user registration sets format = reader_ext -- adds 'webbed'
+# to this list depending on file order. Pinning the exact string made this pass alone and
+# fail in suite. Issue #10; the third assertion of mine that pollution has caught, which is
+# why this one is written not to care.
+query II
+SELECT contains(required_for, 'html'), extension = 'webbed'
+FROM panduck_dependencies() WHERE extension = 'webbed';
+----
+true	true
+
+# ---------------------------------------------------------------------------
+# doc_render TELLS THE TWO FAILURES APART.
+#
+# It said "<x> is unsupported or its extension is not installed" for both, which makes the
+# caller guess: 'md' IS supported, and a user without the markdown extension was told their
+# format might be the problem. Same shape as #25 -- an error that does not name what to do.
+statement error
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'md');
+----
+doc_render md needs the markdown extension
+
+# ...and a format that genuinely is not supported still says so, rather than blaming a
+# missing extension that would not have helped.
+statement error
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
+----
+is not one of them

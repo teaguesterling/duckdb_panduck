@@ -15,8 +15,43 @@ SELECT * FROM read_panduck_doc('docs/*.md', filename := true);  -- a whole corpu
 SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 SELECT * FROM doc_section('report.docx', 'Methods');  -- one section, as duck_blocks
+```
+
+**PDF needs one more extension.** `read_pdf_blocks` is panduck's, but its body calls
+`read_pdf_elements`, which the [`pdf`](https://duckdb.org/community_extensions/extensions/pdf)
+community extension provides:
+
+```sql
+INSTALL pdf; LOAD pdf;   -- once; panduck does not bundle it
+LOAD panduck;
+
 SELECT * FROM read_pdf_blocks('report.pdf', pages := '2-5');  -- PDF, by page
 ```
+
+Without it you get a catalog error naming a function you never typed:
+
+```
+Catalog Error: Table Function with name read_pdf_elements does not exist!
+Did you mean "read_pdf_blocks"?
+```
+
+That is the `pdf` extension being absent, not a problem with your file or your panduck
+install.
+
+**To see every optional dependency and whether you have it, ask panduck:**
+
+```sql
+SELECT * FROM panduck_dependencies();
+--  extension         required_for          installed  loaded
+--  pdf               pdf                   false      false
+--  webbed            html                  true       true
+--  duck_block_utils  doc_toc, doc_render   true       false
+--  ...
+```
+
+It is derived from the same registry rows dispatch uses, so it cannot drift from what
+panduck actually requires. Formats panduck reads itself — RTF, DOCX, ODT, EPUB, LaTeX, Org,
+RST, ipynb, MediaWiki, Textile — need nothing beyond panduck and do not appear.
 
 **Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki,
 Textile), a Pandoc AST reader that reaches **every format pandoc can read**, document

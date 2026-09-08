@@ -245,3 +245,20 @@ query I
 SELECT count(*) FROM doc_toc(['test/fixtures/pandoc_pstyle.docx']);
 ----
 2
+
+# ---------------------------------------------------------------------------
+# THE VERSION GATE PASSES WHEN THE REQUIREMENT IS MET (#27).
+#
+# This file runs with duck_block_utils INSTALLED, so it asserts the other side of the gate
+# that pdf_missing_extension.test asserts with it absent. Neither file can hold both states.
+query I
+SELECT panduck_function_exists('duck_blocks_toc_structs');
+----
+true
+
+# ...and doc_toc reaches its body rather than being refused by its own gate.
+query III
+SELECT level, title, indent FROM doc_toc('test/fixtures/pandoc_pstyle.docx') ORDER BY element_order;
+----
+1	Heading One	0
+2	Heading Two	1

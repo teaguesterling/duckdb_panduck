@@ -136,3 +136,44 @@ statement error
 SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
 ----
 is not one of them
+
+# ---------------------------------------------------------------------------
+# panduck_function_exists -- THE CATALOG CHECK BEHIND doc_toc's VERSION GATE (#27).
+#
+# doc_toc gated on duck_block_utils being PRESENT, which succeeds for any installed version,
+# then named duck_blocks_toc_structs -- a function that exists only at spec 6.5. A user on an
+# older build passed the gate and got a Catalog Error naming a function they never typed:
+# issue #25's defect, one dependency over.
+#
+# THE OBVIOUS FIX WAS WORSE AND WAS REVERTED. Checking duck_block_spec_version() REFERENCES
+# the sibling's function, and a reference BINDS even on a branch not taken -- so it made the
+# ABSENT case throw a catalog error too. A narrow failure traded for a broad one. This asks
+# panduck's own catalog lookup instead, which binds in every state.
+#
+# NOTE: this file runs with extension_directory pointed at an empty directory (see the top),
+# so duck_block_utils is ABSENT here -- which is exactly the state that used to break.
+query II
+SELECT panduck_function_exists('duck_blocks_toc_structs'), panduck_function_exists('no_such_function_at_all');
+----
+false	false
+
+# It must answer rather than raise when the extension is missing entirely -- that is the
+# property the reverted version lacked.
+query I
+SELECT panduck_function_exists('duck_blocks_toc_structs') IS NOT NULL;
+----
+true
+
+# NULL in, NULL out.
+query I
+SELECT panduck_function_exists(NULL) IS NULL;
+----
+true
+
+# ...and doc_toc, in this same no-extension state, still names the EXTENSION rather than the
+# missing function -- the first gate fires before the version gate, which is the right order:
+# telling someone their duck_block_utils is too old when they have none at all is wrong.
+statement error
+SELECT count(*) FROM doc_toc('test/fixtures/pandoc_pstyle.docx');
+----
+doc_toc needs the duck_block_utils extension

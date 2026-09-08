@@ -1364,14 +1364,23 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 // 2 either way. The cost is that the level scan reads the whole document even when one
 // page is wanted, so `pages` selects CONTENT rather than saving work.
 //
-// NO ensure_extension GATE HERE, deliberately. A guard would have to run before the
-// binder resolves read_pdf_elements, which it cannot, so the only way to keep the named
-// error is to build the whole body as a query() string -- and this body has enough
-// quoting in it that doing so trades a clear error message for a real chance of a subtly
-// wrong regex. read_panduck_doc keeps its gate and delegates here, so dispatch still says
-// "panduck: pdf needs the pdf and markdown extensions"; calling this function directly
-// without pdf installed gives a catalog error, exactly as calling webbed's
-// read_html_blocks or markdown's read_markdown_blocks directly would.
+// THIS BODY CARRIES NO GATE BECAUSE THE GATE IS ONE LEVEL UP -- read_pdf_blocks is a
+// wrapper that decides whether to call this at all. See its comment.
+//
+// THIS COMMENT USED TO SAY GATING WAS IMPOSSIBLE, and that was wrong. It claimed a guard
+// "would have to run before the binder resolves read_pdf_elements, which it cannot", so a
+// direct call could only ever give a catalog error. The premise is right -- binding does
+// precede evaluation -- and the conclusion did not follow: A MACRO BODY IS BOUND LAZILY,
+// ON INVOCATION, so a wrapper that declines to call this one never binds read_pdf_elements
+// at all. An external user hit the catalog error (#25) while that reasoning sat here
+// discouraging anyone from retrying.
+//
+// A WRONG RECORDED REASON IS WORSE THAN NONE: it stops the next person re-testing. So the
+// measurement is written down rather than the conclusion --
+// test/sql/pdf_missing_extension.test calls read_pdf_blocks with extension_directory
+// pointed at an empty directory and asserts panduck's named error. If DuckDB ever binds
+// macro bodies eagerly, that test fails with a catalog error and says so, instead of this
+// paragraph quietly becoming true again.
 // doc_section(src, section, format := 'auto') -- the blocks under one heading.
 //
 // PATH IN, BLOCKS OUT, which is why this does not wrap duck_block_utils' section
@@ -1914,9 +1923,10 @@ SELECT * FROM query(
 
         -- LIST-producing branches: these unpack BY NAME.
         -- PDF delegates to read_pdf_blocks, which is where `pages` actually means
-        -- something. The gate stays here so dispatch keeps its named error; the function
-        -- itself cannot carry one, because a guard would have to run before the binder
-        -- resolves read_pdf_elements.
+        -- something. This gate stays for dispatch's own message; read_pdf_blocks ALSO
+        -- carries one now (#25), which this comment used to say was impossible -- see the
+        -- correction on READ_PDF_BLOCKS_IMPL_MACRO. Both gates are load-bearing: this one
+        -- names the source path, that one answers a direct call.
         --
         -- filename is projected here too, the same way the generic branch does it --
         -- otherwise read_panduck_doc('report.pdf', filename := true) would accept the

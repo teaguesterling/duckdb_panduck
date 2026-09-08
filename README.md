@@ -36,8 +36,22 @@ Did you mean "read_pdf_blocks"?
 ```
 
 That is the `pdf` extension being absent, not a problem with your file or your panduck
-install. `read_panduck_doc('report.pdf')` reports the same requirement in panduck's own
-words instead.
+install.
+
+**To see every optional dependency and whether you have it, ask panduck:**
+
+```sql
+SELECT * FROM panduck_dependencies();
+--  extension         required_for          installed  loaded
+--  pdf               pdf                   false      false
+--  webbed            html                  true       true
+--  duck_block_utils  doc_toc, doc_render   true       false
+--  ...
+```
+
+It is derived from the same registry rows dispatch uses, so it cannot drift from what
+panduck actually requires. Formats panduck reads itself — RTF, DOCX, ODT, EPUB, LaTeX, Org,
+RST, ipynb, MediaWiki, Textile — need nothing beyond panduck and do not appear.
 
 **Status:** ten native readers (RTF, DOCX, ODT, EPUB, LaTeX, Org, RST, ipynb, MediaWiki,
 Textile), a Pandoc AST reader that reaches **every format pandoc can read**, document

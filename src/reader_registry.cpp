@@ -1253,8 +1253,17 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // output_format to literally equal a string, and NULL = 'md' is NULL, not TRUE) and
      // falls to this ELSE with output_format itself NULL. Without the coalesce the
      // concatenation is NULL and error(NULL) silently returns NULL instead of raising.
+     // TWO DIFFERENT FAILURES, TOLD APART. This said "<x> is unsupported or its extension
+     // is not installed" for both, which makes the caller guess: 'md' IS supported, and a
+     // user without the markdown extension was told their format might be the problem.
+     // Issue #25 is the same shape -- an error that does not name what to do next.
+     "    WHEN output_format IN ('md', 'html', 'text')"
+     "      THEN error('panduck: doc_render ' || output_format || ' needs the ' ||"
+     "                 CASE output_format WHEN 'md' THEN 'markdown' WHEN 'html' THEN 'webbed'"
+     "                                    ELSE 'duck_block_utils' END ||"
+     "                 ' extension; see panduck_dependencies()')"
      "    ELSE error('panduck: doc_render supports md, html and text; ' || coalesce(output_format, '<NULL>') ||"
-     "               ' is unsupported or its extension is not installed')"
+     "               ' is not one of them')"
      "  END))"},
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
@@ -2033,6 +2042,51 @@ SELECT * FROM query(
 )
 )SQL"};
 
+//! panduck_dependencies() -- which OTHER extensions panduck needs, and whether you have them.
+//!
+//! ISSUE #25 GENERALISED. A user hit a missing `pdf` and got a catalog error naming a
+//! function they never typed. Every entry point now answers that in panduck's own words, but
+//! a named error still only arrives AFTER you try something. This is the surface for asking
+//! BEFORE, and for asking in SQL rather than reading prose in a README.
+//!
+//! WHY PANDUCK NEEDS THIS MORE THAN ITS SIBLINGS: it gates on eight of them -- markdown,
+//! webbed, pdf, zim, toml, yaml, json, excel -- plus duck_block_utils for the doc_* family.
+//! The registry already knows every one of those, because dispatch reads `reader_ext` to
+//! decide what to load. So this is DERIVED from the same rows dispatch uses rather than a
+//! hand-kept list that can drift from what the code actually requires.
+//!
+//! `installed` and `loaded` come from duckdb_extensions() rather than from
+//! panduck_ensure_extension, deliberately: ensure_extension LOADS as a side effect, and a
+//! report that changes the thing it reports on is a bad report.
+const DefaultTableMacro DEPENDENCIES_MACRO = {DEFAULT_SCHEMA,
+                                              "panduck_dependencies",
+                                              {nullptr},
+                                              {{nullptr, nullptr}},
+                                              R"SQL(
+WITH needed AS (
+    SELECT reader_ext AS extension, string_agg(DISTINCT format, ', ' ORDER BY format) AS required_for
+    FROM panduck_reader_registry()
+    -- 'core' AND 'panduck' ARE EXCLUDED because neither is something a user installs:
+    -- 'core' is DuckDB's own csv/parquet/json readers, always present, and it reported
+    -- installed=false because duckdb_extensions() has no row by that name -- a dependency
+    -- listed as missing that can never be satisfied is worse than not listing it.
+    WHERE reader_ext IS NOT NULL AND reader_ext <> '' AND reader_ext NOT IN ('panduck', 'core')
+    GROUP BY reader_ext
+    UNION ALL
+    -- NOT A READER, so it has no registry row -- but doc_toc and doc_render call its
+    -- functions by name at runtime and fail without it. Listing only reader_ext would have
+    -- reported panduck as needing nothing for its own doc_* namespace.
+    SELECT 'duck_block_utils', 'doc_toc, doc_render'
+)
+SELECT n.extension,
+       n.required_for,
+       coalesce(e.installed, false) AS installed,
+       coalesce(e.loaded, false) AS loaded
+FROM needed n
+LEFT JOIN duckdb_extensions() e ON e.extension_name = n.extension
+ORDER BY coalesce(e.installed, false), n.extension
+)SQL"};
+
 const DefaultTableMacro READ_TABLE_MACRO = {DEFAULT_SCHEMA,
                                             "read_panduck_table",
                                             {"src", nullptr},
@@ -2238,8 +2292,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	reg_doc.named_parameters["options"] = option_list;
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
-	                 &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO,
+	                 &READ_PDF_BLOCKS_IMPL_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

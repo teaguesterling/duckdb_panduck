@@ -1445,11 +1445,29 @@ WHERE b.element_order >= h.o
 ORDER BY b.element_order
 )SQL"};
 
-const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {DEFAULT_SCHEMA,
-                                                 "read_pdf_blocks",
-                                                 {"src", nullptr},
-                                                 {{"pages", "''"}, {nullptr, nullptr}},
-                                                 R"SQL(
+//! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.
+//!
+//! SPLIT BECAUSE A MACRO BODY IS BOUND LAZILY, ON INVOCATION. This body names
+//! read_pdf_elements, which the `pdf` COMMUNITY EXTENSION provides -- not panduck. Without
+//! that extension the binder fails before any guard inside the body could run, and an
+//! external user (#25) following the README got
+//!
+//!     Catalog Error: Table Function with name read_pdf_elements does not exist!
+//!     Did you mean "read_pdf_blocks"?
+//!
+//! an error naming a function they never typed, suggesting the one they did. No CASE inside
+//! this body can prevent that: binding precedes evaluation.
+//!
+//! Because a macro is bound only when CALLED, a wrapper that decides NOT to call this one
+//! never binds it -- so the gate lives one level up, and this body is reached only once the
+//! extension is known to be present. That also keeps the pages regexes and the heading
+//! dense_rank exactly as they were rather than re-escaped into a query() string, which is
+//! the fragile way to have done this.
+const DefaultTableMacro READ_PDF_BLOCKS_IMPL_MACRO = {DEFAULT_SCHEMA,
+                                                      "panduck_pdf_blocks_impl",
+                                                      {"src", nullptr},
+                                                      {{"pages", "''"}, {nullptr, nullptr}},
+                                                      R"SQL(
 WITH lvl AS (
     SELECT font_size, dense_rank() OVER (ORDER BY font_size DESC) AS hl
     -- GATED HERE TOO. read_pdf_blocks is a PUBLIC entry point, not only a dispatch
@@ -1991,6 +2009,30 @@ SELECT * FROM query(
 
 // read_panduck_table -- duckeye's --raw. DuckDB's replacement scan already reads csv,
 // parquet, json and xlsx from a bare path, so mostly this gets out of the way.
+//! read_pdf_blocks -- the public name, gating on the `pdf` extension FIRST.
+//!
+//! Answers in panduck's own words when the dependency is absent, in the same wording
+//! read_panduck_doc uses for the same condition, so the two cannot disagree about a missing
+//! extension. Issue #25.
+//!
+//! `pages` IS RENDERED WITHOUT panduck_quote, deliberately: that helper coalesces NULL to
+//! '', which would silently turn `pages := NULL` into the valid empty default and lose the
+//! named "pages must be N or N-M" refusal the impl raises. NULL is passed through as the
+//! literal NULL instead.
+const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {DEFAULT_SCHEMA,
+                                                 "read_pdf_blocks",
+                                                 {"src", nullptr},
+                                                 {{"pages", "''"}, {nullptr, nullptr}},
+                                                 R"SQL(
+SELECT * FROM query(
+    CASE WHEN panduck_ensure_extension('pdf')
+    THEN 'SELECT * FROM panduck_pdf_blocks_impl(' || panduck_quote(src) ||
+         ', pages := ' || CASE WHEN pages IS NULL THEN 'NULL' ELSE panduck_quote(pages) END || ')'
+    ELSE error('panduck: pdf needs the pdf extension (INSTALL pdf; LOAD pdf)')
+    END
+)
+)SQL"};
+
 const DefaultTableMacro READ_TABLE_MACRO = {DEFAULT_SCHEMA,
                                             "read_panduck_table",
                                             {"src", nullptr},
@@ -2196,8 +2238,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	reg_doc.named_parameters["options"] = option_list;
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO,
-	                 &DOC_CONTAINER_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
+	                 &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

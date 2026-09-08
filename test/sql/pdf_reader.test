@@ -354,3 +354,36 @@ query I
 SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
 ----
 45
+
+# ---------------------------------------------------------------------------
+# THE DEPENDENCY GATE DOES NOT SWALLOW ARGUMENT VALIDATION.
+#
+# read_pdf_blocks now checks for the `pdf` extension before its body binds (#25), and the
+# risk of a gate in front of a function is that every later mistake starts reporting as the
+# gate's condition. With pdf PRESENT, a malformed `pages` must still be named as itself --
+# the complementary half of pdf_missing_extension.test, which asserts the opposite ordering
+# when the extension is absent. Neither file can make both claims.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := 'nonsense');
+----
+panduck: pages must be N or N-M, got nonsense
+
+# ...including the NULL that the wrapper must pass through UNCHANGED. panduck_quote()
+# coalesces NULL to '', which would have turned this into the valid empty default and lost
+# the refusal entirely -- so the wrapper renders NULL as the literal NULL instead.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := NULL);
+----
+panduck: pages must be N or N-M, got <NULL>
+
+# AND THE READ ITSELF IS UNCHANGED by the split into wrapper and impl.
+query II
+SELECT count(*), count(*) FILTER (WHERE element_type = 'page_break')
+FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+45	2
+
+query I
+SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '1');
+----
+28

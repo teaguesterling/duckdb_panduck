@@ -1,0 +1,75 @@
+# name: test/sql/pdf_missing_extension.test
+# description: read_pdf_blocks refuses in panduck's own words when the pdf extension is absent
+# group: [sql]
+
+#
+# ISSUE #25, AN EXTERNAL REPORT. A user ran the README's quick-start on Windows/v1.5.5 and got
+#
+#     Catalog Error: Table Function with name read_pdf_elements does not exist!
+#     Did you mean "read_pdf_blocks"?
+#
+# -- an error naming a function they never typed, suggesting the one they DID type. Nothing
+# was wrong with their install: read_pdf_blocks is panduck's, but its body calls
+# read_pdf_elements from the separate `pdf` community extension.
+#
+# THIS FILE RUNS IN THE DEFAULT SUITE ON PURPOSE, ungated, BECAUSE THE DEFAULT SUITE HAS NO
+# pdf EXTENSION. That absence is the precondition -- the one environment where this can be
+# asserted at all. pdf_reader.test is gated behind PANDUCK_TEST_PDF for the opposite reason:
+# it needs pdf present. The two files assert complementary halves and neither can stand in
+# for the other.
+#
+
+require panduck
+
+# SELF-ISOLATING, RATHER THAN ASSUMING THE ENVIRONMENT LACKS pdf.
+#
+# The first version of this file relied on the default suite having no pdf extension. That
+# is true in CI and FALSE on a developer machine whose ~/.duckdb profile has it -- so the
+# assertions passed locally by reading a real PDF and would only have failed somewhere else.
+# Environment-dependent in exactly the way test/sql/reader_policy.test was when it depended
+# on a locally-installed toml.
+#
+# Pointing extension_directory at an empty directory makes the absence a PROPERTY OF THE
+# TEST rather than of the machine: panduck is already loaded by `require` above, and
+# panduck_ensure_extension('pdf') then looks somewhere that cannot contain it.
+statement ok
+SET extension_directory='__TEST_DIR__/no_extensions_here';
+
+# THE REPORTED CALL, and it must now fail in panduck's words rather than DuckDB's catalog.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+panduck: pdf needs the pdf extension
+
+# ...including with `pages`, which is the exact line the README showed.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '2-5');
+----
+panduck: pdf needs the pdf extension
+
+# THE OLD ERROR MUST NOT COME BACK. Asserted by name: if the gate regresses, the catalog
+# error returns and this is what distinguishes that from any other failure.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+<REGEX>:.*needs the pdf extension.*
+
+# read_panduck_doc already answered this way and still must -- it is the spelling the README
+# now points at, and the two should not disagree about a missing dependency.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf');
+----
+panduck: pdf needs the pdf extension
+
+# WITH THE EXTENSION ABSENT, THE DEPENDENCY IS REPORTED FIRST -- even for a call whose
+# `pages` argument is also wrong. That ordering is deliberate: pages validation lives in the
+# impl, which cannot run at all without the extension, and telling someone their page range
+# is malformed when the real problem is a missing install would send them to the wrong fix.
+#
+# The complementary half -- that a bad `pages` IS still reported as itself once the extension
+# is present -- is asserted in pdf_reader.test, which runs with pdf loaded. Neither file can
+# make both claims.
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := 'nonsense');
+----
+panduck: pdf needs the pdf extension

@@ -642,6 +642,56 @@ void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result)
 	});
 }
 
+//! panduck_function_exists(name) -- is a SCALAR function of this name in the catalog now?
+//!
+//! ISSUE #27. doc_toc gated on duck_block_utils being PRESENT, which succeeds for any
+//! installed version, then named duck_blocks_toc_structs -- a function that exists only at
+//! spec 6.5. A user on an older build passed the gate and got
+//!
+//!     Catalog Error: Scalar Function with name duck_blocks_toc_structs does not exist!
+//!     Did you mean "duck_blocks_toc"?
+//!
+//! which is issue #25's defect again: a function the caller never typed.
+//!
+//! WHY NOT ASK duck_block_spec_version() INSTEAD, which is the obvious spelling. Because a
+//! SQL check written that way REFERENCES the sibling's function, and a reference must BIND
+//! even on a branch that is not taken -- the whole CASE binds before any arm evaluates. So
+//! that version made the ABSENT case throw a catalog error too, turning a narrow failure
+//! into a broad one. Measured, and reverted.
+//!
+//! This asks the CATALOG rather than calling anything, so it binds when duck_block_utils is
+//! absent, present-but-old, and current alike. It also asks the question that actually
+//! matters -- does the function I am about to name exist -- rather than inferring it from a
+//! version number, which is one inference further from the failure.
+void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(args.size(), input);
+	auto names = UnifiedVectorFormat::GetData<string_t>(input);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		if (!input.validity.RowIsValid(idx)) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		// try/catch RATHER THAN OnEntryNotFound::RETURN_NULL. The overload that returns an
+		// optional takes an EntryLookupInfo, and the templated form needs
+		// scalar_function_catalog_entry.hpp -- whose static ScalarFunctionCatalogEntry::Name
+		// is defined in the header and collides at link time with DuckDB's own copy:
+		//   multiple definition of `duckdb::ScalarFunctionCatalogEntry::Name'
+		// Measured. The CatalogType overload needs no entry class and throws instead, which
+		// costs one catch and no header.
+		bool exists = true;
+		try {
+			Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, INVALID_CATALOG, DEFAULT_SCHEMA,
+			                  names[idx].GetString());
+		} catch (std::exception &) {
+			exists = false;
+		}
+		result.SetValue(i, Value::BOOLEAN(exists));
+	}
+}
+
 // ------------------------------------------------------------------ registry table fn
 
 struct RegistryBindData : public TableFunctionData {
@@ -891,7 +941,27 @@ SELECT * FROM query(
     THEN error('panduck: doc_toc takes a single document; element_order restarts per '
                'document, so a glob or list interleaves them. Use '
                'read_panduck_doc(src, filename := true) for multiple documents')
-    WHEN panduck_ensure_extension('duck_block_utils')
+    WHEN NOT panduck_ensure_extension('duck_block_utils')
+    THEN error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
+    -- PRESENCE IS NOT ENOUGH; THE VERSION IS THE REQUIREMENT (#27). ensure_extension succeeds
+    -- for ANY installed duck_block_utils, and the body below names duck_blocks_toc_structs,
+    -- which exists only at spec 6.5. A user on an older build passed the gate and got
+    --
+    --     Catalog Error: Scalar Function with name duck_blocks_toc_structs does not exist!
+    --     Did you mean "duck_blocks_toc"?
+    --
+    -- naming a function they never typed -- issue #25's defect again, one dependency over.
+    --
+    -- ASKED OF THE CATALOG, NOT OF duck_block_spec_version(). A SQL check spelled that way
+    -- REFERENCES the sibling's function, and a reference BINDS even on a branch not taken,
+    -- so it made the ABSENT case throw a catalog error too -- a narrow failure traded for a
+    -- broad one. Measured and reverted before this. panduck_function_exists is panduck's
+    -- own, binds always, and asks the question that actually matters: does the name I am
+    -- about to emit exist?
+    WHEN NOT panduck_function_exists('duck_blocks_toc_structs')
+    THEN error('panduck: doc_toc needs duck_block_utils >= 3.0.0 (spec 6.5); the installed '
+               'build has no duck_blocks_toc_structs. Run UPDATE EXTENSIONS, or see '
+               'panduck_dependencies()')
     -- SWAPPED TO duck_blocks_toc_structs, the END STATE, not gated on the installed build.
     --
     -- duck_block_utils 6.5 reshaped duck_blocks_toc to return duck_block[] and moved this
@@ -911,12 +981,11 @@ SELECT * FROM query(
     -- is not an intermediate state that closes on its own -- it persists until that user
     -- updates. Judged small enough not to carry permanent dispatch for on a first publish
     -- with no existing users. If it shows up in an issue, the gate branch is the fix.
-    THEN 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
+    ELSE 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
          'FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks(' ||
          panduck_quote(panduck_source_list(src)[1]) ||
          ', format := ' || panduck_quote(format) || '))) AS t)'
-    ELSE error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
     END
 )
 )SQL"};
@@ -2198,6 +2267,8 @@ void RequireReaderEnabled(ClientContext &context, const char *format) {
 void RegisterReaderRegistry(ExtensionLoader &loader) {
 	loader.RegisterFunction(
 	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun));
+	loader.RegisterFunction(
+	    ScalarFunction("panduck_function_exists", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, FunctionExistsFun));
 	loader.RegisterFunction(ScalarFunction("panduck_glob", {LogicalType::VARCHAR},
 	                                       LogicalType::LIST(LogicalType::VARCHAR), PanduckGlobFun));
 	loader.RegisterFunction(ScalarFunction("panduck_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,

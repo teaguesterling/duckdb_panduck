@@ -56,7 +56,7 @@ reader, the registry and both dispatchers work with `duck_block_utils` absent â€
 is missing the error names it:
 
 ```
-panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)
+panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils FROM community)
 ```
 
 That asymmetry is deliberate. When `duck_block_utils` owned path dispatch, its `doc_toc`

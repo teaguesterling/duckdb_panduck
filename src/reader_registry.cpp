@@ -942,7 +942,7 @@ SELECT * FROM query(
                'document, so a glob or list interleaves them. Use '
                'read_panduck_doc(src, filename := true) for multiple documents')
     WHEN NOT panduck_ensure_extension('duck_block_utils')
-    THEN error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils)')
+    THEN error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils FROM community)')
     -- PRESENCE IS NOT ENOUGH; THE VERSION IS THE REQUIREMENT (#27). ensure_extension succeeds
     -- for ANY installed duck_block_utils, and the body below names duck_blocks_toc_structs,
     -- which exists only at spec 6.5. A user on an older build passed the gate and got
@@ -2109,7 +2109,14 @@ SELECT * FROM query(
                       CASE WHEN filename THEN ', ' || panduck_quote(src::VARCHAR) || ' AS filename' ELSE '' END ||
                       ' FROM read_pdf_blocks(' || panduck_quote(src::VARCHAR) ||
                       ', pages := ' || panduck_quote(pages) || ')'
-                 ELSE error('panduck: pdf needs the pdf extension') END
+                 -- SAME GUIDANCE AS THE read_pdf_blocks GATE BELOW, because this is the
+                 -- path panduck's own docs RECOMMEND. Issue #25's reply told the reporter
+                 -- that read_panduck_doc "routes through panduck's own dispatch and says so
+                 -- in panduck's words" -- and this arm then said less than the direct call
+                 -- did, naming the missing extension but not how to get it. The better
+                 -- message belongs on the better-advertised path.
+                 ELSE error('panduck: pdf needs the pdf extension '
+                            '(INSTALL pdf FROM community; LOAD pdf)') END
 
         -- A config tree is entirely document metadata, so it becomes ONE metadata block.
         --
@@ -2287,7 +2294,7 @@ SELECT * FROM query(
     CASE WHEN panduck_ensure_extension('pdf')
     THEN 'SELECT * FROM panduck_pdf_blocks_impl(' || panduck_quote(src) ||
          ', pages := ' || CASE WHEN pages IS NULL THEN 'NULL' ELSE panduck_quote(pages) END || ')'
-    ELSE error('panduck: pdf needs the pdf extension (INSTALL pdf; LOAD pdf)')
+    ELSE error('panduck: pdf needs the pdf extension (INSTALL pdf FROM community; LOAD pdf)')
     END
 )
 )SQL"};

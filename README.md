@@ -24,7 +24,7 @@ SELECT * FROM doc_search_sections('report.docx', 'p < 0.05');  -- section BY ITS
 community extension provides:
 
 ```sql
-INSTALL pdf; LOAD pdf;   -- once; panduck does not bundle it
+INSTALL pdf FROM community; LOAD pdf;   -- once; panduck does not bundle it
 LOAD panduck;
 
 SELECT * FROM read_pdf_blocks('report.pdf', pages := '2-5');  -- PDF, by page

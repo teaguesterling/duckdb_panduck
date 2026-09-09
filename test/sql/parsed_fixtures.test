@@ -1,0 +1,168 @@
+# name: test/sql/parsed_fixtures.test
+# description: pre-parsed duck_block fixtures — pdf/markdown/html structure, assertable with no reader
+# group: [sql]
+
+#
+# THESE ASSERTIONS COVER FORMATS THIS TEST ENVIRONMENT CANNOT READ.
+#
+# panduck's markdown, html and pdf readers dispatch to the `markdown`, `webbed` and `pdf`
+# community extensions. A clean CI runner has none of them, so until now nothing about
+# pdf-derived or html-derived blocks could be asserted here at all -- test/sql/doc_search.test
+# had to pick .textile precisely because it was the only NATIVE format emitting heading id
+# slugs. That constraint is a symptom: the fixture format was choosing the test.
+#
+# A PRE-PARSED FIXTURE HAS NO SUCH CONSTRAINT, because there is nothing left to parse. These
+# are parquet, which round-trips the block schema exactly INCLUDING the MAP(VARCHAR,VARCHAR)
+# attributes column (measured: 0 rows differ through EXCEPT, which compares the MAP as a MAP).
+#
+# parquet is a DuckDB CORE extension but NOT statically linked -- duckdb_extensions() reports
+# install_mode REPOSITORY, measured, not assumed. It resolves from a pristine
+# extension_directory, so it costs nothing a runner does not already have; it is named in a
+# `require` below rather than relied on implicitly.
+#
+# WHAT THESE DO AND DO NOT PROVE. They pin the SHAPE of what each upstream reader produced
+# at the version recorded in test/fixtures/parsed/manifest.csv. They do NOT prove that
+# today's extensions still produce it -- a stored file cannot know that. That question
+# belongs to `make check-parsed-fixtures`, which re-parses the sources and diffs, and which
+# runs as its own CI job because it needs the very extensions this file is designed not to
+# need. Keeping the two apart is the point: this file stays fast and dependency-free, and
+# drift gets reported as drift rather than as a mysterious assertion failure here.
+
+require panduck
+
+# parquet is install_mode REPOSITORY rather than statically linked, so it needs naming here;
+# measured working from a pristine extension_directory. A `require` SKIPS rather than fails
+# when it cannot resolve, which would report coverage this file is not providing -- so the
+# assertion count is watched in CI, and `make check-parsed-fixtures` re-derives every one of
+# these fixtures in a job that installs its dependencies outright.
+require parquet
+
+#
+# ---------------------------------------------------------------------------------------
+# PDF. Not readable in this environment at all; these blocks came from pdf 6535c81.
+# ---------------------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet');
+----
+45
+
+# A two-page PDF yields exactly two page_break blocks. This is the assertion most likely to
+# catch a pdf-extension change in how pages are delimited.
+query I
+SELECT count(*) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet')
+WHERE element_type = 'page_break';
+----
+2
+
+# panduck derives PDF heading levels from font size via dense_rank -- there is no heading
+# markup in a PDF. This pins that the derivation produced headings at all, which a font
+# metrics change upstream would silently break.
+query II
+SELECT element_type, count(*) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet')
+WHERE element_type IN ('heading', 'list_item') GROUP BY 1 ORDER BY 1;
+----
+heading	2
+list_item	4
+
+# Every block carries the canonical seven columns and a contiguous element_order.
+query I
+SELECT count(*) = count(DISTINCT element_order) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet');
+----
+true
+
+#
+# ---------------------------------------------------------------------------------------
+# HTML, from webbed 73189d2. The nested attributes survive the round-trip.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT element_order, content, attributes['heading_level']
+FROM read_parquet('test/fixtures/parsed/sections_html.blocks.parquet')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+0	Alpha	1
+2	Alpha One	2
+4	Beta	1
+6	Beta One	2
+
+# THE MAP COLUMN IS A MAP, not a string that looks like one. If parquet had flattened it,
+# this subscript would fail rather than return a value -- which is what makes these fixtures
+# usable as real block input instead of merely as a record.
+query I
+SELECT attributes['id'] FROM read_parquet('test/fixtures/parsed/sections_html.blocks.parquet')
+WHERE element_order = 2;
+----
+alpha-one
+
+#
+# ---------------------------------------------------------------------------------------
+# MARKDOWN, from markdown 75e9d0b.
+# ---------------------------------------------------------------------------------------
+
+query II
+SELECT element_type, count(*) FROM read_parquet('test/fixtures/parsed/lists_md.blocks.parquet')
+WHERE element_type IN ('list', 'list_item') GROUP BY 1 ORDER BY 1;
+----
+list	3
+list_item	6
+
+# list/list_item is exactly the distinction that moved upstream once already (a list_item
+# emitted as a paragraph), so it is pinned rather than counted in aggregate.
+query I
+SELECT count(*) FROM read_parquet('test/fixtures/parsed/constructs_md.blocks.parquet');
+----
+51
+
+#
+# ---------------------------------------------------------------------------------------
+# THE MANIFEST IS PART OF THE FIXTURE, not a sidecar note.
+# ---------------------------------------------------------------------------------------
+#
+# A fixture without the versions that produced it is unfalsifiable: a later comparison reads
+# an extractor difference as a data difference. This is the same failure the sibling repos
+# hit at every other layer -- tagged vs registered vs served vs installed, committed vs
+# configured vs built -- a label that describes an artifact rather than the artifact.
+
+query I
+SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv');
+----
+8
+
+# Every fixture names the reader that produced it AND that reader's version. A '?' here
+# means the manifest was written in an environment that could not report the version, which
+# makes the label worthless -- so it is an assertion rather than a convention.
+query I
+SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
+WHERE reader_version IS NULL OR reader_version IN ('', '?');
+----
+0
+
+# ...and the source sha256, so a fixture is provably OF its input. Without it, editing a
+# source document leaves a stale fixture that still passes every assertion above.
+query I
+SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
+WHERE length(source_sha256) <> 64;
+----
+0
+
+# The three boundary readers are all represented. A fixture set that quietly lost its pdf
+# coverage would still pass everything else in this file.
+query II
+SELECT reader_extension, count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
+GROUP BY 1 ORDER BY 1;
+----
+markdown	4
+pdf	1
+webbed	3
+
+# The block_count recorded in the manifest agrees with the parquet it describes. These are
+# written by the same script in the same run, so a mismatch means one was regenerated
+# without the other -- the exact shape of a half-applied fixture update.
+query I
+SELECT count(*) = 0 FROM (
+  SELECT m.fixture FROM read_csv('test/fixtures/parsed/manifest.csv') m
+  WHERE m.fixture = 'two_pages_pdf'
+    AND m.block_count <> (SELECT count(*) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet')));
+----
+true

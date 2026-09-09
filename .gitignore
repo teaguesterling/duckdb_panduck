@@ -12,3 +12,7 @@ test/python/__pycache__/
 
 # python bytecode (roundtrip harness)
 __pycache__/
+
+# Written by `make regen-parsed-fixtures` for pasting into the regeneration commit
+# message. The record belongs in the commit, not as a tracked file.
+parsed-fixture-drift.txt

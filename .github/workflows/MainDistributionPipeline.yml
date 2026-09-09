@@ -135,6 +135,57 @@ jobs:
           python3 test/roundtrip/check_roundtrip.py \
             --require --duckdb ./duckdb-cli/duckdb --extension "$EXT"
 
+  # FIXTURE DRIFT AT THE pdf / markdown / webbed BOUNDARY.
+  #
+  # panduck's markdown, html and pdf readers are not panduck's code -- they dispatch to
+  # community extensions that move independently. When they move, panduck's OUTPUT changes
+  # with no commit in this repo and nothing announces it. That already happened once during
+  # development: duck_block_utils went spec 6.3 -> 6.5 and markdown 340c0cd -> 75e9d0b in
+  # the registry, and extraction behaviour changed with them.
+  #
+  # This job re-parses each source with whatever those extensions are TODAY and diffs the
+  # blocks against test/fixtures/parsed/. It answers one question: would today's readers
+  # still produce these fixtures?
+  #
+  # A SEPARATE JOB, NOT PART OF THE SUITE, and that split is the design. The unit tests read
+  # the STORED blocks and need no reader at all -- that is what makes pdf-derived behaviour
+  # assertable on a clean runner. This job needs every reader installed. Merging them would
+  # give up the dependency-free suite AND report drift as an assertion failure rather than
+  # as drift.
+  #
+  # Like roundtrip-validation, it downloads the already-built extension instead of rebuilding
+  # (~40 min) and loads it into a stock CLI.
+  parsed-fixture-drift:
+    name: Parsed fixture drift (upstream readers)
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install DuckDB CLI v1.5.5
+        run: |
+          curl -sSL -o duckdb.zip \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
+          unzip -q -o duckdb.zip -d duckdb-cli
+          chmod +x duckdb-cli/duckdb
+          ./duckdb-cli/duckdb --version
+
+      - name: Download the panduck extension built above
+        uses: actions/download-artifact@v4
+        with:
+          name: panduck-v1.5.5-extension-linux_amd64
+          path: ext
+
+      # The script FAILS rather than skips when a reader is missing -- a skip would report
+      # coverage this job is not providing, the same reasoning as check_roundtrip.py's
+      # --require.
+      - name: Would today's readers still produce these fixtures?
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          echo "extension: $EXT"
+          python3 scripts/parsed_fixtures.py --check \
+            --duckdb ./duckdb-cli/duckdb --extension "$EXT"
+
   # The .wasm is linked by a SEPARATE emcc -sSIDE_MODULE=2 step that reads only
   # DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS -- target_link_libraries() is ignored there.
   # A dependency missing from that list is left as an unresolved import: the build is

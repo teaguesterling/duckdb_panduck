@@ -67,7 +67,7 @@ remains available directly:
 SELECT duck_blocks_toc(panduck_read_blocks('report.docx'));
 ```
 
-## `doc_section(src, section, format := 'auto')`
+## `doc_section(src, section, format := 'auto', match := 'exact')`
 
 The blocks under one heading, still as `duck_blocks`. Matches a heading by its **text or
 its `id`** — a heading's text is what a person names, its `id` is what a link names, and
@@ -82,29 +82,60 @@ The boundary is **the next heading at the same level or higher**, not the next h
 section contains its subsections, which is what makes `doc_section('Chapter 2')` mean what
 a reader expects. A section that is not present returns no rows rather than an error.
 
-> **`doc_section` and `doc_container` take a SINGLE document.** They slice the block stream
-> by `element_order` alone, and `element_order` restarts per document (see "`element_order`
-> is per document" below). A glob or a list is **not rejected** — it is read, and the rows
-> interleave silently:
+### `match := 'contains'` — when the caller has a fragment, not a title
+
+`match := 'exact'` (the default) is `content = section OR id = section`.
+`match := 'contains'` is `content ILIKE '%section%' ESCAPE '\' OR id = section`.
+
+```sql
+SELECT count(*) FROM doc_section('README.md', 'Install');                     -- 0
+SELECT count(*) FROM doc_section('README.md', 'Install', match := 'contains'); -- 21
+```
+
+A person searching a document types a fragment, not a heading verbatim; that first query
+returning nothing is the shape a consumer hits first. Substring matching is **opt-in
+rather than the default** because `ILIKE '%x%'` matches everything `= x` does and more, so
+flipping the default could only widen existing verbatim lookups, silently.
+
+Three consequences worth knowing:
+
+- **The title arm is case-insensitive; the id arm stays whole-string.** An `id` is a slug
+  the caller either has or does not, and a substring of one is not a meaningful request —
+  `'alpha'` should not pull in the section whose id is `alpha-one`.
+- **`%` and `_` in the pattern are live wildcards**, with `ESCAPE '\'` to reach a literal
+  one. This is `ILIKE`'s own contract, spelled the same way as duckeye's `-S` so that
+  delegating to this function is not a behaviour change for its users.
+- **A span contained by another matched span is dropped.** A fragment can match both a
+  chapter and a subsection inside it; without the dedup the child prints twice. Two
+  matches at the same level are disjoint and both survive — the rule is "contained by",
+  not "overlaps".
+
+> **`doc_section`, `doc_search_sections` and `doc_container` take a SINGLE document.** They
+> slice the block stream by `element_order` alone, and `element_order` restarts per document
+> (see "`element_order` is per document" below), so a glob would interleave two documents at
+> the same values and every span would be computed across the seam. All three now refuse one
+> by name:
 >
 > ```sql
-> SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha');  --   4
-> SELECT count(*) FROM doc_section('test/fixtures/*.html', 'Alpha');         --  12
-> --  element_order 0,0,0,1,1,1,2,2,2,3,3,3 -- three documents interleaved
-> --  ("Heading One" from constructs.html, "Alpha" from sections.html,
-> --   "inside intro" from containers.html), with no filename column to separate them
+> SELECT count(*) FROM doc_section('test/fixtures/sections.html', 'Alpha');  --  4
+> SELECT count(*) FROM doc_section('test/fixtures/*.html', 'Alpha');
+> --  Invalid Input Error: panduck: doc_section takes a single document; element_order
+> --  restarts per document, so a glob or list interleaves them. Use
+> --  read_panduck_doc(src, filename := true) for multiple documents
 > ```
 >
 > The multi-document path is `read_panduck_doc(…, filename := true)`, which keeps
-> provenance. A guard here is a follow-up; for this release the behaviour is documented
-> rather than prevented.
+> provenance.
 >
-> The namespace is not consistent about this. `doc_toc`, `doc_render` and
-> `read_panduck_table` *do* refuse a list — but with a leaked internal binder error rather
-> than a panduck message: `No function matches the given name and argument types
-> 'replace(VARCHAR[], STRING_LITERAL, STRING_LITERAL)'` for the first two, and
-> `'panduck_reader_kind_for(VARCHAR[])'` for the third — while `panduck_read_blocks`,
-> `doc_section` and `doc_container` accept one.
+> **The test is how many documents the source resolves to, not what shape it is written
+> in.** A glob matching exactly one file, a one-element list, and a plain path are all one
+> document and all work. `doc_toc` and `doc_render` refuse a plural source the same way and
+> with the same wording.
+>
+> *(An earlier revision of this page said a glob was "not rejected — it is read, and the
+> rows interleave silently", and showed 12 rows. That was true when written and is not
+> true now; the guard landed. Corrected rather than deleted, because the interleaving is
+> still the reason the guard exists.)*
 
 It slices panduck's own block stream rather than wrapping `duck_block_utils`, and that was
 a measurement rather than a preference. On build `3f2a0f0`, `duck_blocks_get_section`
@@ -127,8 +158,78 @@ dependency reason still does, and `doc_section` is unchanged on that basis. Reco
 rather than silently left standing, because a justification that has half-expired reads as
 though it were still whole.
 
-`doc_sections_like` is deliberately absent: it is a **search** returning rendered text — a
-different shape and a different job. Use `duck_block_utils`' version directly.
+`doc_sections_like` is still absent under that name, and the reason it was absent has now
+been met rather than waived. It was declined because it is *"a **search** returning
+rendered text — a different shape and a different job"*: the objection was to the **shape**,
+not to searching. `doc_search_sections` below returns `duck_blocks` — the same seven columns
+as `doc_section`, in the same order — so it is the same shape and composes with everything
+`doc_section` composes with. `duck_block_utils`' `duck_blocks_sections_like` remains a
+different thing: it returns one row per section as `(section, start_order, blocks)`, which
+is the right shape for enumerating matches and the wrong one for slicing a document.
+
+## `doc_search_sections(src, pattern, format := 'auto')`
+
+**Find the section by its content**, where `doc_section` finds it by its heading. The
+difference is the bound:
+
+| | boundary | answers |
+|---|---|---|
+| `doc_section` | next heading of the **same or higher** level | "give me this chapter, subsections included" |
+| `doc_search_sections` | next heading of **any** level | "give me the innermost section that mentions this" |
+
+```sql
+SELECT count(*) FROM doc_section('README.md', 'Formats');                       -- 27
+SELECT count(*) FROM doc_search_sections('README.md', 'Every format pandoc reads'); -- 25
+```
+
+The first carries the subsection along; the second returns just the subsection that holds
+the phrase. That is what *innermost* means — a match inside a subsection returns the
+subsection, not its parent and all its siblings.
+
+The pattern is `ILIKE '%pattern%' ESCAPE '\'` against the section's **flattened text** —
+every block's content joined in document order, including the heading's own — so a phrase
+that straddles two blocks still selects the section. No match returns no rows rather than
+an error.
+
+> **The separator is a single space, and a block with no content contributes no
+> separator.** Blocks whose content is `NULL` or `''` are skipped entirely rather than
+> flattened to empty:
+>
+> ```
+> # Heading / alpha / --- / beta   ->  "Heading alpha beta"
+>                                 not  "Heading alpha  beta"
+> ```
+>
+> An `hr` carries no content, and joining it as `''` would still earn it a separator — so
+> `doc_search_sections(doc, 'alpha beta')` found nothing, on a doubled space that exists
+> nowhere in the document. `README.md` alone has 71 contentless blocks out of 476 (`hr`,
+> `list`, `list_item`, `link`, `bold`, `paragraph`), so this is the ordinary shape of a
+> document rather than an edge case.
+>
+> The flattened text contains what the document contains. The alternative reading — that a
+> semantic break *should* stop a phrase matching across it — is defensible, but then it
+> wants a real separator with a defined meaning, not a doubled space that appears only when
+> a block happens to be empty.
+>
+> This is part of the contract, not an implementation detail: it decides whether a pattern
+> spanning a block boundary matches. A tool comparing its own section search against this
+> one should check its flattening before concluding the two disagree — a different join
+> rule is a difference in the *flattening*, not in the matching, and neither side is
+> wrong. This paragraph exists because exactly that happened: twelve patterns on a real
+> 696-block document agreed exactly, and a constructed four-block case did not.
+
+Two cases fall out of the same rule rather than needing their own:
+
+- **Content before the first heading is a section.** Otherwise a preamble belongs to no
+  heading and no query can reach it.
+- **A document with no headings at all is one section.** A matching document returns its
+  content rather than nothing.
+
+Both hold because a block's section is keyed by the nearest heading at or before it, and
+a block with no preceding heading simply has none.
+
+The segments **partition the document**: an empty pattern matches every segment and returns
+the whole document exactly once, with no block missed and none repeated.
 
 ## `read_panduck_doc(src, …)` reads more than one document
 

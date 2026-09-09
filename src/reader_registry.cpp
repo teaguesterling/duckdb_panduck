@@ -1503,10 +1503,31 @@ WHERE b.element_order >= c.o
 ORDER BY b.element_order
 )SQL"};
 
+//! doc_section, with `match` selecting how `section` is compared to a heading.
+//!
+//! `match := 'exact'` (THE DEFAULT, unchanged) is `content = section OR id = section`.
+//! `match := 'contains'` is duckeye's -S predicate: `content ILIKE '%section%' ESCAPE '\\'
+//! OR id = section` -- the title as a case-insensitive substring, the id still whole.
+//!
+//! SUBSTRING IS OPT-IN RATHER THAN THE DEFAULT. ILIKE can only ever return MORE rows than
+//! the exact predicate, never fewer, so flipping the default would silently widen every
+//! existing verbatim-title lookup. duckeye offered "either a substring mode on doc_section
+//! or a sibling that takes a pattern"; a mode keeps ONE span implementation, which matters
+//! because the span arithmetic is the part both tools independently got right and is the
+//! part worth not duplicating.
+//!
+//! CONTAINS CHANGES THE CARDINALITY, which is the whole reason this body was rewritten
+//! rather than patched. Exact took the FIRST matching heading (LIMIT 1); a substring can
+//! match several, so there are now several spans, and a span CONTAINED by another must be
+//! dropped -- otherwise searching a word that appears in both a chapter and a subsection
+//! inside it prints the child twice. duckeye: "easy to miss until someone searches for a
+//! word that appears in two nested headings". Spans here are properly nested or disjoint
+//! (that is what bounding on heading level gives you), so dropping the contained ones
+//! leaves a disjoint set and no block can be emitted twice.
 const DefaultTableMacro DOC_SECTION_MACRO = {DEFAULT_SCHEMA,
                                              "doc_section",
                                              {"src", "section", nullptr},
-                                             {{"format", "'auto'"}, {nullptr, nullptr}},
+                                             {{"format", "'auto'"}, {"match", "'exact'"}, {nullptr, nullptr}},
                                              R"SQL(
 WITH b AS (SELECT * FROM read_panduck_doc(
     -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
@@ -1532,25 +1553,154 @@ WITH b AS (SELECT * FROM read_panduck_doc(
          THEN error('panduck: doc_section takes a single document; element_order restarts '
                     'per document, so a glob or list interleaves them. Use '
                     'read_panduck_doc(src, filename := true) for multiple documents')
+         -- match IS VALIDATED HERE, NOT IN THE PREDICATE BELOW, so an unknown mode is
+         -- refused even for a document with no headings at all. In the predicate the CASE
+         -- is only evaluated per heading row, so a typo'd mode on a heading-less document
+         -- would have returned 0 rows and read as "no such section" -- the silent-wrong
+         -- answer this guard exists to prevent. `match IS NULL` is tested separately
+         -- because lower(NULL) NOT IN (...) is NULL, not TRUE, and would fall through.
+         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains')
+         THEN error('panduck: doc_section match must be exact or contains; ' ||
+                    coalesce(match, '<NULL>') || ' is not one of them')
          -- The RESOLVED path, not src::VARCHAR: a single-element list would otherwise
          -- stringify to '[path]' and fail to open. Resolving also normalises the three
          -- spellings of one document -- plain path, one-match glob, one-element list -- to
          -- the identical string, measured.
          ELSE panduck_source_list(src)[1] END, format := format)),
-h AS (SELECT element_order AS o,
-             coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl
-      FROM b
-      WHERE element_type = 'heading' AND (content = section OR attributes['id'] = section)
-      ORDER BY element_order LIMIT 1),
-stop AS (SELECT min(b.element_order) AS o
-         FROM b, h
-         WHERE b.element_type = 'heading' AND b.element_order > h.o
-           AND coalesce(try_cast(b.attributes['heading_level'] AS INTEGER), 1) <= h.lvl)
+-- ONE PAST THE LAST BLOCK, so an open-ended span (a section with no following heading at
+-- its level or above) gets a real number instead of NULL. The NULL end is what forced the
+-- old body's `... OR (SELECT o FROM stop) IS NULL` and it does not survive contact with
+-- containment comparison, where NULL >= NULL is NULL rather than true.
+eod AS (SELECT coalesce(max(element_order), 0) + 1 AS o FROM b),
+hits AS (SELECT element_order AS o,
+                coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl,
+                row_number() OVER (ORDER BY element_order) AS rn
+         FROM b
+         WHERE element_type = 'heading'
+           AND CASE lower(match)
+                 WHEN 'contains'
+                   -- ESCAPE '\' matches duckeye's -S exactly, so delegating is not a
+                   -- behaviour change for its users. It also means % and _ in the pattern
+                   -- are LIVE WILDCARDS; that is the documented contract, and the escape
+                   -- character is what makes a literal one reachable.
+                   --
+                   -- THE ID ARM STAYS WHOLE-STRING. An id is a slug the caller either has
+                   -- or does not, so a substring of one is not a meaningful request -- and
+                   -- 'alpha' would otherwise match the id 'alpha-one' as well as the title,
+                   -- widening the result for a reason the caller could not see.
+                   THEN (content ILIKE '%' || section || '%' ESCAPE '\'
+                         OR attributes['id'] = section)
+                 ELSE (content = section OR attributes['id'] = section)
+               END),
+-- EXACT KEEPS TAKING ONLY THE FIRST MATCH. Two headings can share a title, and exact mode
+-- returned just the first before this change; rn = 1 preserves that rather than quietly
+-- turning a duplicated title into two spans.
+h AS (SELECT o, lvl FROM hits WHERE lower(match) = 'contains' OR rn = 1),
+-- Each match's span ends at the nearest following heading of the SAME OR HIGHER level, so
+-- a chapter carries its subsections. LEFT JOIN rather than the old correlated `stop`,
+-- because there are now many spans and each needs its own end.
+spans AS (SELECT h.o AS s_o, coalesce(min(nxt.element_order), (SELECT o FROM eod)) AS e_o
+          FROM h LEFT JOIN b nxt
+            ON nxt.element_type = 'heading' AND nxt.element_order > h.o
+           AND coalesce(try_cast(nxt.attributes['heading_level'] AS INTEGER), 1) <= h.lvl
+          GROUP BY h.o),
+-- DROP A SPAN CONTAINED BY ANOTHER MATCHED SPAN. The test is "contained by", not
+-- "overlaps": two matches at the same level are disjoint and BOTH must survive. A strict
+-- `<` on the start is enough because element_order is unique per block, so no two spans
+-- share a start.
+keep AS (SELECT s.s_o, s.e_o FROM spans s
+         WHERE NOT EXISTS (SELECT 1 FROM spans p WHERE p.s_o < s.s_o AND p.e_o >= s.e_o))
 SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order
-FROM b, h
-WHERE b.element_order >= h.o
-  AND (b.element_order < (SELECT o FROM stop) OR (SELECT o FROM stop) IS NULL)
+FROM b
+-- EXISTS, not a join: it emits each block at most once whatever the spans do. After the
+-- containment drop they are disjoint and a join would agree, but this does not depend on
+-- that argument holding.
+WHERE EXISTS (SELECT 1 FROM keep k WHERE b.element_order >= k.s_o AND b.element_order < k.e_o)
 ORDER BY b.element_order
+)SQL"};
+
+//! doc_search_sections -- FIND THE SECTION BY ITS CONTENT, not by its heading.
+//!
+//! duckeye's -s. The difference from doc_section is the bound: a span here stops at the next
+//! heading of ANY level, where doc_section stops at the next heading of the same or higher
+//! level. That is what "innermost" means -- a match inside a subsection returns the
+//! subsection, not the chapter that contains it and all its siblings.
+//!
+//! THE TWO CASES duckeye NAMED AS "both of which I got wrong before fixing them":
+//!   - content BEFORE the first heading is a section; otherwise a preamble belongs to no
+//!     heading and is unreachable by any query.
+//!   - a document with NO headings at all is one section covering everything, so a matching
+//!     document returns its content rather than nothing.
+//! Both fall out of the running max() below instead of needing their own arms: a block
+//! before the first heading has no preceding heading, so its segment key is NULL, and in a
+//! document without headings every block takes that same NULL key.
+const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {DEFAULT_SCHEMA,
+                                                     "doc_search_sections",
+                                                     {"src", "pattern", nullptr},
+                                                     {{"format", "'auto'"}, {nullptr, nullptr}},
+                                                     R"SQL(
+WITH b AS (SELECT * FROM read_panduck_doc(
+    -- Same single-document guard, and for the same reason as doc_section: element_order
+    -- restarts per document, so a glob interleaves two documents at the same values and
+    -- every segment boundary below is computed across the seam.
+    CASE WHEN len(panduck_source_list(src)) > 1
+         THEN error('panduck: doc_search_sections takes a single document; element_order '
+                    'restarts per document, so a glob or list interleaves them. Use '
+                    'read_panduck_doc(src, filename := true) for multiple documents')
+         ELSE panduck_source_list(src)[1] END, format := format)),
+-- SEGMENT KEY = the element_order of the nearest heading at or before this block, NULL for
+-- anything before the first one. Every heading opens a segment regardless of level, which
+-- is precisely "stops at the next heading of ANY level".
+t AS (SELECT *, max(CASE WHEN element_type = 'heading' THEN element_order END)
+                    OVER (ORDER BY element_order ROWS UNBOUNDED PRECEDING) AS seg
+      FROM b),
+-- The section's FLATTENED text: every block's content joined in order, so a phrase that
+-- straddles two blocks still selects the section. The heading's own text is part of the
+-- section it opens, so searching a title finds that section without pulling in the
+-- subsections doc_section would carry along.
+--
+-- A BLOCK WITH NO CONTENT CONTRIBUTES NO SEPARATOR. The FILTER is the point of this CTE and
+-- not a tidy-up: an `hr`, an empty list_item, a bare link and an image all carry NULL
+-- content, and flattening one as '' still earns it a separator. `# H / alpha / --- / beta`
+-- then flattens to "H alpha  beta" -- TWO spaces -- and the obvious query
+-- doc_search_sections(doc, 'alpha beta') returns nothing. README.md alone has 81 such
+-- blocks out of 696 (hr, list, list_item, link, bold, paragraph), so this is the ordinary
+-- shape of a document, not an edge case.
+--
+-- The doubled space is an artifact of the join; nothing in the source produced it, and a
+-- caller would have to know which INVISIBLE blocks sit between two visible ones to predict
+-- whether their phrase matches -- precisely the knowledge reading a document should save
+-- them. The flattened text should contain what the document contains.
+--
+-- The alternative reading -- that a semantic break SHOULD stop a phrase matching across it
+-- -- is defensible, but then it wants a real separator with a defined meaning, not a
+-- doubled space that appears only when a block happens to be empty.
+--
+-- '' is filtered alongside NULL: the same non-contribution wearing a different type.
+--
+-- Found by duckeye against its own -s, on a CONSTRUCTED case, after twelve patterns on a
+-- real 696-block document agreed exactly -- including two that returned all 696. None of
+-- those twelve straddled a contentless block, and no number of further patterns on that
+-- document would have found it.
+-- coalesce TO '' BECAUSE EMPTY TEXT AND ABSENT TEXT ARE DIFFERENT TO ILIKE. A segment whose
+-- blocks are ALL contentless -- a document opening with an `hr` before its first heading --
+-- aggregates to NULL once the FILTER above drops every row, and `NULL ILIKE '%%'` is NULL,
+-- not true. The segment then vanished from the empty-pattern result, which is supposed to be
+-- the whole document. '' matches '%%' and no real pattern, which is exactly the wanted
+-- behaviour: the segment exists, and it has nothing to find.
+--
+-- This was introduced BY the FILTER directly above and caught by the partition invariant
+-- rather than by any worked example: one flattening fix opened another bug one CTE away.
+segs AS (SELECT seg, coalesce(string_agg(content, ' ' ORDER BY element_order)
+                                FILTER (WHERE content IS NOT NULL AND content <> ''), '') AS txt
+         FROM t GROUP BY seg),
+m AS (SELECT seg FROM segs WHERE txt ILIKE '%' || pattern || '%' ESCAPE '\')
+SELECT t.kind, t.element_type, t.content, t.level, t.encoding, t.attributes, t.element_order
+FROM t
+-- IS NOT DISTINCT FROM, not `=`: the preamble and the no-headings document both key on
+-- NULL, and `NULL = NULL` would drop exactly the two cases this function exists to cover.
+WHERE EXISTS (SELECT 1 FROM m WHERE m.seg IS NOT DISTINCT FROM t.seg)
+ORDER BY t.element_order
 )SQL"};
 
 //! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.
@@ -2394,8 +2544,9 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	reg_doc.named_parameters["options"] = option_list;
 	loader.RegisterFunction(reg_doc);
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO,
-	                 &READ_PDF_BLOCKS_IMPL_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO}) {
+	for (auto *tm :
+	     {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
+	      &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO, &DOC_SEARCH_SECTIONS_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

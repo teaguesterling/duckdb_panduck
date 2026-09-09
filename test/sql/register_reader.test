@@ -51,7 +51,7 @@ LOAD parquet;
 # -- doc_namespace.test installs it explicitly three times for exactly this reason, one file
 # away, and passed the CI run this file failed.
 statement ok
-INSTALL duck_block_utils FROM community;
+INSTALL duck_block_utils;
 
 statement ok
 LOAD duck_block_utils;

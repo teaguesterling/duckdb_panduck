@@ -395,7 +395,7 @@ STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "
 # problem (panduck's submodule pin vs. whatever build is actually installed).
 # ---------------------------------------------------------------------------
 statement ok
-INSTALL duck_block_utils FROM community;
+INSTALL duck_block_utils;
 
 statement ok
 LOAD duck_block_utils;

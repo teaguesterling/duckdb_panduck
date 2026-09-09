@@ -22,7 +22,7 @@ require-env PANDUCK_TEST_PDF
 require panduck
 
 statement ok
-INSTALL pdf FROM community;
+INSTALL pdf;
 
 statement ok
 LOAD pdf;
@@ -150,7 +150,7 @@ statement ok
 LOAD json;
 
 statement ok
-INSTALL duck_block_utils FROM community;
+INSTALL duck_block_utils;
 
 statement ok
 LOAD duck_block_utils;

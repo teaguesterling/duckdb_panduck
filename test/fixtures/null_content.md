@@ -1,7 +1,0 @@
-# Heading
-
-alpha
-
----
-
-beta

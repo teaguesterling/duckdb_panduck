@@ -1,17 +1,17 @@
 Preamble prose that belongs to no heading.
 
-# Alpha
+h1. Alpha
 
 alpha body
 
-## Alpha One
+h2. Alpha One
 
 alpha one body
 
-# Beta
+h1. Beta
 
 beta body
 
-## Beta One
+h2. Beta One
 
 beta one body

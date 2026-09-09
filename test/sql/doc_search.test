@@ -15,28 +15,42 @@
 # independently. duckeye reported the gap: doc_section matched only an exact title or id,
 # but "a viewer's user types a fragment, not a heading verbatim".
 #
-# THESE FIXTURES USE .md DELIBERATELY. Nothing globs 'test/fixtures/*.md', and the only test
-# that re-registers '.md' is reader_policy_mutation.test, which is gated behind
-# PANDUCK_TEST_POLICY_MUTATION and runs alone under `make check-policy`. It also re-registers
-# '.md' to the SAME reader, so block CONTENT is unchanged either way -- and every assertion
-# below is on content, never on a resolved format string. That last part is the lesson from
-# the '.rtf' assertion in doc_namespace.test: asserting on a format string is what makes a
-# test hostage to the process-wide registry (#10).
+# THESE FIXTURES ARE .textile, AND THAT IS THE SECOND CHOICE. They were .md first, which was
+# wrong for a reason that does not show up locally: READING MARKDOWN NEEDS THE markdown
+# COMMUNITY EXTENSION, which a dev machine has installed and CI does not. All twelve local
+# gates passed and CI failed with
+#
+#     panduck: test/fixtures/search_sections.textile needs the markdown extension
+#
+# panduck_dependencies() is the authority: markdown, html, pdf, json, yaml, toml, excel and
+# zim each need an external extension; anything absent from that table -- textile, org, rst,
+# latex, odt, rtf, docx, epub -- panduck reads natively. A fixture in a DEPENDENT format
+# makes a test that cannot run in a clean environment, and a local pass says nothing about it.
+#
+# textile specifically because it is the only native format measured that generates heading
+# id slugs ('Alpha One' -> 'alpha-one'), which the id-arm assertions below need. org, rst,
+# latex, odt and rtf all produce headings with a NULL id. And no test re-registers
+# '.textile' -- checked by extracting the extension list from every panduck_register_*_reader
+# call in test/sql/.
+#
+# Every assertion below is on block CONTENT, never on a resolved format string. That is the
+# lesson from the '.rtf' assertion in doc_namespace.test: asserting on a format string is
+# what makes a test hostage to the process-wide registry (#10).
 
 require panduck
 
-# test/fixtures/search_sections.md, as blocks. Referenced by element_order throughout, so
+# test/fixtures/search_sections.textile, as blocks. Referenced by element_order throughout, so
 # the spans below are checkable by hand:
 #
-#   1  paragraph  Preamble prose that belongs to no heading.
-#   2  heading    Alpha            level 1
-#   3  paragraph  alpha body
-#   4  heading    Alpha One        level 2
-#   5  paragraph  alpha one body
-#   6  heading    Beta             level 1
-#   7  paragraph  beta body
-#   8  heading    Beta One         level 2
-#   9  paragraph  beta one body
+#   0  paragraph  Preamble prose that belongs to no heading.
+#   1  heading    Alpha            level 1   id alpha
+#   2  paragraph  alpha body
+#   3  heading    Alpha One        level 2   id alpha-one
+#   4  paragraph  alpha one body
+#   5  heading    Beta             level 1   id beta
+#   6  paragraph  beta body
+#   7  heading    Beta One         level 2   id beta-one
+#   8  paragraph  beta one body
 
 #
 # ---------------------------------------------------------------------------------------
@@ -50,13 +64,13 @@ require panduck
 # a pattern"; a mode keeps one function and one span implementation.
 
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alpha');
 ----
 4
 
 # The fragment duckeye measured as returning 0. Still 0 by default -- unchanged behaviour.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alph');
 ----
 0
 
@@ -65,19 +79,19 @@ SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph');
 # slugs 'Alpha' to 'alpha'. Recorded because it is the reason the case-sensitivity check
 # below had to use a spelling that is neither the title nor the slug.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'alpha');
 ----
 4
 
 # ...and exact IS exact about case: 'ALPHA' is neither the title 'Alpha' nor the id 'alpha'.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'ALPHA');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'ALPHA');
 ----
 0
 
 # match := 'exact' spells the default out loud and changes nothing.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'exact');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alpha', match := 'exact');
 ----
 4
 
@@ -91,13 +105,13 @@ SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', ma
 # a meaningful request, and 'alpha-one' matching 'alpha' would collide with the title arm.
 
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alph', match := 'contains');
 ----
 4
 
 # ILIKE, so case-insensitive.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'alpha', match := 'contains');
 ----
 4
 
@@ -106,7 +120,7 @@ SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha', ma
 # chapter plus 4,5 AGAIN from the subsection, printing the child twice. duckeye flagged this
 # as "easy to miss until someone searches for a word that appears in two nested headings".
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alph', match := 'contains');
 ----
 4
 
@@ -114,35 +128,35 @@ SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph', mat
 # cannot pass. Each block appears exactly once and in document order.
 query II
 SELECT element_order, content
-FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+FROM doc_section('test/fixtures/search_sections.textile', 'Alph', match := 'contains');
 ----
-2	Alpha
-3	alpha body
-4	Alpha One
-5	alpha one body
+1	Alpha
+2	alpha body
+3	Alpha One
+4	alpha one body
 
 # TWO DISJOINT SPANS BOTH SURVIVE. 'One' matches 'Alpha One' (span 4..5) and 'Beta One'
 # (span 8..9). Neither contains the other, so the dedup must NOT drop either -- the mirror
 # of the assertion above, and the reason the rule is "contained by", not "overlaps".
 query II
 SELECT element_order, content
-FROM doc_section('test/fixtures/search_sections.md', 'One', match := 'contains');
+FROM doc_section('test/fixtures/search_sections.textile', 'One', match := 'contains');
 ----
-4	Alpha One
-5	alpha one body
-8	Beta One
-9	beta one body
+3	Alpha One
+4	alpha one body
+7	Beta One
+8	beta one body
 
 # THE LAST SECTION RUNS TO THE END OF THE DOCUMENT. 'Beta One' has no following heading at
 # level <= 2, so its span is open-ended rather than empty.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Beta One', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Beta One', match := 'contains');
 ----
 2
 
 # AN ID STILL MATCHES WHOLE in contains mode -- the OR arm, not the ILIKE arm.
 query I
-SELECT count(*) > 0 FROM doc_section('test/fixtures/sections.html', 'alpha-one', match := 'contains');
+SELECT count(*) > 0 FROM doc_section('test/fixtures/search_sections.textile', 'alpha-one', match := 'contains');
 ----
 true
 
@@ -158,14 +172,14 @@ true
 # 'install-update'. Both tools decline it; both arrived at "an id is a slug the caller
 # either has or does not" separately.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha-', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'alpha-', match := 'contains');
 ----
 0
 
 # The control for the assertion above: the SAME id, whole, does match. Without this pair the
 # 0 above could equally mean the id arm is broken outright.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha-one', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'alpha-one', match := 'contains');
 ----
 2
 
@@ -173,31 +187,31 @@ SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha-one'
 # than defended: duckeye's -S is `title ILIKE '%pat%' ESCAPE '\'` and delegating means
 # spelling it the same way. 'A%a' matches both Alpha headings, which then dedup to one span.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'A%a', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'A%a', match := 'contains');
 ----
 4
 
 # ...and ESCAPE '\' is what makes a literal percent reachable at all.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', '\%', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', '\%', match := 'contains');
 ----
 0
 
 # No match is empty, not an error -- same contract as exact mode.
 query I
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'no such fragment', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'no such fragment', match := 'contains');
 ----
 0
 
 # AN UNKNOWN MODE IS REFUSED BY NAME, and the message says what the caller wrote. Silently
 # treating a typo as 'exact' would return 0 rows and read as "no such section".
 statement error
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'substring');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alpha', match := 'substring');
 ----
 substring is not one of them
 
 statement error
-SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'substring');
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.textile', 'Alpha', match := 'substring');
 ----
 doc_section match must be
 
@@ -215,38 +229,38 @@ doc_section match must be
 # phrase ends at the next heading of ANY level.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'alpha body');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'alpha body');
 ----
-2	Alpha
-3	alpha body
+1	Alpha
+2	alpha body
 
 # The parent is NOT returned when the match is in the child.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'alpha one body');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'alpha one body');
 ----
-4	Alpha One
-5	alpha one body
+3	Alpha One
+4	alpha one body
 
 # Two innermost sections can match at once, and they stay in document order.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'one body');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'one body');
 ----
-4	Alpha One
-5	alpha one body
-8	Beta One
-9	beta one body
+3	Alpha One
+4	alpha one body
+7	Beta One
+8	beta one body
 
 # THE HEADING'S OWN TEXT COUNTS as part of the section it opens. 'Beta One' appears nowhere
 # but in that heading, so a hit proves the heading text was flattened in with the body --
 # and only the innermost section comes back, not the enclosing 'Beta' and its other child.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'Beta One');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'Beta One');
 ----
-8	Beta One
-9	beta one body
+7	Beta One
+8	beta one body
 
 # ...and the sibling case, recorded because it is the one that surprised me: 'Beta' matches
 # TWO segments, since the text of 'Beta One' contains it. The pattern is a substring over
@@ -255,25 +269,25 @@ FROM doc_search_sections('test/fixtures/search_sections.md', 'Beta One');
 # (every heading ends the previous segment), so neither contains the other.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'Beta');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'Beta');
 ----
-6	Beta
-7	beta body
-8	Beta One
-9	beta one body
+5	Beta
+6	beta body
+7	Beta One
+8	beta one body
 
 # CONTENT BEFORE THE FIRST HEADING IS A SECTION. duckeye: "It also needs a span covering
 # anything before the first heading ... both of which I got wrong before fixing them."
 # Without this the preamble is unreachable by any query, since it belongs to no heading.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/search_sections.md', 'Preamble');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'Preamble');
 ----
-1	Preamble prose that belongs to no heading.
+0	Preamble prose that belongs to no heading.
 
 # ILIKE here too, for the same reason as doc_section.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/search_sections.md', 'PREAMBLE');
+SELECT count(*) FROM doc_search_sections('test/fixtures/search_sections.textile', 'PREAMBLE');
 ----
 1
 
@@ -282,28 +296,28 @@ SELECT count(*) FROM doc_search_sections('test/fixtures/search_sections.md', 'PR
 # matching document returns everything rather than nothing.
 query II
 SELECT element_order, content
-FROM doc_search_sections('test/fixtures/no_headings.md', 'prose');
+FROM doc_search_sections('test/fixtures/no_headings.textile', 'prose');
 ----
-1	Only prose here.
-2	Still no heading anywhere.
+0	Only prose here.
+1	Still no heading anywhere.
 
 # The match is against the section's FLATTENED text, so a phrase spanning two blocks still
 # selects the section -- 'here' is in block 1 and 'heading' in block 2, and either finds it.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'heading anywhere');
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.textile', 'heading anywhere');
 ----
 2
 
 # No match is empty, not an error.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'zzz nothing');
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.textile', 'zzz nothing');
 ----
 0
 
 # Same seven duck_block columns as doc_section, in the same order -- this is a sibling, not
 # a new shape. A caller can UNION the two.
 query I
-SELECT count(*) FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.md', 'prose'));
+SELECT count(*) FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.textile', 'prose'));
 ----
 7
 
@@ -311,7 +325,7 @@ query I
 SELECT list(column_name ORDER BY column_name) = list_sort(['kind', 'element_type', 'content',
                                                            'level', 'encoding', 'attributes',
                                                            'element_order'])
-FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.md', 'prose'));
+FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.textile', 'prose'));
 ----
 true
 
@@ -322,31 +336,31 @@ true
 # ---------------------------------------------------------------------------------------
 
 statement error
-SELECT count(*) FROM doc_search_sections('test/fixtures/*.md', 'prose');
+SELECT count(*) FROM doc_search_sections('test/fixtures/*.textile', 'prose');
 ----
 doc_search_sections takes a single document
 
 statement error
-SELECT count(*) FROM doc_search_sections(['test/fixtures/no_headings.md', 'test/fixtures/search_sections.md'], 'prose');
+SELECT count(*) FROM doc_search_sections(['test/fixtures/no_headings.textile', 'test/fixtures/search_sections.textile'], 'prose');
 ----
 doc_search_sections takes a single document
 
 # doc_section's existing guard must survive the match parameter.
 statement error
-SELECT count(*) FROM doc_section('test/fixtures/*.md', 'Alpha', match := 'contains');
+SELECT count(*) FROM doc_section('test/fixtures/*.textile', 'Alpha', match := 'contains');
 ----
 doc_section takes a single document
 
 # A ONE-MATCH GLOB IS ONE DOCUMENT and must still work -- the distinction doc_section's
 # guard already draws, re-checked on the new surface so it is not re-lost here.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/no_head*.md', 'prose');
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_head*.textile', 'prose');
 ----
 2
 
 # format := is accepted and forwarded, same as doc_section.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'prose', format := 'markdown');
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.textile', 'prose', format := 'textile');
 ----
 2
 
@@ -362,8 +376,8 @@ SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'prose'
 # preamble is the one that goes missing) and none counted twice. Checked on README.md while
 # writing this: 476 of 476.
 query I
-SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/search_sections.md'))
-FROM doc_search_sections('test/fixtures/search_sections.md', '');
+SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/search_sections.textile'))
+FROM doc_search_sections('test/fixtures/search_sections.textile', '');
 ----
 true
 
@@ -373,13 +387,13 @@ true
 # writing this, including ones matching the top-level heading (476 blocks, 0 duplicates).
 query I
 SELECT count(*) = count(DISTINCT element_order)
-FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+FROM doc_section('test/fixtures/search_sections.textile', 'Alph', match := 'contains');
 ----
 true
 
 query I
 SELECT count(*) = count(DISTINCT element_order)
-FROM doc_search_sections('test/fixtures/search_sections.md', 'body');
+FROM doc_search_sections('test/fixtures/search_sections.textile', 'body');
 ----
 true
 
@@ -388,9 +402,9 @@ true
 # default. Verified against all twelve README.md headings while writing this.
 query I
 SELECT count(*) = 0 FROM (
-  SELECT element_order FROM doc_section('test/fixtures/search_sections.md', 'Alpha')
+  SELECT element_order FROM doc_section('test/fixtures/search_sections.textile', 'Alpha')
   EXCEPT
-  SELECT element_order FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'contains'));
+  SELECT element_order FROM doc_section('test/fixtures/search_sections.textile', 'Alpha', match := 'contains'));
 ----
 true
 
@@ -399,11 +413,15 @@ true
 # A BLOCK WITH NO CONTENT CONTRIBUTES NO SEPARATOR.
 # ---------------------------------------------------------------------------------------
 #
-# test/fixtures/null_content.md is `# Heading / alpha / --- / beta`. The `hr` is a real
-# block with NULL content sitting between two visible paragraphs. Flattening it as '' still
-# earns it a separator, so the text came out
+# test/fixtures/null_content.textile is `h1. Heading / alpha / !img.png! / beta`. The image
+# yields TWO blocks with NULL content -- a paragraph wrapper and the image itself -- sitting
+# between two visible paragraphs. Flattening each as '' still earns it a separator, so the
+# text came out
 #
-#     [Heading alpha  beta]        <- two spaces, from coalesce(content, '')
+#     [Heading alpha   beta]      <- THREE spaces, from coalesce(content, '')
+#
+# (The markdown version of this fixture used an `hr` and produced two spaces. Same defect;
+# textile reaches it with an image because panduck reads textile natively and markdown not.)
 #
 # and doc_search_sections(doc, 'alpha beta') returned 0. The doubled space exists nowhere in
 # the document; it is an artifact of the join. A caller cannot predict it without knowing
@@ -414,17 +432,18 @@ true
 # twelve patterns on a real 696-block document agreed exactly. None of those twelve happened
 # to straddle a NULL-content block. It could not have been found by adding more patterns to
 # that document; the two flattening contracts differed, and only a built case separates
-# them. README.md alone carries 81 NULL-content blocks out of 696 -- hr, list, list_item,
-# link, bold, paragraph -- so this is the common shape, not an exotic one.
+# them. duckeye's README carries 81 NULL-content blocks out of 696 and panduck's own carries
+# 71 of 476 -- hr, list, list_item, link, bold, image, paragraph -- measured on both, so this
+# is the common shape of a document rather than an exotic one.
 
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.md', 'alpha beta');
+SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.textile', 'alpha beta');
 ----
-4
+5
 
 # The flattened text contains what the document contains, and nothing the join invented.
 query I
-SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.md', 'alpha  beta');
+SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.textile', 'alpha  beta');
 ----
 0
 
@@ -433,17 +452,18 @@ SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.md', 'alpha
 # what a section contains.
 query II
 SELECT element_order, element_type
-FROM doc_search_sections('test/fixtures/null_content.md', 'alpha beta');
+FROM doc_search_sections('test/fixtures/null_content.textile', 'alpha beta');
 ----
-1	heading
+0	heading
+1	paragraph
 2	paragraph
-3	hr
+3	image
 4	paragraph
 
-# A SEGMENT WHOSE BLOCKS ARE *ALL* CONTENTLESS STILL EXISTS. test/fixtures/empty_preamble.md
-# opens with an `hr` before its first heading, so the preamble segment flattens to nothing at
+# A SEGMENT WHOSE BLOCKS ARE *ALL* CONTENTLESS STILL EXISTS. test/fixtures/empty_preamble.textile
+# opens with an image before its first heading, so the preamble segment flattens to nothing at
 # all. Skipping contentless blocks (above) made that aggregate NULL, and `NULL ILIKE '%%'` is
-# NULL rather than true -- so the empty pattern returned 2 of 3 blocks and the hr vanished
+# NULL rather than true -- so the empty pattern dropped the leading blocks, and they vanished
 # from a result that is supposed to be the whole document.
 #
 # CAUGHT BY THE PARTITION INVARIANT, not by a worked example, and introduced BY the fix for
@@ -451,15 +471,15 @@ FROM doc_search_sections('test/fixtures/null_content.md', 'alpha beta');
 # bug opened another, one CTE away, and only the property test noticed. Empty text and absent
 # text are different, and ILIKE treats them differently.
 query I
-SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/empty_preamble.md'))
-FROM doc_search_sections('test/fixtures/empty_preamble.md', '');
+SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/empty_preamble.textile'))
+FROM doc_search_sections('test/fixtures/empty_preamble.textile', '');
 ----
 true
 
 # ...and that same segment must NOT match a real pattern: it has no text to match.
 query II
 SELECT element_order, element_type
-FROM doc_search_sections('test/fixtures/empty_preamble.md', 'body');
+FROM doc_search_sections('test/fixtures/empty_preamble.textile', 'body');
 ----
 2	heading
 3	paragraph

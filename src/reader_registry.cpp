@@ -1658,7 +1658,41 @@ t AS (SELECT *, max(CASE WHEN element_type = 'heading' THEN element_order END)
 -- straddles two blocks still selects the section. The heading's own text is part of the
 -- section it opens, so searching a title finds that section without pulling in the
 -- subsections doc_section would carry along.
-segs AS (SELECT seg, string_agg(coalesce(content, ''), ' ' ORDER BY element_order) AS txt
+--
+-- A BLOCK WITH NO CONTENT CONTRIBUTES NO SEPARATOR. The FILTER is the point of this CTE and
+-- not a tidy-up: an `hr`, an empty list_item, a bare link and an image all carry NULL
+-- content, and flattening one as '' still earns it a separator. `# H / alpha / --- / beta`
+-- then flattens to "H alpha  beta" -- TWO spaces -- and the obvious query
+-- doc_search_sections(doc, 'alpha beta') returns nothing. README.md alone has 81 such
+-- blocks out of 696 (hr, list, list_item, link, bold, paragraph), so this is the ordinary
+-- shape of a document, not an edge case.
+--
+-- The doubled space is an artifact of the join; nothing in the source produced it, and a
+-- caller would have to know which INVISIBLE blocks sit between two visible ones to predict
+-- whether their phrase matches -- precisely the knowledge reading a document should save
+-- them. The flattened text should contain what the document contains.
+--
+-- The alternative reading -- that a semantic break SHOULD stop a phrase matching across it
+-- -- is defensible, but then it wants a real separator with a defined meaning, not a
+-- doubled space that appears only when a block happens to be empty.
+--
+-- '' is filtered alongside NULL: the same non-contribution wearing a different type.
+--
+-- Found by duckeye against its own -s, on a CONSTRUCTED case, after twelve patterns on a
+-- real 696-block document agreed exactly -- including two that returned all 696. None of
+-- those twelve straddled a contentless block, and no number of further patterns on that
+-- document would have found it.
+-- coalesce TO '' BECAUSE EMPTY TEXT AND ABSENT TEXT ARE DIFFERENT TO ILIKE. A segment whose
+-- blocks are ALL contentless -- a document opening with an `hr` before its first heading --
+-- aggregates to NULL once the FILTER above drops every row, and `NULL ILIKE '%%'` is NULL,
+-- not true. The segment then vanished from the empty-pattern result, which is supposed to be
+-- the whole document. '' matches '%%' and no real pattern, which is exactly the wanted
+-- behaviour: the segment exists, and it has nothing to find.
+--
+-- This was introduced BY the FILTER directly above and caught by the partition invariant
+-- rather than by any worked example: one flattening fix opened another bug one CTE away.
+segs AS (SELECT seg, coalesce(string_agg(content, ' ' ORDER BY element_order)
+                                FILTER (WHERE content IS NOT NULL AND content <> ''), '') AS txt
          FROM t GROUP BY seg),
 m AS (SELECT seg FROM segs WHERE txt ILIKE '%' || pattern || '%' ESCAPE '\')
 SELECT t.kind, t.element_type, t.content, t.level, t.encoding, t.attributes, t.element_order

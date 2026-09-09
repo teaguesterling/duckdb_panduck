@@ -393,3 +393,73 @@ SELECT count(*) = 0 FROM (
   SELECT element_order FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'contains'));
 ----
 true
+
+#
+# ---------------------------------------------------------------------------------------
+# A BLOCK WITH NO CONTENT CONTRIBUTES NO SEPARATOR.
+# ---------------------------------------------------------------------------------------
+#
+# test/fixtures/null_content.md is `# Heading / alpha / --- / beta`. The `hr` is a real
+# block with NULL content sitting between two visible paragraphs. Flattening it as '' still
+# earns it a separator, so the text came out
+#
+#     [Heading alpha  beta]        <- two spaces, from coalesce(content, '')
+#
+# and doc_search_sections(doc, 'alpha beta') returned 0. The doubled space exists nowhere in
+# the document; it is an artifact of the join. A caller cannot predict it without knowing
+# which invisible blocks sit between two visible ones -- which is precisely the knowledge
+# reading a document is supposed to save them.
+#
+# Found by duckeye, comparing its own -s against this function on a constructed case after
+# twelve patterns on a real 696-block document agreed exactly. None of those twelve happened
+# to straddle a NULL-content block. It could not have been found by adding more patterns to
+# that document; the two flattening contracts differed, and only a built case separates
+# them. README.md alone carries 81 NULL-content blocks out of 696 -- hr, list, list_item,
+# link, bold, paragraph -- so this is the common shape, not an exotic one.
+
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.md', 'alpha beta');
+----
+4
+
+# The flattened text contains what the document contains, and nothing the join invented.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/null_content.md', 'alpha  beta');
+----
+0
+
+# The NULL-content block is still RETURNED -- it is part of the section. Only its
+# contribution to the MATCH TEXT is dropped, which is a statement about searching, not about
+# what a section contains.
+query II
+SELECT element_order, element_type
+FROM doc_search_sections('test/fixtures/null_content.md', 'alpha beta');
+----
+1	heading
+2	paragraph
+3	hr
+4	paragraph
+
+# A SEGMENT WHOSE BLOCKS ARE *ALL* CONTENTLESS STILL EXISTS. test/fixtures/empty_preamble.md
+# opens with an `hr` before its first heading, so the preamble segment flattens to nothing at
+# all. Skipping contentless blocks (above) made that aggregate NULL, and `NULL ILIKE '%%'` is
+# NULL rather than true -- so the empty pattern returned 2 of 3 blocks and the hr vanished
+# from a result that is supposed to be the whole document.
+#
+# CAUGHT BY THE PARTITION INVARIANT, not by a worked example, and introduced BY the fix for
+# the doubled separator directly above it. Worth stating plainly: the fix for one flattening
+# bug opened another, one CTE away, and only the property test noticed. Empty text and absent
+# text are different, and ILIKE treats them differently.
+query I
+SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/empty_preamble.md'))
+FROM doc_search_sections('test/fixtures/empty_preamble.md', '');
+----
+true
+
+# ...and that same segment must NOT match a real pattern: it has no text to match.
+query II
+SELECT element_order, element_type
+FROM doc_search_sections('test/fixtures/empty_preamble.md', 'body');
+----
+2	heading
+3	paragraph

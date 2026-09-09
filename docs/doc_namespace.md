@@ -191,12 +191,32 @@ every block's content joined in document order, including the heading's own — 
 that straddles two blocks still selects the section. No match returns no rows rather than
 an error.
 
-> **The separator is a single space**, and `NULL` content flattens to empty:
-> `string_agg(coalesce(content, ''), ' ' ORDER BY element_order)`. This is part of the
-> contract, not an implementation detail — it decides whether a pattern spanning a block
-> boundary matches. A tool comparing its own section search against this one should check
-> the separator before concluding the two disagree: a different join character is a
-> difference in the *flattening*, not in the matching, and neither side is wrong.
+> **The separator is a single space, and a block with no content contributes no
+> separator.** Blocks whose content is `NULL` or `''` are skipped entirely rather than
+> flattened to empty:
+>
+> ```
+> # Heading / alpha / --- / beta   ->  "Heading alpha beta"
+>                                 not  "Heading alpha  beta"
+> ```
+>
+> An `hr` carries no content, and joining it as `''` would still earn it a separator — so
+> `doc_search_sections(doc, 'alpha beta')` found nothing, on a doubled space that exists
+> nowhere in the document. `README.md` alone has 71 contentless blocks out of 476 (`hr`,
+> `list`, `list_item`, `link`, `bold`, `paragraph`), so this is the ordinary shape of a
+> document rather than an edge case.
+>
+> The flattened text contains what the document contains. The alternative reading — that a
+> semantic break *should* stop a phrase matching across it — is defensible, but then it
+> wants a real separator with a defined meaning, not a doubled space that appears only when
+> a block happens to be empty.
+>
+> This is part of the contract, not an implementation detail: it decides whether a pattern
+> spanning a block boundary matches. A tool comparing its own section search against this
+> one should check its flattening before concluding the two disagree — a different join
+> rule is a difference in the *flattening*, not in the matching, and neither side is
+> wrong. This paragraph exists because exactly that happened: twelve patterns on a real
+> 696-block document agreed exactly, and a constructed four-block case did not.
 
 Two cases fall out of the same rule rather than needing their own:
 

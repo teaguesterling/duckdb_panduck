@@ -191,6 +191,13 @@ every block's content joined in document order, including the heading's own — 
 that straddles two blocks still selects the section. No match returns no rows rather than
 an error.
 
+> **The separator is a single space**, and `NULL` content flattens to empty:
+> `string_agg(coalesce(content, ''), ' ' ORDER BY element_order)`. This is part of the
+> contract, not an implementation detail — it decides whether a pattern spanning a block
+> boundary matches. A tool comparing its own section search against this one should check
+> the separator before concluding the two disagree: a different join character is a
+> difference in the *flattening*, not in the matching, and neither side is wrong.
+
 Two cases fall out of the same rule rather than needing their own:
 
 - **Content before the first heading is a section.** Otherwise a preamble belongs to no

@@ -146,6 +146,29 @@ SELECT count(*) > 0 FROM doc_section('test/fixtures/sections.html', 'alpha-one',
 ----
 true
 
+# ...AND THE ID ARM DECLINES A SUBSTRING. The assertion above proves the arm exists; it does
+# NOT prove it is whole-string, because 'alpha-one' is also matched by the title arm through
+# ILIKE. Only a pattern that substrings the ID and NOT the title isolates it, and 'alpha-'
+# is that shape: the id 'alpha-one' contains it, the title 'Alpha One' has no hyphen.
+#
+# duckeye hit this exact trap from the other side and reported it: it first tested the id
+# arm with '-S zeb' against a heading 'Zebra', which matched -- but through
+# `title ILIKE '%zeb%'`, not the id, making the test worthless as evidence about ids. Its
+# isolating case was '-S install-up' against a heading 'Install & Update' with id
+# 'install-update'. Both tools decline it; both arrived at "an id is a slug the caller
+# either has or does not" separately.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha-', match := 'contains');
+----
+0
+
+# The control for the assertion above: the SAME id, whole, does match. Without this pair the
+# 0 above could equally mean the id arm is broken outright.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha-one', match := 'contains');
+----
+2
+
 # % IS A LIVE WILDCARD, not a literal, because the pattern goes to ILIKE. Documented rather
 # than defended: duckeye's -S is `title ILIKE '%pat%' ESCAPE '\'` and delegating means
 # spelling it the same way. 'A%a' matches both Alpha headings, which then dedup to one span.

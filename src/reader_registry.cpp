@@ -681,10 +681,33 @@ void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) 
 		//   multiple definition of `duckdb::ScalarFunctionCatalogEntry::Name'
 		// Measured. The CatalogType overload needs no entry class and throws instead, which
 		// costs one catch and no header.
+		//! .c_str() IS LOAD-BEARING, NOT A TIDY-UP. It is what lets one spelling compile
+		//! against both DuckDB majors:
+		//!
+		//!   v1.5.5  GetEntry(..., const string &catalog, const string &schema, const string &name)
+		//!   v2.0    GetEntry(..., const Identifier &,     const Identifier &,   const Identifier &)
+		//!
+		//! Identifier's `const char *` constructor is IMPLICIT ("implicit conversion from
+		//! literals is intentional"); its `const string &` constructor is EXPLICIT, because
+		//! an Identifier carries case-insensitive semantics a bare string does not. So a
+		//! runtime std::string binds in v1.5.5 and fails to bind in v2.0 --
+		//!
+		//!   error: no matching function for call to Catalog::GetEntry(
+		//!       ClientContext&, CatalogType, const char [1], const char [5], std::string)
+		//!
+		//! -- while a `const char *` binds in BOTH. INVALID_CATALOG and DEFAULT_SCHEMA are
+		//! already string literals, which is why only the third argument broke.
+		//!
+		//! Found by the community registry's test_against_latest job, which builds every
+		//! release PR against DuckDB v2.0. It only ran because the descriptor sets ref_next;
+		//! without it that job prints "Skipping prerelease validation" and passes green
+		//! having never looked. Same class as the compat shims in panduck_duckdb_compat.hpp,
+		//! but no shim is needed here -- one spelling satisfies both overload sets.
+		const auto fn_name = names[idx].GetString();
 		bool exists = true;
 		try {
 			Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, INVALID_CATALOG, DEFAULT_SCHEMA,
-			                  names[idx].GetString());
+			                  fn_name.c_str());
 		} catch (std::exception &) {
 			exists = false;
 		}
@@ -1639,7 +1662,33 @@ const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {DEFAULT_SCHEMA,
                                                      {"src", "pattern", nullptr},
                                                      {{"format", "'auto'"}, {nullptr, nullptr}},
                                                      R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(
+-- MATERIALIZED IS LOAD-BEARING ON DuckDB v2.0, and it is not a performance hint.
+--
+-- `b` wraps read_panduck_doc and is scanned TWICE below -- once through `t` into `segs`,
+-- once through `t` into the final projection. On v2.0 that combination returns ZERO ROWS
+-- for every pattern, including the empty one that must return the whole document:
+--
+--     doc_search_sections(f, '')           v1.5.5: 9    v2.0: 0
+--     doc_search_sections(f, 'alpha body') v1.5.5: 2    v2.0: 0
+--
+-- BISECTED, not guessed. Every component is correct on v2.0 in isolation: the read itself,
+-- the window that assigns `seg`, the GROUP BY, string_agg with FILTER, ILIKE ... ESCAPE
+-- (case-insensitively, on the real segment text), and EXISTS with IS NOT DISTINCT FROM.
+-- Rewriting the EXISTS as a JOIN or an IN does not help. What decides it is HOW MANY
+-- DISTINCT COLUMNS OF `t` the final projection touches: six is correct, seven is empty --
+-- and seven plus `seg` in the predicate is every column `b` has. A user-defined macro with
+-- this identical body fails the same way, so it is not the DefaultTableMacro path; and the
+-- same shape over a base table instead of read_panduck_doc does NOT fail, so it needs the
+-- table function.
+--
+-- Verified against a local build of duckdb v2.0-cyanoptera (e646dd0ccd): doc_search.test
+-- goes 0 -> 98 assertions passing, and the whole suite passes on v2.0 with this one word.
+-- Harmless on v1.5.5, which is correct with or without it.
+--
+-- Found by the registry's test_against_latest job, which exists because the descriptor sets
+-- ref_next -- without it that job skips prerelease validation and passes green having never
+-- looked.
+WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
     -- Same single-document guard, and for the same reason as doc_section: element_order
     -- restarts per document, so a glob interleaves two documents at the same values and
     -- every segment boundary below is computed across the seam.

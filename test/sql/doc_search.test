@@ -1,0 +1,372 @@
+# name: test/sql/doc_search.test
+# description: doc_section pattern matching and doc_search_sections — find a section by fragment
+# group: [sql]
+
+#
+# TWO WAYS TO ASK FOR A SECTION, and they bound it differently on purpose.
+#
+#   doc_section(src, section)        -- BY HEADING. Stops at the next heading of the SAME
+#                                       OR HIGHER level, so a chapter yields its subsections.
+#   doc_search_sections(src, pattern) -- BY CONTENT. Stops at the next heading of ANY level,
+#                                       so you get the INNERMOST section holding the match
+#                                       and not its parent's other children.
+#
+# Both were measured against duckeye's -S and -s, which arrived at the same span arithmetic
+# independently. duckeye reported the gap: doc_section matched only an exact title or id,
+# but "a viewer's user types a fragment, not a heading verbatim".
+#
+# THESE FIXTURES USE .md DELIBERATELY. Nothing globs 'test/fixtures/*.md', and the only test
+# that re-registers '.md' is reader_policy_mutation.test, which is gated behind
+# PANDUCK_TEST_POLICY_MUTATION and runs alone under `make check-policy`. It also re-registers
+# '.md' to the SAME reader, so block CONTENT is unchanged either way -- and every assertion
+# below is on content, never on a resolved format string. That last part is the lesson from
+# the '.rtf' assertion in doc_namespace.test: asserting on a format string is what makes a
+# test hostage to the process-wide registry (#10).
+
+require panduck
+
+# test/fixtures/search_sections.md, as blocks. Referenced by element_order throughout, so
+# the spans below are checkable by hand:
+#
+#   1  paragraph  Preamble prose that belongs to no heading.
+#   2  heading    Alpha            level 1
+#   3  paragraph  alpha body
+#   4  heading    Alpha One        level 2
+#   5  paragraph  alpha one body
+#   6  heading    Beta             level 1
+#   7  paragraph  beta body
+#   8  heading    Beta One         level 2
+#   9  paragraph  beta one body
+
+#
+# ---------------------------------------------------------------------------------------
+# doc_section: THE DEFAULT IS STILL EXACT. This is the compatibility assertion.
+# ---------------------------------------------------------------------------------------
+#
+# Substring matching is opt-in through `match`, NOT the new default. An exact-title lookup
+# is a superset-free contract a caller may already depend on: switching the default to
+# ILIKE can only ever return MORE rows, silently, for someone who was matching a title
+# verbatim. duckeye offered "either a substring mode on doc_section or a sibling that takes
+# a pattern"; a mode keeps one function and one span implementation.
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha');
+----
+4
+
+# The fragment duckeye measured as returning 0. Still 0 by default -- unchanged behaviour.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph');
+----
+0
+
+# 'alpha' DOES match -- not as a lowercase title, but as the generated slug id. The exact
+# predicate is `content = section OR attributes['id'] = section`, and the markdown reader
+# slugs 'Alpha' to 'alpha'. Recorded because it is the reason the case-sensitivity check
+# below had to use a spelling that is neither the title nor the slug.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha');
+----
+4
+
+# ...and exact IS exact about case: 'ALPHA' is neither the title 'Alpha' nor the id 'alpha'.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'ALPHA');
+----
+0
+
+# match := 'exact' spells the default out loud and changes nothing.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'exact');
+----
+4
+
+#
+# ---------------------------------------------------------------------------------------
+# doc_section(match := 'contains'): title ILIKE '%pat%' OR id = pat
+# ---------------------------------------------------------------------------------------
+#
+# duckeye's -S predicate exactly: the TITLE matches as a case-insensitive substring, the ID
+# matches whole. An id is a slug the caller either has or does not; a substring of it is not
+# a meaningful request, and 'alpha-one' matching 'alpha' would collide with the title arm.
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+----
+4
+
+# ILIKE, so case-insensitive.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'alpha', match := 'contains');
+----
+4
+
+# THE CONTAINMENT DEDUP. 'Alph' matches BOTH 'Alpha' (level 1, span 2..5) and 'Alpha One'
+# (level 2, span 4..5). Without the dedup this returns 6 rows -- orders 2,3,4,5 from the
+# chapter plus 4,5 AGAIN from the subsection, printing the child twice. duckeye flagged this
+# as "easy to miss until someone searches for a word that appears in two nested headings".
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+----
+4
+
+# Same thing, checked by content rather than by count, so a wrong-but-equal-sized result
+# cannot pass. Each block appears exactly once and in document order.
+query II
+SELECT element_order, content
+FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+----
+2	Alpha
+3	alpha body
+4	Alpha One
+5	alpha one body
+
+# TWO DISJOINT SPANS BOTH SURVIVE. 'One' matches 'Alpha One' (span 4..5) and 'Beta One'
+# (span 8..9). Neither contains the other, so the dedup must NOT drop either -- the mirror
+# of the assertion above, and the reason the rule is "contained by", not "overlaps".
+query II
+SELECT element_order, content
+FROM doc_section('test/fixtures/search_sections.md', 'One', match := 'contains');
+----
+4	Alpha One
+5	alpha one body
+8	Beta One
+9	beta one body
+
+# THE LAST SECTION RUNS TO THE END OF THE DOCUMENT. 'Beta One' has no following heading at
+# level <= 2, so its span is open-ended rather than empty.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Beta One', match := 'contains');
+----
+2
+
+# AN ID STILL MATCHES WHOLE in contains mode -- the OR arm, not the ILIKE arm.
+query I
+SELECT count(*) > 0 FROM doc_section('test/fixtures/sections.html', 'alpha-one', match := 'contains');
+----
+true
+
+# % IS A LIVE WILDCARD, not a literal, because the pattern goes to ILIKE. Documented rather
+# than defended: duckeye's -S is `title ILIKE '%pat%' ESCAPE '\'` and delegating means
+# spelling it the same way. 'A%a' matches both Alpha headings, which then dedup to one span.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'A%a', match := 'contains');
+----
+4
+
+# ...and ESCAPE '\' is what makes a literal percent reachable at all.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', '\%', match := 'contains');
+----
+0
+
+# No match is empty, not an error -- same contract as exact mode.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'no such fragment', match := 'contains');
+----
+0
+
+# AN UNKNOWN MODE IS REFUSED BY NAME, and the message says what the caller wrote. Silently
+# treating a typo as 'exact' would return 0 rows and read as "no such section".
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'substring');
+----
+substring is not one of them
+
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'substring');
+----
+doc_section match must be
+
+#
+# ---------------------------------------------------------------------------------------
+# doc_search_sections: THE INNERMOST SECTION WHOSE TEXT MATCHES
+# ---------------------------------------------------------------------------------------
+#
+# Spans stop at the next heading of ANY level. That is the whole difference from
+# doc_section, and it is what "innermost" means: the match under 'Alpha One' returns
+# 'Alpha One', never the enclosing 'Alpha'.
+
+# 'alpha body' appears only under 'Alpha'. doc_section('Alpha') returns 4 rows because it
+# carries the subsection along; this returns 2, because the innermost section holding the
+# phrase ends at the next heading of ANY level.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'alpha body');
+----
+2	Alpha
+3	alpha body
+
+# The parent is NOT returned when the match is in the child.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'alpha one body');
+----
+4	Alpha One
+5	alpha one body
+
+# Two innermost sections can match at once, and they stay in document order.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'one body');
+----
+4	Alpha One
+5	alpha one body
+8	Beta One
+9	beta one body
+
+# THE HEADING'S OWN TEXT COUNTS as part of the section it opens. 'Beta One' appears nowhere
+# but in that heading, so a hit proves the heading text was flattened in with the body --
+# and only the innermost section comes back, not the enclosing 'Beta' and its other child.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'Beta One');
+----
+8	Beta One
+9	beta one body
+
+# ...and the sibling case, recorded because it is the one that surprised me: 'Beta' matches
+# TWO segments, since the text of 'Beta One' contains it. The pattern is a substring over
+# flattened text, so a heading that is a prefix of another heading selects both sections.
+# Nothing is deduped here -- unlike doc_section, these segments are disjoint by construction
+# (every heading ends the previous segment), so neither contains the other.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'Beta');
+----
+6	Beta
+7	beta body
+8	Beta One
+9	beta one body
+
+# CONTENT BEFORE THE FIRST HEADING IS A SECTION. duckeye: "It also needs a span covering
+# anything before the first heading ... both of which I got wrong before fixing them."
+# Without this the preamble is unreachable by any query, since it belongs to no heading.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/search_sections.md', 'Preamble');
+----
+1	Preamble prose that belongs to no heading.
+
+# ILIKE here too, for the same reason as doc_section.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/search_sections.md', 'PREAMBLE');
+----
+1
+
+# A DOCUMENT WITH NO HEADINGS AT ALL IS ONE SECTION. The other half of what duckeye got
+# wrong first: with no heading to anchor a span, the whole document is the section, so a
+# matching document returns everything rather than nothing.
+query II
+SELECT element_order, content
+FROM doc_search_sections('test/fixtures/no_headings.md', 'prose');
+----
+1	Only prose here.
+2	Still no heading anywhere.
+
+# The match is against the section's FLATTENED text, so a phrase spanning two blocks still
+# selects the section -- 'here' is in block 1 and 'heading' in block 2, and either finds it.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'heading anywhere');
+----
+2
+
+# No match is empty, not an error.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'zzz nothing');
+----
+0
+
+# Same seven duck_block columns as doc_section, in the same order -- this is a sibling, not
+# a new shape. A caller can UNION the two.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.md', 'prose'));
+----
+7
+
+query I
+SELECT list(column_name ORDER BY column_name) = list_sort(['kind', 'element_type', 'content',
+                                                           'level', 'encoding', 'attributes',
+                                                           'element_order'])
+FROM (DESCRIBE SELECT * FROM doc_search_sections('test/fixtures/no_headings.md', 'prose'));
+----
+true
+
+#
+# ---------------------------------------------------------------------------------------
+# BOTH REFUSE A PLURAL SOURCE, for the reason doc_section already did: element_order
+# restarts per document, so a glob interleaves them and every span is wrong.
+# ---------------------------------------------------------------------------------------
+
+statement error
+SELECT count(*) FROM doc_search_sections('test/fixtures/*.md', 'prose');
+----
+doc_search_sections takes a single document
+
+statement error
+SELECT count(*) FROM doc_search_sections(['test/fixtures/no_headings.md', 'test/fixtures/search_sections.md'], 'prose');
+----
+doc_search_sections takes a single document
+
+# doc_section's existing guard must survive the match parameter.
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/*.md', 'Alpha', match := 'contains');
+----
+doc_section takes a single document
+
+# A ONE-MATCH GLOB IS ONE DOCUMENT and must still work -- the distinction doc_section's
+# guard already draws, re-checked on the new surface so it is not re-lost here.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_head*.md', 'prose');
+----
+2
+
+# format := is accepted and forwarded, same as doc_section.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/no_headings.md', 'prose', format := 'markdown');
+----
+2
+
+#
+# ---------------------------------------------------------------------------------------
+# INVARIANTS. These say something about the SHAPE of any result, not about one query, so
+# they catch span arithmetic that is wrong in a way the worked examples above happen to
+# agree with.
+# ---------------------------------------------------------------------------------------
+
+# THE SEGMENTS PARTITION THE DOCUMENT. An empty pattern is `ILIKE '%%'`, which every segment
+# matches, so the result must be the whole document exactly once -- no block missed (the
+# preamble is the one that goes missing) and none counted twice. Checked on README.md while
+# writing this: 476 of 476.
+query I
+SELECT count(*) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/search_sections.md'))
+FROM doc_search_sections('test/fixtures/search_sections.md', '');
+----
+true
+
+# NO BLOCK IS EVER EMITTED TWICE by either function, for a pattern that matches two NESTED
+# headings. This is the containment dedup stated as a property; the worked example above
+# pins one expected list, this pins the rule. Run across nine patterns on README.md while
+# writing this, including ones matching the top-level heading (476 blocks, 0 duplicates).
+query I
+SELECT count(*) = count(DISTINCT element_order)
+FROM doc_section('test/fixtures/search_sections.md', 'Alph', match := 'contains');
+----
+true
+
+query I
+SELECT count(*) = count(DISTINCT element_order)
+FROM doc_search_sections('test/fixtures/search_sections.md', 'body');
+----
+true
+
+# CONTAINS IS A SUPERSET OF EXACT for the same needle. ILIKE '%x%' matches everything
+# `= x` does, so contains can only ever widen -- which is exactly why it is not the
+# default. Verified against all twelve README.md headings while writing this.
+query I
+SELECT count(*) = 0 FROM (
+  SELECT element_order FROM doc_section('test/fixtures/search_sections.md', 'Alpha')
+  EXCEPT
+  SELECT element_order FROM doc_section('test/fixtures/search_sections.md', 'Alpha', match := 'contains'));
+----
+true

@@ -681,10 +681,33 @@ void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) 
 		//   multiple definition of `duckdb::ScalarFunctionCatalogEntry::Name'
 		// Measured. The CatalogType overload needs no entry class and throws instead, which
 		// costs one catch and no header.
+		//! .c_str() IS LOAD-BEARING, NOT A TIDY-UP. It is what lets one spelling compile
+		//! against both DuckDB majors:
+		//!
+		//!   v1.5.5  GetEntry(..., const string &catalog, const string &schema, const string &name)
+		//!   v2.0    GetEntry(..., const Identifier &,     const Identifier &,   const Identifier &)
+		//!
+		//! Identifier's `const char *` constructor is IMPLICIT ("implicit conversion from
+		//! literals is intentional"); its `const string &` constructor is EXPLICIT, because
+		//! an Identifier carries case-insensitive semantics a bare string does not. So a
+		//! runtime std::string binds in v1.5.5 and fails to bind in v2.0 --
+		//!
+		//!   error: no matching function for call to Catalog::GetEntry(
+		//!       ClientContext&, CatalogType, const char [1], const char [5], std::string)
+		//!
+		//! -- while a `const char *` binds in BOTH. INVALID_CATALOG and DEFAULT_SCHEMA are
+		//! already string literals, which is why only the third argument broke.
+		//!
+		//! Found by the community registry's test_against_latest job, which builds every
+		//! release PR against DuckDB v2.0. It only ran because the descriptor sets ref_next;
+		//! without it that job prints "Skipping prerelease validation" and passes green
+		//! having never looked. Same class as the compat shims in panduck_duckdb_compat.hpp,
+		//! but no shim is needed here -- one spelling satisfies both overload sets.
+		const auto fn_name = names[idx].GetString();
 		bool exists = true;
 		try {
 			Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, INVALID_CATALOG, DEFAULT_SCHEMA,
-			                  names[idx].GetString());
+			                  fn_name.c_str());
 		} catch (std::exception &) {
 			exists = false;
 		}

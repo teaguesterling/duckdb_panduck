@@ -191,3 +191,37 @@ statement error
 SELECT count(*) FROM doc_toc('test/fixtures/pandoc_pstyle.docx');
 ----
 doc_toc needs the duck_block_utils extension
+
+#
+# ---------------------------------------------------------------------------------------
+# THE MESSAGE MUST NAME AN INSTALL COMMAND THAT ACTUALLY WORKS.
+# ---------------------------------------------------------------------------------------
+#
+# It said `INSTALL pdf`, which 404s: pdf is a COMMUNITY extension and a bare INSTALL looks
+# in the core repository.
+#
+#     HTTP Error: Failed to download extension "pdf" at URL
+#     ".../v1.5.5/linux_amd64/pdf.duckdb_extension.gz" (HTTP 404)
+#
+# Reported by l1t1 on #25 -- against the README, but the same words were in three error
+# messages. This is #25's own shape twice over: that issue was an error which did not say
+# what to do next; these said it and were wrong, which costs a reader more, not less.
+#
+# IT PASSED HERE BECAUSE pdf WAS ALREADY INSTALLED. A bare INSTALL of an
+# already-present extension succeeds, so a developer machine cannot tell the two spellings
+# apart -- which is exactly why this is asserted rather than left to review. The tests' own
+# INSTALL statements had the same defect and are fixed alongside.
+
+statement error
+SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf');
+----
+INSTALL pdf FROM community
+
+# AND ON THE PATH THE DOCS RECOMMEND, which is the one that had no guidance at all -- it
+# named the missing extension and stopped. #25's reply told this same reporter that
+# read_panduck_doc "routes through panduck's own dispatch and says so in panduck's words",
+# so it must not say LESS than the direct call.
+statement error
+SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf');
+----
+INSTALL pdf FROM community

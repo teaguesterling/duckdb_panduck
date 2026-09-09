@@ -1145,6 +1145,16 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "  OR (try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) = maj "
      "      AND try_cast(split_part(duck_block_spec_version(), '.', 2) AS INTEGER) >= min), false)"},
 
+    // ONE SPELLING FOR doc_render's OUTPUT FORMAT. Accepts what panduck's own resolver
+    // returns ('markdown') alongside the short form ('md'), and 'plain' for 'text', so
+    // doc_render(src, panduck_resolved_format(src, NULL)) composes. Anything else passes
+    // through unchanged so the error names what the caller actually wrote.
+    {DEFAULT_SCHEMA,
+     "panduck_render_format",
+     {"f", nullptr},
+     {{nullptr, nullptr}},
+     "CASE lower(f) WHEN 'markdown' THEN 'md' WHEN 'plain' THEN 'text' ELSE f END"},
+
     {DEFAULT_SCHEMA,
      "panduck_policy_format",
      {"src", "fmt", nullptr},
@@ -1295,6 +1305,17 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{"format", "'auto'"}, {nullptr, nullptr}},
      "(SELECT r FROM query("
      "  CASE"
+     // OUTPUT-FORMAT SYNONYMS, so panduck's own two functions compose. The resolver returns
+     // 'markdown' and this took only 'md', so
+     //   doc_render(src, panduck_resolved_format(src, NULL))
+     // -- the obvious composition, and the first thing a consumer reaches for, since
+     // resolved_format is what you would use to fill this argument -- raised "markdown is
+     // not one of them". 'html' spells the same in both vocabularies and worked, which made
+     // the gap read as arbitrary rather than as a real distinction between input and output
+     // format names. Reported by duckeye, measured rather than read from the docs.
+     //
+     // Normalised once here rather than by adding arms below, so every later branch and the
+     // error message see one spelling.
      // Same as doc_toc: `format` is rendered into SQL text through panduck_quote, which
      // coalesces NULL to '', so a NULL never reaches read_panduck_doc as a NULL and
      // surfaced as the "This is a panduck bug" arm instead. Measured.
@@ -1308,13 +1329,13 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "      THEN error('panduck: doc_render takes a single document; a glob or list would ' ||"
      "                 'concatenate them. Use read_panduck_doc(src, filename := true) and ' ||"
      "                 'render each document separately')"
-     "    WHEN output_format = 'md' AND panduck_ensure_extension('markdown')"
+     "    WHEN panduck_render_format(output_format) = 'md' AND panduck_ensure_extension('markdown')"
      "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
-     "    WHEN output_format = 'html' AND panduck_ensure_extension('webbed')"
+     "    WHEN panduck_render_format(output_format) = 'html' AND panduck_ensure_extension('webbed')"
      "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
-     "    WHEN output_format = 'text' AND panduck_ensure_extension('duck_block_utils')"
+     "    WHEN panduck_render_format(output_format) = 'text' AND panduck_ensure_extension('duck_block_utils')"
      "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      // output_format IS COALESCED (round-2 error() audit): a caller can write
@@ -1326,13 +1347,13 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // is not installed" for both, which makes the caller guess: 'md' IS supported, and a
      // user without the markdown extension was told their format might be the problem.
      // Issue #25 is the same shape -- an error that does not name what to do next.
-     "    WHEN output_format IN ('md', 'html', 'text')"
+     "    WHEN panduck_render_format(output_format) IN ('md', 'html', 'text')"
      "      THEN error('panduck: doc_render ' || output_format || ' needs the ' ||"
-     "                 CASE output_format WHEN 'md' THEN 'markdown' WHEN 'html' THEN 'webbed'"
+     "                 CASE panduck_render_format(output_format) WHEN 'md' THEN 'markdown' WHEN 'html' THEN 'webbed'"
      "                                    ELSE 'duck_block_utils' END ||"
      "                 ' extension; see panduck_dependencies()')"
-     "    ELSE error('panduck: doc_render supports md, html and text; ' || coalesce(output_format, '<NULL>') ||"
-     "               ' is not one of them')"
+     "    ELSE error('panduck: doc_render supports md (markdown), html, and text (plain); ' ||"
+     "               coalesce(output_format, '<NULL>') || ' is not one of them')"
      "  END))"},
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};

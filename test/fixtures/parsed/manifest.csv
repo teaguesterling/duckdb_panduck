@@ -1,0 +1,9 @@
+fixture,source,source_sha256,reader_extension,reader_version,duck_block_spec_version,duckdb_version,block_count,generated_at
+constructs_md,test/fixtures/constructs.source.md,6a0c172b225683b8defb184e7fc8b66c1969ae6d539dcceb597f75e1811bd0fe,markdown,75e9d0b,6.5,v1.5.5,51,2026-09-09T04:39:56Z
+lists_md,test/fixtures/lists.source.md,3c944bb70a6051ae4339620301f89cc85280e27730e4f1241c286c170d0f293f,markdown,75e9d0b,6.5,v1.5.5,17,2026-09-09T04:39:56Z
+rich_md,test/fixtures/rich.source.md,800e7caa5f5e86d3a7cc3b167057f47461b7ff8a5863eba282ef1c1d163ebee7,markdown,75e9d0b,6.5,v1.5.5,22,2026-09-09T04:39:56Z
+two_pages_md,test/fixtures/two_pages.source.md,b436f7c075fc5ced7608d5886b710a736f40108c9c0d8a9cafea3deff0e5b30e,markdown,75e9d0b,6.5,v1.5.5,51,2026-09-09T04:39:56Z
+constructs_html,test/fixtures/constructs.html,f0e5e3b4b569e42bfe1c6f9d257eb3c5eef547c1477b60bee5ffad067135af14,webbed,73189d2,6.5,v1.5.5,15,2026-09-09T04:39:56Z
+containers_html,test/fixtures/containers.html,6997e18001002f7b088135610a9c4370869bba8a1fac1ce7bca38a074b77e686,webbed,73189d2,6.5,v1.5.5,12,2026-09-09T04:39:56Z
+sections_html,test/fixtures/sections.html,fed5a12ce3f8a8c6092d4fb998e0dc47065cf34e5b464ed62d4fb1523ebdf0ff,webbed,73189d2,6.5,v1.5.5,9,2026-09-09T04:39:56Z
+two_pages_pdf,test/fixtures/two_pages.pdf,cdeea53730d621fd14ed9b9cab486fdd7eb1fd4b984e438e2a86db9d9e557f3f,pdf,6535c81,6.5,v1.5.5,45,2026-09-09T04:39:56Z

@@ -144,3 +144,23 @@ check-policy:
 .PHONY: check-pdf
 check-pdf:
 	PANDUCK_TEST_PDF=1 ./build/release/test/unittest "test/sql/pdf_reader.test"
+
+# PRE-PARSED FIXTURES AT THE pdf / markdown / webbed BOUNDARY.
+#
+# check-parsed-fixtures answers ONE question: would today's community extensions still
+# produce the blocks stored in test/fixtures/parsed/? A failure is NOT a panduck bug -- it
+# is notice that an upstream reader changed under panduck with no commit in this repo.
+#
+# It is NOT part of `check` and not part of the test suite, deliberately. It needs markdown,
+# webbed and pdf installed, which is exactly what test/sql/parsed_fixtures.test is designed
+# not to need. Keeping them apart is the point: the suite stays fast and dependency-free,
+# and drift is reported as drift instead of as a mysterious assertion failure.
+check-parsed-fixtures:
+	python3 scripts/parsed_fixtures.py --check
+
+# Regenerating PRINTS the structural diff it is about to bake in and writes it to
+# parsed-fixture-drift.txt. Put that diff in the commit message. A red drift job that people
+# regenerate without reading is worse than no job at all: it launders an upstream behaviour
+# change into a green build under a commit saying "regenerate fixtures".
+regen-parsed-fixtures:
+	python3 scripts/parsed_fixtures.py --regen --diff-out parsed-fixture-drift.txt

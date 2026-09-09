@@ -171,7 +171,7 @@ true
 statement error
 SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
 ----
-doc_render supports md, html and text
+is not one of them
 
 # 'ansi' is deliberately absent, not forgotten: duck_block_ansi is a macro behind
 # PRAGMA duck_block_render, and a macro created by a pragma cannot be reached from a
@@ -182,7 +182,7 @@ doc_render supports md, html and text
 statement error
 SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'ansi');
 ----
-doc_render supports md, html and text
+is not one of them
 
 # ---------------------------------------------------------------------------
 # doc_toc AND doc_render TAKE A SINGLE DOCUMENT TOO.
@@ -262,3 +262,69 @@ SELECT level, title, indent FROM doc_toc('test/fixtures/pandoc_pstyle.docx') ORD
 ----
 1	Heading One	0
 2	Heading Two	1
+
+# ---------------------------------------------------------------------------
+# doc_render ACCEPTS THE NAMES panduck's OWN RESOLVER RETURNS.
+#
+# Reported by duckeye, measuring panduck's surface rather than reading its docs. The natural
+# composition -- ask panduck what format this is, hand that to panduck's renderer -- failed:
+#
+#   panduck_resolved_format('README.md', NULL)                    -> 'markdown'
+#   doc_render('README.md', 'md')                                 -> works
+#   doc_render('README.md', 'markdown')                           -> Invalid Input Error
+#   doc_render('README.md', panduck_resolved_format(...))         -> Invalid Input Error
+#
+# The two are different axes -- one names the INPUT format, one the OUTPUT -- but 'html'
+# spells the same in both and works, so the mismatch reads as arbitrary rather than as a
+# distinction. It is the first shape a consumer hits, because resolved_format is exactly what
+# you would use to fill doc_render's third argument.
+query I
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'markdown')
+     = doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'md');
+----
+true
+
+# THE COMPOSITION ITSELF, on a source whose format IS also an output format.
+#
+# THAT QUALIFIER IS NOT PEDANTRY, and writing this assertion is what showed it: the first
+# version used the RTF fixture and failed, because panduck_resolved_format returns 'rtf' --
+# a perfectly good INPUT format that doc_render cannot emit. The two arguments are different
+# axes, and the fix here is not that every resolved format renders; it is that 'markdown'
+# and 'md' should not be two names for one thing. Composition works exactly when the source
+# format is one panduck can also write, which is a real and smaller claim.
+query I
+SELECT starts_with(
+  doc_render('test/fixtures/two_pages.source.md',
+             panduck_resolved_format('test/fixtures/two_pages.source.md', 'auto')),
+  '#');
+----
+true
+
+# ...and a format that is only an INPUT still refuses, naming what the caller wrote. The
+# synonym fix must not make doc_render pretend it can emit latex.
+#
+# USES .tex, NOT .rtf. The first version used the RTF fixture and got 'panduck is not one of
+# them' -- because reader_registry.test re-registers '.rtf' with reader_ext 'panduck', a user
+# registration sets format = reader_ext, and the registry is process-wide. Passed alone,
+# failed in suite. Fourth assertion of mine that issue #10 has caught; '.tex' and '.docx' are
+# the extensions no test re-registers.
+statement error
+SELECT doc_render('test/fixtures/handwritten.tex',
+                  panduck_resolved_format('test/fixtures/handwritten.tex', 'auto'));
+----
+latex is not one of them
+
+# 'text' keeps its synonym too, for the same reason: the resolver never returns 'text', but a
+# caller who writes 'plain' means the same thing and should not have to discover which.
+query I
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'plain')
+     = doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'text');
+----
+true
+
+# A GENUINELY UNSUPPORTED FORMAT STILL SAYS SO, and now lists the spellings rather than
+# leaving the caller to guess which three of the many format names are outputs.
+statement error
+SELECT doc_render('test/fixtures/pandoc_outlinelevel.rtf', 'nonsense');
+----
+is not one of them

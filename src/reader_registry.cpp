@@ -943,7 +943,12 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
                                          "doc_toc",
                                          {"src", nullptr},
-                                         {{"format", "'auto'"}, {nullptr, nullptr}},
+                                         {{"format", "'auto'"},
+                                          // Threaded so a notebook is navigable. Without it doc_toc on an .ipynb
+                                          // returns 0 rows -- the headings sit inside a raw markdown cell, which
+                                          // is exactly what expansion discharges.
+                                          {"expand_embedded", "false"},
+                                          {nullptr, nullptr}},
                                          R"SQL(
 SELECT * FROM query(
     -- GUARDED HERE, NOT INHERITED FROM read_panduck_doc, because this macro does not pass
@@ -1006,9 +1011,19 @@ SELECT * FROM query(
     -- with no existing users. If it shows up in an issue, the gate branch is the fix.
     ELSE 'SELECT (t).level AS level, (t).title AS title, (t).id AS id, ' ||
          '(t).indent AS indent, (t).element_order AS element_order ' ||
-         'FROM (SELECT unnest(duck_blocks_toc_structs(panduck_read_blocks(' ||
-         panduck_quote(panduck_source_list(src)[1]) ||
-         ', format := ' || panduck_quote(format) || '))) AS t)'
+         -- READS THROUGH read_panduck_doc RATHER THAN panduck_read_blocks when expanding.
+         -- panduck_read_blocks is itself a SUBQUERY macro -- (SELECT list(b) FROM ...) -- and
+         -- panduck_expand_embedded does its work in LAMBDAS, so substituting one into the
+         -- other put a subquery inside a lambda:
+         --     Binder Error: subqueries in lambda expressions are not supported
+         -- Delegating reuses the expansion read_panduck_doc already performs, where list(b)
+         -- aggregates a COLUMN and no subquery reaches a lambda. It also keeps the markdown
+         -- gate in exactly one place instead of repeating it here.
+         'FROM (SELECT unnest(duck_blocks_toc_structs((SELECT list(b ORDER BY b.element_order) ' ||
+         'FROM read_panduck_doc(' || panduck_quote(panduck_source_list(src)[1]) ||
+         ', format := ' || panduck_quote(format) ||
+         ', expand_embedded := ' || CASE WHEN expand_embedded THEN 'true' ELSE 'false' END ||
+         ') b))) AS t)'
     END
 )
 )SQL"};
@@ -1172,6 +1187,108 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // returns ('markdown') alongside the short form ('md'), and 'plain' for 'text', so
     // doc_render(src, panduck_resolved_format(src, NULL)) composes. Anything else passes
     // through unchanged so the error names what the caller actually wrote.
+    //! panduck_renumber_blocks -- give a block list contiguous element_order from `base`.
+    //!
+    //! SEPARATE FROM THE EXPANDER because a lambda cannot contain a subquery, and computing
+    //! the base needs a second pass over the same list. Referencing `blocks` twice inside one
+    //! macro put a subquery in a lambda and DuckDB refused it:
+    //!     Binder Error: subqueries in lambda expressions are not supported
+    //! Passing the base in as a plain parameter sidesteps that entirely.
+    {DEFAULT_SCHEMA,
+     "panduck_renumber_blocks",
+     {"bs", "base", nullptr},
+     {{nullptr, nullptr}},
+     "list_transform(bs, (pd_e, pd_i) -> {kind: pd_e.kind, element_type: pd_e.element_type, "
+     "  content: pd_e.content, level: pd_e.level, encoding: pd_e.encoding, attributes: pd_e.attributes, "
+     // THE CAST IS REQUIRED, not tidiness: a list index is BIGINT, so `i - 1 + base`
+     // widens and duck_blocks_toc_structs rejected the result outright --
+     //   No function matches ... element_order BIGINT
+     //   Candidate functions: ... element_order INTEGER
+     // The vocabulary's seven columns are a TYPE; widening one leaves a list that is
+     // still shaped like duck_blocks and no longer binds where duck_blocks bind.
+     "  element_order: (pd_i - 1 + base)::INTEGER})"},
+
+    //! THE IMPLEMENTATION. panduck_expand_embedded below is a thin gate in front of it.
+    //!
+    //! SPLIT FOR THE SAME REASON read_pdf_blocks IS: a macro body binds LAZILY, on invocation.
+    //! This body names parse_markdown_to_duck_blocks, which the `markdown` COMMUNITY
+    //! EXTENSION provides. Without it, binding fails before any guard inside could run and the
+    //! caller gets a Catalog Error naming a function they never typed -- issue #25's exact
+    //! shape. A wrapper that decides NOT to call this one never binds it.
+    //!
+    //! WHY THIS EXISTS AT ALL. The ipynb reader holds a markdown cell as one `raw` block, and
+    //! that is deliberate: delegation lives in the SQL layer, so a C++ reader that parsed
+    //! markdown would make its output depend on which extensions are installed. The comment
+    //! there calls it "a deferral rather than a resting place", to be "discharged by a
+    //! post-parse helper for embedded formats". THIS IS THAT HELPER. It parses in the SQL
+    //! layer, where delegation already lives, so the isolation is preserved rather than
+    //! traded away.
+    //!
+    //! LEVELS ARE OFFSET, NOT COPIED. The parsed blocks come back at their own depth -- 1 for
+    //! blocks, 2 for inlines -- while the raw block they replace sits at some depth inside the
+    //! host document (2, under the notebook's cell div). Splicing them unshifted would put a
+    //! heading at the same level as the div that contains it, discarding the nesting the host
+    //! reader was careful to record. `e.level + x.level - 1` preserves it.
+    //!
+    //! A BLOCK WITH NO EXPANDABLE FORMAT PASSES THROUGH UNTOUCHED, so this is a no-op on any
+    //! document with no embedded fragment -- measured: two_pages.source.md is 51 blocks in and
+    //! 51 out, unchanged.
+    {DEFAULT_SCHEMA,
+     "panduck_expand_embedded_impl",
+     {"blocks", nullptr},
+     {{nullptr, nullptr}},
+     // LAMBDA VARIABLES ARE NAMED pd_blk / pd_sub / pd_ord, NOT x / e / y, because a macro's
+     // lambda parameter can be shadowed by the CALLER's table alias. Measured:
+     //     SELECT len(panduck_expand_embedded(list(x))) FROM read_panduck_doc(...) x
+     // resolved `x.element_type` inside the lambda to the caller's alias instead of the
+     // lambda's own binding and failed with
+     //     Binder Error: column "element_type" must appear in the GROUP BY clause
+     // -- an error naming a column the caller never grouped, about a lambda they cannot see.
+     // A short generic name in a macro body is a name the caller can collide with.
+     "panduck_renumber_blocks("
+     "  flatten(list_transform(blocks, pd_blk -> "
+     "    CASE WHEN pd_blk.element_type = 'raw' "
+     "          AND pd_blk.attributes['format'] = 'markdown' "
+     "         THEN list_transform(parse_markdown_to_duck_blocks(pd_blk.content), "
+     "                pd_sub -> {kind: pd_sub.kind, element_type: pd_sub.element_type, "
+     "                      content: pd_sub.content, "
+     "                      level: pd_sub.level + pd_blk.level - 1, "
+     "                      encoding: pd_sub.encoding, attributes: pd_sub.attributes, "
+     "                      element_order: pd_sub.element_order}) "
+     "         ELSE [pd_blk] END)), "
+     // THE ORIGIN IS PRESERVED, NOT NORMALISED. Readers disagree about it: every
+     // panduck-native reader starts element_order at 0, while .md starts at 1 because the
+     // markdown extension does and panduck passes it through. Forcing a base here would
+     // silently renumber one of them, so the input's own origin is kept and the disagreement
+     // stays visible where it belongs -- upstream.
+     "  coalesce(list_min(list_transform(blocks, pd_ord -> pd_ord.element_order)), 0))"},
+
+    //! panduck_expand_embedded(blocks) -- replace embedded-format `raw` blocks with their
+    //! parsed contents. Gated, so a missing markdown extension is refused in panduck's words
+    //! rather than as a catalog error naming a function the caller never wrote.
+    {DEFAULT_SCHEMA,
+     "panduck_expand_embedded",
+     {"blocks", nullptr},
+     {{nullptr, nullptr}},
+     "CASE WHEN NOT panduck_ensure_extension('markdown') "
+     "     THEN error('panduck: expanding an embedded markdown fragment needs the markdown '|| "
+     "                'extension (INSTALL markdown FROM community)') "
+     "     ELSE panduck_expand_embedded_impl(blocks) END"},
+
+    //! Wrap a generated reader query so its rows come back expanded. Exists so READ_DOC_MACRO
+    //! can opt in with ONE call rather than duplicating the SQL-generating CASE, whose
+    //! comments record measured decisions and should not be moved to gain a parameter.
+    {DEFAULT_SCHEMA,
+     "panduck_wrap_expand",
+     {"sql", "flag", nullptr},
+     {{nullptr, nullptr}},
+     "CASE WHEN NOT flag THEN sql "
+     "     WHEN NOT panduck_ensure_extension('markdown') "
+     "       THEN error('panduck: expand_embedded needs the markdown extension ' || "
+     "                  '(INSTALL markdown FROM community)') "
+     "     ELSE 'SELECT u.* FROM (SELECT unnest(panduck_expand_embedded(list(b))) ' || "
+     "          'AS u FROM (' || sql || ') b)' END"},
+
     {DEFAULT_SCHEMA,
      "panduck_render_format",
      {"f", nullptr},
@@ -1482,7 +1599,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 const DefaultTableMacro DOC_CONTAINER_MACRO = {DEFAULT_SCHEMA,
                                                "doc_container",
                                                {"src", "id", nullptr},
-                                               {{"format", "'auto'"}, {nullptr, nullptr}},
+                                               {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
                                                R"SQL(
 WITH b AS (SELECT * FROM read_panduck_doc(
     -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
@@ -1512,7 +1629,8 @@ WITH b AS (SELECT * FROM read_panduck_doc(
          -- stringify to '[path]' and fail to open. Resolving also normalises the three
          -- spellings of one document -- plain path, one-match glob, one-element list -- to
          -- the identical string, measured.
-         ELSE panduck_source_list(src)[1] END, format := format)),
+         ELSE panduck_source_list(src)[1] END, format := format,
+    expand_embedded := expand_embedded)),
 c AS (SELECT element_order AS o, level AS lv
       FROM b WHERE attributes['id'] = id
       ORDER BY element_order LIMIT 1),
@@ -1547,11 +1665,12 @@ ORDER BY b.element_order
 //! word that appears in two nested headings". Spans here are properly nested or disjoint
 //! (that is what bounding on heading level gives you), so dropping the contained ones
 //! leaves a disjoint set and no block can be emitted twice.
-const DefaultTableMacro DOC_SECTION_MACRO = {DEFAULT_SCHEMA,
-                                             "doc_section",
-                                             {"src", "section", nullptr},
-                                             {{"format", "'auto'"}, {"match", "'exact'"}, {nullptr, nullptr}},
-                                             R"SQL(
+const DefaultTableMacro DOC_SECTION_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_section",
+    {"src", "section", nullptr},
+    {{"format", "'auto'"}, {"match", "'exact'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+    R"SQL(
 WITH b AS (SELECT * FROM read_panduck_doc(
     -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
     -- element_order, which RESTARTS per document, so a glob or a list does not widen the
@@ -1589,7 +1708,8 @@ WITH b AS (SELECT * FROM read_panduck_doc(
          -- stringify to '[path]' and fail to open. Resolving also normalises the three
          -- spellings of one document -- plain path, one-match glob, one-element list -- to
          -- the identical string, measured.
-         ELSE panduck_source_list(src)[1] END, format := format)),
+         ELSE panduck_source_list(src)[1] END, format := format,
+    expand_embedded := expand_embedded)),
 -- ONE PAST THE LAST BLOCK, so an open-ended span (a section with no following heading at
 -- its level or above) gets a real number instead of NULL. The NULL end is what forced the
 -- old body's `... OR (SELECT o FROM stop) IS NULL` and it does not survive contact with
@@ -1657,11 +1777,12 @@ ORDER BY b.element_order
 //! Both fall out of the running max() below instead of needing their own arms: a block
 //! before the first heading has no preceding heading, so its segment key is NULL, and in a
 //! document without headings every block takes that same NULL key.
-const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {DEFAULT_SCHEMA,
-                                                     "doc_search_sections",
-                                                     {"src", "pattern", nullptr},
-                                                     {{"format", "'auto'"}, {nullptr, nullptr}},
-                                                     R"SQL(
+const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_search_sections",
+    {"src", "pattern", nullptr},
+    {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+    R"SQL(
 -- MATERIALIZED IS LOAD-BEARING ON DuckDB v2.0, and it is not a performance hint.
 --
 -- `b` wraps read_panduck_doc and is scanned TWICE below -- once through `t` into `segs`,
@@ -1696,7 +1817,8 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
          THEN error('panduck: doc_search_sections takes a single document; element_order '
                     'restarts per document, so a glob or list interleaves them. Use '
                     'read_panduck_doc(src, filename := true) for multiple documents')
-         ELSE panduck_source_list(src)[1] END, format := format)),
+         ELSE panduck_source_list(src)[1] END, format := format,
+    expand_embedded := expand_embedded)),
 -- SEGMENT KEY = the element_order of the nearest heading at or before this block, NULL for
 -- anything before the first one. Every heading opens a segment regardless of level, which
 -- is precisely "stops at the next heading of ANY level".
@@ -1880,9 +2002,17 @@ const DefaultTableMacro READ_DOC_MACRO = {
      // what keeps an unchanged call byte-identical: panduck_render_params(MAP {}) renders ''
      // without consulting anything.
      {"reader_params", "MAP {}"},
+     // EXPANDING EMBEDDED FRAGMENTS IS OPT-IN, and the default is what keeps the reader's
+     // isolation intact. ipynb_reader.cpp holds a markdown cell raw on the argument that
+     // "one consistent behaviour beats two that vary by environment" -- a reader whose
+     // output depends on which extensions happen to be installed is worse than one that
+     // consistently defers. A parameter defaulting to false preserves exactly that: an
+     // unchanged call reads identically with or without the markdown extension present.
+     // Asking for expansion is asking for the dependency, knowingly.
+     {"expand_embedded", "false"},
      {nullptr, nullptr}},
     R"SQL(
-SELECT * FROM query(
+SELECT * FROM query(panduck_wrap_expand(
     CASE
         -- NULL IS NOT A VALUE FOR A NAMED PARAMETER, and DuckDB CORE is the standard this
         -- family was aligned to: read_csv('a.csv', filename := NULL) and read_json(...) both
@@ -2319,6 +2449,7 @@ SELECT * FROM query(
                    ''' but read_panduck_doc has no branch for it -- the registry claims ' ||
                    'the format and dispatch does not handle it. This is a panduck bug.')
     END
+, expand_embedded)
 )
 )SQL"};
 

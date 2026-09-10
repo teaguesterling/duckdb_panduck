@@ -115,6 +115,24 @@ def collect_versions(duck):
         "WHERE extension_name IN ('markdown','webbed','pdf','duck_block_utils');")
     versions = {r["n"]: r["v"] for r in rows}
     versions["duckdb"] = duck.sql("SELECT version() AS v;")[0]["v"]
+    # PANDUCK'S OWN VERSION, which every other column here is not.
+    #
+    # The manifest exists so a later difference can be ATTRIBUTED -- so that an extractor
+    # change is not read as a data change. It recorded the sibling readers, duck_block_utils'
+    # spec and DuckDB, and omitted the extractor whose repository this is.
+    #
+    # That is not cosmetic: two_pages_pdf's heading levels come from panduck, not from the
+    # pdf extension. A PDF carries no heading markup, so the levels are derived here by
+    # `dense_rank() OVER (ORDER BY font_size DESC)`. Change that -- bucketing near-equal font
+    # sizes would be a reasonable change -- and the fixture moves while every recorded
+    # version stays identical: the drift check fires and the manifest explains nothing.
+    #
+    # IT IS A COMMIT SHA, NOT A RELEASE VERSION. panduck_version() reports the commit
+    # captured at CMake CONFIGURE time and can never report a tag, because
+    # duckdb_extension_generate_version passes --match with literal quotes inside
+    # execute_process, leaving the tag branch unreachable. A sha identifies the source
+    # exactly, which is what attribution needs; it just must not be read as "v0.4.1".
+    versions["panduck"] = duck.sql("SELECT panduck_version() AS v;")[0]["v"]
     # duck_block_spec_version() is CONTEXT, not cause: panduck's readers emit blocks
     # without duck_block_utils loaded. It is recorded because a vocabulary change is the
     # thing most likely to explain a diff a reader version alone does not.
@@ -270,11 +288,20 @@ def main():
                 if row.get("reader_version") != versions.get(ext, "?"):
                     stale_labels.append(
                         f"  {name}: {ext} {row.get('reader_version')} -> {versions.get(ext)}")
+                # PANDUCK'S OWN MOVE IS REPORTED THE SAME WAY. Without this the column is
+                # recorded and never read, which is the same defect as not recording it --
+                # it would explain a diff only to someone who already thought to look.
+                # `is not None` rather than a bare get: a manifest written before this
+                # column existed has no key, and that absence is not a version move.
+                if row.get("panduck_version") is not None and \
+                        row.get("panduck_version") != versions["panduck"]:
+                    stale_labels.append(
+                        f"  {name}: panduck {row.get('panduck_version')} -> {versions['panduck']}")
 
         # A VERSION MOVE WITH NO DIFF IS THE GOOD NEWS CASE, and it is reported rather
         # than silent: it is positive evidence that the upgrade did not change output.
         if stale_labels:
-            print("reader versions have moved since these fixtures were generated:")
+            print("versions have moved since these fixtures were generated:")
             print("\n".join(stale_labels))
             print()
 
@@ -292,7 +319,7 @@ def main():
             return 1
 
         if stale_labels:
-            print("OK: readers moved but output is byte-identical. Refresh the labels with")
+            print("OK: versions moved but output is byte-identical. Refresh the labels with")
             print("    make regen-parsed-fixtures")
             print("    (no block changes; the manifest is what goes stale.)")
         else:
@@ -324,6 +351,7 @@ def main():
             "source_sha256": sha256_of(ROOT / source),
             "reader_extension": ext,
             "reader_version": versions.get(ext, "?"),
+            "panduck_version": versions["panduck"],
             "duck_block_spec_version": versions["duck_block_spec"],
             "duckdb_version": versions["duckdb"],
             "block_count": n,

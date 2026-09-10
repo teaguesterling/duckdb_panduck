@@ -65,6 +65,28 @@ WHERE element_type IN ('heading', 'list_item') GROUP BY 1 ORDER BY 1;
 heading	2
 list_item	4
 
+# THE DERIVED LEVELS THEMSELVES, not just the heading count. This is the one assertion in
+# the dependency-free suite that covers panduck's OWN contribution to a stored fixture: a
+# PDF carries no heading markup, so these levels come from
+# `dense_rank() OVER (ORDER BY font_size DESC)` in reader_registry.cpp.
+#
+# Both headings rank 1 because their font sizes are equal -- which is the interesting part.
+# A change that bucketed near-equal sizes, or that ranked ascending, would keep the heading
+# COUNT at 2 and move these values, so counting alone cannot see it.
+#
+# Added because duckeye pointed out that the example motivating #40 was the one case their
+# consumer check is blind to: their pdf comparison is page_break-contract-only, since our
+# two routes to PDF blocks differ by design. `make check-parsed-fixtures` does compare
+# `level` and would fire -- but that job needs the pdf extension installed, and this file is
+# the one that runs anywhere. The gap was real: covered by the dependent job, uncovered by
+# the independent one.
+query II
+SELECT element_order, level FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+1	1
+40	1
+
 # Every block carries the canonical seven columns and a contiguous element_order.
 query I
 SELECT count(*) = count(DISTINCT element_order) FROM read_parquet('test/fixtures/parsed/two_pages_pdf.blocks.parquet');
@@ -145,6 +167,33 @@ SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
 WHERE length(source_sha256) <> 64;
 ----
 0
+
+# PANDUCK'S OWN VERSION IS RECORDED, which for a while it was not (#40).
+#
+# The manifest attributed the sibling readers, duck_block_utils' spec and DuckDB, and
+# omitted the extractor whose repository this is. That is not cosmetic: two_pages_pdf's
+# heading levels are derived by panduck, not by the pdf extension -- a PDF carries no
+# heading markup, so the levels come from `dense_rank() OVER (ORDER BY font_size DESC)` in
+# reader_registry.cpp. Change that and the fixture moves while every recorded version stays
+# identical: the drift check fires and the manifest explains nothing, which is the one
+# scenario it exists to prevent.
+#
+# It is a COMMIT SHA, not a release version -- panduck_version() reports the commit captured
+# at CMake configure time and can never report a tag (#35). Asserted as non-empty rather
+# than as a shape, because a sha's length is the one thing that legitimately varies.
+query I
+SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
+WHERE panduck_version IS NULL OR panduck_version IN ('', '?', 'dev');
+----
+0
+
+# ...and it is the SAME for every fixture, because one run generates them all. Two values
+# here would mean a half-applied regeneration -- some fixtures refreshed, some not -- which
+# is the shape that makes a manifest actively misleading rather than merely incomplete.
+query I
+SELECT count(DISTINCT panduck_version) FROM read_csv('test/fixtures/parsed/manifest.csv');
+----
+1
 
 # The three boundary readers are all represented. A fixture set that quietly lost its pdf
 # coverage would still pass everything else in this file.

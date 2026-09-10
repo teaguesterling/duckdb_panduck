@@ -164,3 +164,14 @@ check-parsed-fixtures:
 # change into a green build under a commit saying "regenerate fixtures".
 regen-parsed-fixtures:
 	python3 scripts/parsed_fixtures.py --regen --diff-out parsed-fixture-drift.txt
+
+# EXPANSION NEEDS THE markdown COMMUNITY EXTENSION, which a CI runner cannot download, so
+# the assertions that actually parse an embedded fragment are env-gated. The DEFAULT-behaviour
+# half -- that an unchanged call reads as it always did -- is NOT gated and runs everywhere.
+#
+# Worth knowing why the usual escape hatch does not apply: sqllogictest skips a test whose
+# error matches 'HTTP', which is how other markdown-dependent files survive CI. panduck's gate
+# raises a clearer message that matches nothing, so it fails hard instead. Gating deliberately
+# is the honest version of what those files get by accident.
+check-expand:
+	PANDUCK_TEST_EXPAND=1 ./build/release/test/unittest test/sql/expand_embedded_markdown.test

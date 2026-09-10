@@ -18,16 +18,13 @@
 
 require panduck
 
-# NO `require markdown` HERE, DELIBERATELY. It was tried and the whole file SKIPPED even
-# with markdown installed -- sqllogictest's `require` does not resolve community extensions,
-# so it reported "skipped: require markdown" while the feature worked fine. A skip that
-# announces a dependency it cannot check is worse than no guard: it reports coverage the run
-# is not providing.
+# THIS FILE NEEDS NO EXTENSION. Every assertion here is about the DEFAULT -- that an
+# unchanged call reads exactly as it did before expand_embedded existed. That is the half
+# worth running everywhere, and it is the half a regression would be most costly in.
 #
-# panduck_ensure_extension autoloads markdown when the expansion runs, which is how
-# doc_namespace.test already reaches duck_block_utils and the markdown writer. If markdown is
-# genuinely unavailable these assertions FAIL rather than skip, which is correct -- it is a
-# hard dependency of the feature under test, not an optional extra.
+# The assertions that actually expand live in expand_embedded_markdown.test, behind
+# require-env, because they need the markdown community extension and a CI runner cannot
+# download one. See that file for why the gap is named rather than papered over.
 
 #
 # ---------------------------------------------------------------------------------------
@@ -54,118 +51,5 @@ WHERE element_order = 1;
 ----
 raw	markdown
 
-#
-# ---------------------------------------------------------------------------------------
-# expand_embedded := true
-# ---------------------------------------------------------------------------------------
-
-query I
-SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true);
-----
-22
-
-# THE HEADING EXISTS NOW. This is #39's actual complaint in one assertion.
-query III
-SELECT element_type, content, level
-FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true)
-WHERE element_type = 'heading';
-----
-heading	Notebook Title	2
-
-# LEVEL 2, NOT 1, AND THAT IS THE POINT. The parsed blocks come back at their own depth --
-# 1 for a heading -- while the raw block they replace sits at depth 2, inside the notebook's
-# cell div. Splicing them unshifted would put the heading at the same level as the div that
-# contains it, discarding nesting the reader was careful to record.
-query II
-SELECT element_type, level FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true)
-WHERE element_order <= 5 ORDER BY element_order;
-----
-div	1
-heading	2
-paragraph	2
-text	3
-italic	3
-text	3
-
-# element_order IS CONTIGUOUS AND KEEPS ITS ORIGIN. The ipynb reader starts at 0; expansion
-# renumbers without moving that base. Readers disagree about the origin -- every
-# panduck-native reader starts at 0, .md starts at 1 because the markdown extension does and
-# panduck passes it through -- so normalising here would silently rewrite one of them.
-query I
-SELECT count(*) = count(DISTINCT element_order) AND min(element_order) = 0
-       AND max(element_order) = count(*) - 1
-FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true);
-----
-true
-
-# CODE BLOCKS ARE UNTOUCHED. They were never the defect, and an expansion that disturbed them
-# would trade one bug for another. FOUR, not three: a code CELL contributes its source and its
-# OUTPUT, both as `code`, so counting cells and counting blocks give different answers.
-query I
-SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true)
-        WHERE element_type = 'code')
-     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb')
-        WHERE element_type = 'code');
-----
-true
-
-# A DOCUMENT WITH NOTHING TO EXPAND IS UNCHANGED, so the parameter is safe to pass blindly.
-query I
-SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.source.md', expand_embedded := true))
-     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.source.md'));
-----
-true
-
-#
-# ---------------------------------------------------------------------------------------
-# THE COMPOSABLE HELPER, for a caller who already holds blocks.
-# ---------------------------------------------------------------------------------------
-
-query I
-SELECT len(panduck_expand_embedded(list(x))) FROM read_panduck_doc('test/fixtures/notebook.ipynb') x;
-----
-22
-
-# Same result either way -- the parameter is the helper applied for you, not a second
-# implementation that could drift from it.
-query I
-SELECT (SELECT len(panduck_expand_embedded(list(x))) FROM read_panduck_doc('test/fixtures/notebook.ipynb') x)
-     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true));
-----
-true
-
-#
-# ---------------------------------------------------------------------------------------
-# IT REACHES THE doc_* NAMESPACE, which is the point. A helper that returned blocks but left
-# doc_toc empty would not have fixed what was reported: duckeye needs a notebook NAVIGABLE,
-# and doc_toc/doc_section take a path, so they would never have seen expanded blocks.
-# ---------------------------------------------------------------------------------------
-
-query I
-SELECT count(*) FROM doc_toc('test/fixtures/notebook.ipynb');
-----
-0
-
-query II
-SELECT level, title FROM doc_toc('test/fixtures/notebook.ipynb', expand_embedded := true);
-----
-1	Notebook Title
-
-# doc_section can now slice a notebook by the heading inside a cell.
-query I
-SELECT count(*) > 0 FROM doc_section('test/fixtures/notebook.ipynb', 'Notebook Title',
-                                     expand_embedded := true);
-----
-true
-
-query I
-SELECT count(*) FROM doc_section('test/fixtures/notebook.ipynb', 'Notebook Title');
-----
-0
-
-# ...and doc_search_sections can find a cell by its prose.
-query I
-SELECT count(*) > 0 FROM doc_search_sections('test/fixtures/notebook.ipynb', 'emphasis',
-                                             expand_embedded := true);
-----
-true
+# doc_toc SEES NOTHING BY DEFAULT, which is #39 restated: the headings are inside a raw
+# markdown cell. Needs duck_block_utils, so it lives with the gated half.

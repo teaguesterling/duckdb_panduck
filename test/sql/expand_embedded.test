@@ -1,0 +1,55 @@
+# name: test/sql/expand_embedded.test
+# description: expand_embedded — a markdown cell inside a notebook becomes blocks
+# group: [sql]
+
+#
+# THE DEFERRAL THIS DISCHARGES. ipynb_reader.cpp holds a markdown cell as ONE raw block, and
+# says so deliberately: "HELD RAW, AND THIS IS A DEFERRAL RATHER THAN A RESTING PLACE ... a
+# markdown cell contains a DOCUMENT, not data". It is raw because a C++ reader cannot reach
+# panduck's SQL dispatch layer, and a reader whose output depended on which extensions happen
+# to be installed would be worse than one that consistently defers.
+#
+# The consequence, reported by duckeye as #39: a notebook is not navigable. Zero headings,
+# zero toc rows, nothing for -S or -T to work with. Code cells were always fine.
+#
+# THE HELPER PARSES IN THE SQL LAYER, WHERE DELEGATION ALREADY LIVES, so the isolation is
+# preserved rather than traded away -- which is why this is the fix the reader's own comment
+# asked for and not the one it forbids.
+
+require panduck
+
+# THIS FILE NEEDS NO EXTENSION. Every assertion here is about the DEFAULT -- that an
+# unchanged call reads exactly as it did before expand_embedded existed. That is the half
+# worth running everywhere, and it is the half a regression would be most costly in.
+#
+# The assertions that actually expand live in expand_embedded_markdown.test, behind
+# require-env, because they need the markdown community extension and a CI runner cannot
+# download one. See that file for why the gap is named rather than papered over.
+
+#
+# ---------------------------------------------------------------------------------------
+# THE DEFAULT IS UNCHANGED. This is the compatibility assertion, and it is the whole reason
+# the parameter defaults to false: an unchanged call must read identically whether or not
+# the markdown extension is present.
+# ---------------------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb');
+----
+18
+
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb')
+WHERE element_type = 'heading';
+----
+0
+
+# The markdown cell is still one raw block carrying its source verbatim.
+query II
+SELECT element_type, attributes['format'] FROM read_panduck_doc('test/fixtures/notebook.ipynb')
+WHERE element_order = 1;
+----
+raw	markdown
+
+# doc_toc SEES NOTHING BY DEFAULT, which is #39 restated: the headings are inside a raw
+# markdown cell. Needs duck_block_utils, so it lives with the gated half.

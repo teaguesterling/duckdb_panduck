@@ -327,3 +327,37 @@ SELECT count(*) FROM read_textile_blocks('test/fixtures/constructs.textile')
 WHERE element_type = 'paragraph' AND content = 'return 1';
 ----
 0
+
+#
+# TABLE CELLS RESOLVE THEIR INLINE MARKUP AND DROP THEIR MODIFIERS (#38).
+#
+# duckeye reported this against .rst; measuring the fleet found .textile had the same defect
+# unreported, plus a second one. Textile writes alignment and cell role as a prefix ending in
+# `.` -- `<.` left, `>.` right, `=.` centre, `_.` header -- and only `_.` was handled, so the
+# rest SURVIVED INTO THE CELL VALUE:
+#
+#     |<. a|>. 1|     was  {"headers":["b","=. 2"],"rows":[["<. a",">. 1"]]}
+#     |_. b|=. 2|     pandoc reads the same table as cells a, 1, b, 2
+#
+# The `.` is required before anything is stripped, so a cell legitimately starting with `<`
+# or `~` keeps its first characters.
+query I
+SELECT content FROM read_panduck_doc('test/fixtures/table_markup.textile') WHERE element_type = 'table';
+----
+{"headers":["Name","Value"],"rows":[["a","b"],["c","plain"]]}
+
+# THE TWO READERS NOW AGREE, on equivalent tables, byte for byte -- which is the real claim.
+# Two formats expressing the same table should land in the same blocks, and this is the
+# assertion that would fail first if either drifted back.
+query I
+SELECT (SELECT content FROM read_panduck_doc('test/fixtures/table_markup.textile') WHERE element_type = 'table')
+     = (SELECT content FROM read_panduck_doc('test/fixtures/table_markup.rst') WHERE element_type = 'table');
+----
+true
+
+# ...and the repo's own fixture now matches what .odt and .html produce for the same shape,
+# which it did not before: it read {"rows":[["<. a",">. 1","=. x"], ...]}.
+query I
+SELECT content FROM read_panduck_doc('test/fixtures/constructs.textile') WHERE element_type = 'table';
+----
+{"headers":["Name","Value","Note"],"rows":[["a","1","x"],["b","2","y"]]}

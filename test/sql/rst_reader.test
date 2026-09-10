@@ -221,3 +221,22 @@ SELECT content FROM read_rst_blocks_string(
 WHERE element_type = 'table';
 ----
 {"headers":["Name","Value","Note"],"rows":[["a","1","x"]]}
+
+#
+# TABLE CELLS RESOLVE THEIR INLINE MARKUP (#38, reported by duckeye).
+#
+# `**a**` is a cell containing `a`, not a cell containing four asterisks. It carried the
+# markers literally until now, which pandoc does not and panduck's own webbed does not --
+# `<td><b>a</b></td>` has always read as `"a"`. So this was a reader diverging from an answer
+# the fleet already had, not a vocabulary question needing a ruling.
+#
+# NO EXISTING FIXTURE COULD CATCH IT: constructs.rst has no inline markup inside any cell.
+# The gap was as much "nothing exercises this path" as it was the reader --
+# test/fixtures/table_markup.rst exists for exactly this.
+#
+# The fix reuses ParseInlines, which was already used for paragraph text and simply never
+# reached on the cell path. Stripping `*` by hand would also eat a literal asterisk in prose.
+query I
+SELECT content FROM read_panduck_doc('test/fixtures/table_markup.rst') WHERE element_type = 'table';
+----
+{"headers":["Name","Value"],"rows":[["a","b"],["c","plain"]]}

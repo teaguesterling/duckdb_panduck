@@ -140,3 +140,85 @@ SELECT count(*) > 0 FROM doc_search_sections('test/fixtures/notebook.ipynb', 'em
                                              expand_embedded := true);
 ----
 true
+
+#
+# ---------------------------------------------------------------------------------------
+# duckeye's FOUR CASES (scripts/make_ipynb_fixtures.py). Each isolates one property a fix
+# could pass while still leaving cell-internal structure invisible.
+# ---------------------------------------------------------------------------------------
+#
+# THE DISCRIMINATOR. Three headings at three levels in ONE cell. panduck's own
+# notebook.ipynb has ONE heading at the START of its only markdown cell, so a fix that
+# extracted a leading H1 and stopped would score 1 of 1 against it and look finished. Here it
+# scores 1 of 3 and cannot.
+#
+# THE ASSERTION IS THE TRIPLE, NOT THE COUNT -- three headings is also what three H1s would
+# give, and that is the wrong answer. duckeye said so before the fix existed, which is the
+# only time that warning is cheap.
+#
+# heading_level, NOT `level`. In duck_block, `level` is NESTING DEPTH: all three sit at depth
+# 2 inside the notebook's cell div, correctly. The H1/H2/H3 distinction lives in
+# attributes['heading_level'], so a test reading `level` here would see 2/2/2 and call a
+# correct result broken.
+query III
+SELECT element_order, attributes['heading_level'], content
+FROM read_panduck_doc('test/fixtures/nested_headings.ipynb', expand_embedded := true)
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+1	1	Top Title
+3	2	Sub Section
+5	3	Deeper Still
+
+# ...and the nesting depth is uniform, which is the other half of the same claim.
+query I
+SELECT count(DISTINCT level) = 1
+FROM read_panduck_doc('test/fixtures/nested_headings.ipynb', expand_embedded := true)
+WHERE element_type = 'heading';
+----
+true
+
+# EMPTY AND WHITESPACE-ONLY CELLS. The case nobody maintains correctly in a hand-written
+# JSON blob, and the one that tends to produce a stray block or a crash. One real heading
+# follows two contentless cells; only it should appear.
+query II
+SELECT attributes['heading_level'], content
+FROM read_panduck_doc('test/fixtures/empty_markdown.ipynb', expand_embedded := true)
+WHERE element_type = 'heading';
+----
+1	After The Empties
+
+# ORDERING ACROSS A CELL SEAM. Headings in separate cells, with a code cell between them:
+# expansion must not reorder or renumber across the boundary.
+query II
+SELECT attributes['heading_level'], content
+FROM read_panduck_doc('test/fixtures/split_headings.ipynb', expand_embedded := true)
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+1	First Cell Heading
+2	Second Cell Heading
+
+# THE ALREADY-CORRECT PATH STAYS CORRECT. Code cells were never the defect; an expansion
+# that disturbed them would trade one bug for another.
+query II
+SELECT attributes['heading_level'], content
+FROM read_panduck_doc('test/fixtures/code_adjacent.ipynb', expand_embedded := true)
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+1	Doc Title
+2	Later
+
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/code_adjacent.ipynb', expand_embedded := true)
+        WHERE element_type = 'code')
+     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/code_adjacent.ipynb')
+        WHERE element_type = 'code');
+----
+true
+
+# ...and doc_toc, which is what a consumer actually reaches for.
+query II
+SELECT level, title FROM doc_toc('test/fixtures/nested_headings.ipynb', expand_embedded := true);
+----
+1	Top Title
+2	Sub Section
+3	Deeper Still

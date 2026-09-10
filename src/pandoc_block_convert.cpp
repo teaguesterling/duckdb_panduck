@@ -3077,7 +3077,27 @@ static void PandocAstFunction(ClientContext &context, TableFunctionInput &data_p
 	bind_data.done = true;
 }
 
-//! panduck_pandoc_ast_json(blocks) -- the complete pandoc document as JSON TEXT.
+//! panduck_blocks_to_pandoc_json(blocks) -- the complete pandoc document as JSON TEXT.
+//!
+//! REGISTERED UNDER TWO NAMES, and the older one is why. It shipped in v0.4.1 as
+//! `panduck_pandoc_ast_json`, which reads as AST-IN when the argument is BLOCKS -- and its
+//! sibling `panduck_pandoc_ast_to_blocks` genuinely IS ast-in, so the pair implied a symmetry
+//! that does not exist.
+//!
+//! THAT NAME COST SOMEONE THE WORK IT WAS MEANT TO SAVE. duckeye searched for a
+//! blocks-to-JSON route, did not find this, and hand-rolled the assembly with json_object and
+//! three ::JSON casts (#37). They reported the name as the cause: "blocks-in in the name is
+//! what would have found it."
+//!
+//! `panduck_blocks_to_pandoc_json` is the primary now, parallel to
+//! `panduck_blocks_to_pandoc_ast` -- same argument, same direction, one word different for
+//! the return shape.
+//!
+//! THE OLD NAME STILL WORKS, deliberately. It is SERVED: `INSTALL panduck FROM community`
+//! carries v0.4.1 (c8aee8a), verified from a stock CLI rather than from this repo's dev
+//! binary, which links panduck statically and reports its own build for any name. Removing a
+//! published function to improve its name would trade someone else's breakage for our
+//! tidiness.
 //!
 //! EXISTS BECAUSE to_json() ON THE AST STRUCT PRODUCES A DOCUMENT PANDOC REJECTS. The
 //! struct's `meta` and `blocks` fields hold JSON in VARCHAR, so to_json() escapes their
@@ -3268,6 +3288,9 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
+	// Primary name, and the deprecated v0.4.1 spelling kept working alongside it.
+	loader.RegisterFunction(ScalarFunction("panduck_blocks_to_pandoc_json", {DuckBlockTypes::DuckBlockListType()},
+	                                       LogicalType::VARCHAR, PandocAstJsonFun));
 	loader.RegisterFunction(ScalarFunction("panduck_pandoc_ast_json", {DuckBlockTypes::DuckBlockListType()},
 	                                       LogicalType::VARCHAR, PandocAstJsonFun));
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);

@@ -394,3 +394,50 @@ query I
 SELECT panduck_pandoc_ast_json(NULL) IS NULL;
 ----
 true
+
+#
+# ONE CALL FROM BLOCKS TO A DOCUMENT PANDOC ACCEPTS (#37).
+#
+# The AST struct holds `meta` and `blocks` as JSON in VARCHAR, so to_json() on it escapes
+# them as strings while pandoc-api-version serialises as a real array -- a document that
+# looks right and that pandoc rejects with exit 64. panduck_blocks_to_pandoc_json assembles
+# it properly.
+#
+# RENAMED FROM panduck_pandoc_ast_json, which shipped in v0.4.1 and reads as AST-IN when the
+# argument is BLOCKS -- its sibling panduck_pandoc_ast_to_blocks genuinely is ast-in, so the
+# pair implied a symmetry that does not exist. duckeye searched for a blocks-to-JSON route,
+# did not find this, and hand-rolled the assembly with json_object and three ::JSON casts.
+# The name cost exactly the work it existed to save.
+
+query I
+SELECT starts_with(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')),
+                   '{"pandoc-api-version":[1,23,1]');
+----
+true
+
+# blocks IS AN ARRAY, NOT AN ESCAPED STRING. This is the whole defect in one assertion: the
+# struct's to_json() renders it as "[{\"t\":...", which pandoc refuses.
+query I
+SELECT contains(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')),
+                '"blocks":[{"t":')
+   AND NOT contains(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')),
+                    '"blocks":"[');
+----
+true
+
+# THE OLD NAME STILL WORKS AND IS IDENTICAL. It is SERVED -- `INSTALL panduck FROM community`
+# carries v0.4.1 -- so removing it to improve the name would trade someone else's breakage
+# for our tidiness. Deprecated, not deleted.
+query I
+SELECT panduck_pandoc_ast_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))
+     = panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'));
+----
+true
+
+# ...and it is the SAME document the file writer would have written, so the two routes cannot
+# drift apart.
+query I
+SELECT panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx'))
+     LIKE '%"meta":{%';
+----
+true

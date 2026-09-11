@@ -54,6 +54,7 @@ the test now states the invariant directly instead of naming an example.
 
 | Function | Returns |
 |---|---|
+| `panduck_blocks_to_pandoc_json(blocks)` | the whole document as JSON text pandoc accepts |
 | `panduck_blocks_to_pandoc_ast(blocks)` | `STRUCT(pandoc-api-version, meta, blocks)` |
 | `panduck_blocks_to_pandoc_blocks(blocks)` | the blocks array alone, for splicing |
 | `panduck_write_pandoc_ast(path, blocks)` | `BOOLEAN` |

@@ -153,19 +153,35 @@ them back in a form pandoc accepts.
 
 | Function | Returns |
 |---|---|
+| `panduck_blocks_to_pandoc_json(blocks)` | the whole document as **JSON text pandoc accepts** |
 | `panduck_blocks_to_pandoc_ast(blocks)` | `STRUCT("pandoc-api-version", meta, blocks)` |
 | `panduck_blocks_to_pandoc_blocks(blocks)` | the blocks array alone, for splicing |
-| `panduck_write_pandoc_ast(path, blocks)` | writes the JSON, returns `BOOLEAN` |
+| `panduck_write_pandoc_ast(path, blocks)` | writes the JSON to a file, returns `BOOLEAN` |
+
+**To pipe a document straight into pandoc, use `panduck_blocks_to_pandoc_json`** — one call,
+no file, and what DuckDB prints is a document pandoc parses:
+
+```console
+$ duckdb -list -noheader \
+    -s "LOAD duck_block_utils;" \
+    -s "SELECT panduck_blocks_to_pandoc_json(panduck_read_blocks('report.docx'))" \
+  | pandoc -f json -t markdown
+```
 
 ```sql
--- Read an ODT, write a Pandoc AST a real pandoc can convert onward
+-- Or write it to a file
 SELECT panduck_write_pandoc_ast('doc.json',
     (SELECT list(b) FROM read_odt_blocks('doc.odt') b));
 ```
 
-```console
-$ pandoc -f json -t markdown doc.json
-```
+> **Do not reach for `to_json()` on the AST struct.** Its `meta` and `blocks` fields hold
+> JSON in `VARCHAR`, so `to_json()` escapes them as strings while `pandoc-api-version`
+> serialises as a real array — producing a document that looks right and that pandoc
+> rejects. `panduck_blocks_to_pandoc_json` exists for this.
+>
+> It shipped in v0.4.1 as `panduck_pandoc_ast_json`, which reads as *ast-in* when the
+> argument is blocks. That name still works and is deprecated; a consumer searching for a
+> blocks-to-JSON route did not find it and hand-rolled the assembly instead (#37).
 
 The governing rule is that panduck may be **more faithful than pandoc** — richer
 attributes, better block types, metadata pandoc does not extract — so long as the mapping

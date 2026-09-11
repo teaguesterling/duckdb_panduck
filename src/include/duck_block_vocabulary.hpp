@@ -1,11 +1,17 @@
 #pragma once
 
-// Vendored at upstream commit: 1c5f2a6 (SPEC_VERSION 1.2)
+// Vendored at upstream commit: 6c1c2e5 (SPEC_VERSION 1.2)  [duck_block_utils v3.1.0]
 //
 // STEP 1 OF THIS FILE'S OWN RE-VENDORING GUIDANCE -- "record the provenance where a reader
-// will find it" -- which panduck's copy did not carry until now. webbed's does. 1c5f2a6 is
-// VERIFIED, not recalled: this file is byte-identical to
-// teaguesterling/duckdb_duck_block_utils at that commit.
+// will find it" -- which panduck's copy did not carry until now. webbed's does. The sha is
+// VERIFIED, not recalled: this file's body is byte-identical to
+// teaguesterling/duckdb_duck_block_utils at that commit, diffed over all 654 lines.
+//
+// THE RELEASED SHA IS NAMED, not the merge commit that introduced the content. 1c5f2a6
+// (the spec 1.2 merge) and 6c1c2e5 (v3.1.0) carry an IDENTICAL header -- verified, since
+// "they told me it was unchanged" is not a measurement -- and both are true stamps. 6c1c2e5
+// is the more useful one: it names a RELEASE a reader can install, where the other names an
+// intermediate commit they would have to go looking for.
 //
 // THE PREVIOUS CLAIM WAS WRONG, WHICH IS WORSE THAN ABSENT. duck_block_types.hpp said
 // "Copied from duck_block_utils main @ b3b1e26, SPEC_VERSION 6.3" while the vendored copy

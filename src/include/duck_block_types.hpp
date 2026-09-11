@@ -35,7 +35,7 @@
 // later added ~88 lines of guidance without moving one name or value. A text diff screams
 // at that, gets muted, and then catches nothing on the day it matters.
 //
-// Copied from duck_block_utils main @ 1c5f2a6, SPEC_VERSION 1.2 (the renumbered 6.6 -- the
+// Copied from duck_block_utils v3.1.0 @ 6c1c2e5, SPEC_VERSION 1.2 (the renumbered 6.6 -- the
 // duck_blocks v1.1 spec -- the two are DELIBERATELY separate axes and
 // duck_block_spec_version() still reports the 6.x number). Being behind by commits
 // is not the same as being wrong -- what makes the copy correct is that check-vocabulary

@@ -1,5 +1,42 @@
 #pragma once
 
+// Vendored at upstream commit: 6c1c2e5 (SPEC_VERSION 1.2)  [duck_block_utils v3.1.0]
+//
+// STEP 1 OF THIS FILE'S OWN RE-VENDORING GUIDANCE -- "record the provenance where a reader
+// will find it" -- which panduck's copy did not carry until now. webbed's does. The sha is
+// VERIFIED, not recalled: this file's body is byte-identical to
+// teaguesterling/duckdb_duck_block_utils at that commit, diffed over all 654 lines.
+//
+// THE RELEASED SHA IS NAMED, not the merge commit that introduced the content. 1c5f2a6
+// (the spec 1.2 merge) and 6c1c2e5 (v3.1.0) carry an IDENTICAL header -- verified, since
+// "they told me it was unchanged" is not a measurement -- and both are true stamps. 6c1c2e5
+// is the more useful one: it names a RELEASE a reader can install, where the other names an
+// intermediate commit they would have to go looking for.
+//
+// THE PREVIOUS CLAIM WAS WRONG, WHICH IS WORSE THAN ABSENT. duck_block_types.hpp said
+// "Copied from duck_block_utils main @ b3b1e26, SPEC_VERSION 6.3" while the vendored copy
+// declared 6.5 -- so a reader trusting it concluded panduck was two spec versions behind.
+// Corrected in the same change.
+//
+// 1.2 IS THE RENUMBER OF 6.6, NOT A DOWNGRADE. The internal 6.x line was retired; the
+// vocabulary is unchanged across it, verified by diff rather than by trusting the version:
+// cfd8e28 -> 1c5f2a6 moves exactly two constants, SPEC_VERSION 6.5 -> 1.2 and a new
+// SPEC_VERSION_SUPERSEDES = "6.6". Nothing else is added, renamed, removed or re-valued.
+//
+// BEWARE THE REUSED NUMBER, per the internal-line note below: the RETIRED line had its own
+// 1.1 and 1.2, and public 1.2 is not that. A check spelled `major == 1 AND minor >= 2` is
+// satisfied by both and discriminates nothing. panduck is not exposed -- its only such
+// function, panduck_duck_block_spec_at_least, is defined and NEVER CALLED, because a SQL
+// version check REFERENCES duck_block_spec_version() and a reference binds even on an
+// untaken branch, which broke the extension-absent case. panduck's live gate is a catalog
+// probe for the function it actually needs.
+//
+// THE INSTALLED duck_block_utils IS STILL 6.5 AND THAT IS FINE. 1.2 is merged upstream but
+// not yet released or served, so duck_block_spec_version() from a community build reports
+// 6.5 for now. Vendoring is SOURCE-side; nothing at runtime asserts on the number. The
+// parsed-fixture manifest still records 6.5 for the same reason -- it records what BUILT
+// the fixtures, not what this header says.
+
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
@@ -206,15 +243,26 @@ struct DuckBlockVocabulary {
 	// Equality goes red on every release including ones that cannot affect you,
 	// and a check that cries wolf gets muted:
 	//
-	//     major(duck_block_spec_version()) == 2   AND   minor(...) >= <what you need>
+	//     major(duck_block_spec_version()) == 1   AND   minor(...) >= <what you need>
 	//
 	// (Asked by panduck, who noticed the guidance said "compare against
 	// SPEC_VERSION" without saying compare HOW, and whose readers are untouched by
 	// 2.0 apart from lists.)
 	//
 	// HONEST HISTORY, because the numbers only mean something if they were applied
-	// consistently and one of these was not:
+	// consistently and one of these was not.
 	//
+	// TWO NUMBER LINES. Every entry below up to 6.6 is on this repo's INTERNAL line,
+	// retired on 2026-09-10 (last entry). The internal line had its own 1.1 and 1.2,
+	// which are NOT the public 1.2 that SPEC_VERSION now carries: internal 1.2 lacked
+	// explicit levels, `plain`, one shape per element_type and the native table
+	// schema; public 1.2 has all of them. A check written against internal 1.x
+	// (`major == 1 AND minor >= 2`) is satisfied by public 1.2 and is therefore not
+	// discriminating; no consumer in the fleet carries one (checked 2026-09-10:
+	// every vendored copy was on 6.5), which is why the number was reused rather
+	// than skipped. (Zim-Dev's finding, 2026-09-10.)
+	//
+	//   -- internal line --
 	//   1.1 -> 1.2  list and blockquote became structural. BREAKING -- it broke
 	//               duckdb_markdown's writer in three places. It should have been
 	//               2.0 and the minor bump was wrong. A consumer pinning "major 1"
@@ -358,8 +406,53 @@ struct DuckBlockVocabulary {
 	//               wanting text renames to the _text sibling. Failure to migrate is a
 	//               binder error, never a wrong answer.
 	//
+	//   6.5 -> 6.6  ADDITIVE for consumers; producers gain two obligations, named here.
+	//               Issue #29 (duckeye): every validation rule was a predicate on ONE
+	//               element and the one-shape rule bound only this repo, while the
+	//               divergences consumers hit are properties of a LIST and run between
+	//               repos. Four things:
+	//               * Fragments are legal input. ImplicitParentOf() below declares the
+	//                 wrapper a fragment gets (list_item -> list, caption -> figure,
+	//                 inline -> plain). duck_blocks_to_pandoc_ast used to return [] for an
+	//                 orphan inline run that duck_blocks_validate called valid.
+	//               * List-level validation (field = 'list'): element_order dense from 0,
+	//                 shallowest level 1, no level jump, required ancestors present.
+	//               * duck_blocks_repair(blocks): the deterministic fixes for those rules,
+	//                 idempotent, never touching an existing element's content, attributes
+	//                 or element_type. Composes with duck_blocks_normalize.
+	//               * ONE shape per element_type binds EVERY producer. First instance: a
+	//                 tight list item carries content (Pandoc Plain); a loose one has a
+	//                 paragraph child (Para). markdown emitted loose for both (markdown#60)
+	//                 and starts element_order at 1 (markdown#59); both are producer bugs
+	//                 under this note, not new rules.
+	//               A consumer on 6.5 is unaffected. A producer that vendored `plain` and
+	//               never emitted it has been non-conformant since 4.0; this note names it.
+	//
+	//   internal 6.6 -> public 1.2  RENUMBERED, NO SHAPE CHANGE. Teague, 2026-09-10: "I don't want to
+	//               keep numbering up into the 6.6s; this should be at most 1.2; stop
+	//               with the internal numbering." The 6.x line was this repo's internal
+	//               count of spec revisions, one per ruling, and it had climbed to a
+	//               number that says "sixth major redesign" about a vocabulary whose
+	//               public name has been duck_blocks 1.1 throughout. The public name
+	//               is now the number: 1.2 is 6.6 with a different label. Nothing
+	//               renamed, removed, or reshaped between them.
+	//
+	//               RECORDED, NOT QUIET, for the same reason the mis-numbered 1.1 -> 1.2
+	//               above is recorded: every consumer compares major equality plus a
+	//               minor floor (panduck's check implements exactly that rule), so a
+	//               major going DOWN from 6 to 1 reads as a breaking change to a rule
+	//               that is working correctly. SPEC_VERSION_SUPERSEDES below names the
+	//               last number of the retired line so a check can accept either side
+	//               of the renumbering; a consumer re-vendoring this header updates its
+	//               major-equality constant from 6 to 1 once and is done. The next
+	//               breaking change is 2.0; the next additive one is 1.3.
+	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "6.5";
+	static constexpr const char *SPEC_VERSION = "1.2";
+	// The last number of the internal 6.x line that 1.2 replaces. A consumer check
+	// that reads MAJOR from SPEC_VERSION treats this line's major as equivalent to
+	// the current one for the one release it takes to re-vendor. Removed at 2.0.
+	static constexpr const char *SPEC_VERSION_SUPERSEDES = "6.6";
 
 	// ========================================================================
 	// Block type names
@@ -413,6 +506,41 @@ struct DuckBlockVocabulary {
 	// rather than figure-specific: Pandoc's Table also carries a Caption, and can
 	// adopt this later without another vocabulary change.
 	static constexpr const char *TYPE_CAPTION = "caption";
+
+	// ========================================================================
+	// Implicit parents (spec: "Fragments are legal input")
+	//
+	// A fragment -- the items of one list, the inline run of one paragraph --
+	// is legal input everywhere. When an element that REQUIRES an ancestor has
+	// none, this is the wrapper it gets, declared once so duck_blocks_repair,
+	// the exporter and a sibling's vendored copy agree. Empty string = none.
+	// Constexpr and std-free so the header stays <cstdint>-only.
+	// ========================================================================
+	// Single-return recursion, not a loop: the extension compiles as C++11, where a
+	// constexpr body must be one return statement. (The standalone header probe
+	// compiles with a newer standard and cannot catch a C++14-only body.)
+	static constexpr bool SameName(const char *a, const char *b) {
+		return *a == *b && (*a == '\0' || SameName(a + 1, b + 1));
+	}
+
+	static constexpr const char *ImplicitParentOf(const char *element_type, const char *kind) {
+		return SameName(kind, KIND_INLINE)                                            ? TYPE_PLAIN
+		       : SameName(kind, KIND_BLOCK) && SameName(element_type, TYPE_LIST_ITEM) ? TYPE_LIST
+		       : SameName(kind, KIND_BLOCK) && SameName(element_type, TYPE_CAPTION)   ? TYPE_FIGURE
+		                                                                              : "";
+	}
+
+	// Does an ancestor of block type `ancestor_type` satisfy this element's
+	// requirement? Only meaningful when ImplicitParentOf() is non-empty. An inline
+	// needs any non-inline (block or value) above it, which callers check by kind.
+	static constexpr bool RequiresAncestor(const char *element_type, const char *kind, const char *ancestor_type) {
+		return SameName(kind, KIND_INLINE) ? true
+		       : SameName(element_type, TYPE_LIST_ITEM)
+		           ? (SameName(ancestor_type, TYPE_LIST) || SameName(ancestor_type, TYPE_DEFLIST))
+		       : SameName(element_type, TYPE_CAPTION)
+		           ? (SameName(ancestor_type, TYPE_FIGURE) || SameName(ancestor_type, TYPE_TABLE))
+		           : false;
+	}
 	// A structurally-valid element whose type is not in the standard vocabulary.
 	// Distinct from TYPE_RAW, which is literal content in a *named* format; this is a
 	// structured element we cannot name. Format-neutral on purpose: any reader

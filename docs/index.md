@@ -118,12 +118,15 @@ If that fails, the artifact has not been served yet — build from source in the
 
 ### `doc_toc` needs duck_block_utils 3.0.0 or newer
 
-`doc_toc` calls `duck_blocks_toc_structs`, which exists only at duck_block_utils spec 6.5.
+`doc_toc` calls `duck_blocks_toc_structs`, which exists only at duck_block_utils spec 1.2
+(the renumbered 6.6; it first appeared at 6.5 on the retired internal line).
 Against an older build it raises rather than returning wrong rows. Check with:
 
 ```sql
 LOAD duck_block_utils;
-SELECT duck_block_spec_version();   -- needs 6.5 or later
+SELECT duck_block_spec_version();   -- needs 1.2 or later
+--                                     (the renumbered 6.6; an installed build still
+--                                      reports 6.5 until the 1.2 release is served)
 ```
 
 Every other panduck function is independent of it.

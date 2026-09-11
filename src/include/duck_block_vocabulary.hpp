@@ -1,5 +1,23 @@
 #pragma once
 
+// Vendored at upstream commit: cfd8e28 (SPEC_VERSION 6.5)
+//
+// THE LINE ABOVE IS STEP 1 OF THIS FILE'S OWN RE-VENDORING GUIDANCE -- "record the
+// provenance where a reader will find it, in your copy's header comment, note the upstream
+// sha and the SPEC_VERSION below" -- and panduck's copy did not have it until now. webbed's
+// does. Raised by the duck_block_utils session, 2026-09-10.
+//
+// cfd8e28 IS VERIFIED, NOT RECALLED: this file is byte-identical to
+// teaguesterling/duckdb_duck_block_utils at that commit, diffed rather than inferred from
+// the version number. A provenance line nobody checked is the failure this repo has spent
+// the week on -- and the one it replaces was wrong, claiming SPEC_VERSION 6.3 in
+// duck_block_types.hpp while this copy declared 6.5.
+//
+// Upstream main is now 1c5f2a6 (SPEC_VERSION 1.2, the renumbered 6.6). THIS COPY IS
+// DELIBERATELY NOT THAT YET: 1.2 is merged upstream but neither released nor served, and
+// check-vocabulary reports the difference as a RENUMBERING rather than a break, so nothing
+// is broken by waiting. Update this line in the same commit that re-vendors, never before.
+//
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //

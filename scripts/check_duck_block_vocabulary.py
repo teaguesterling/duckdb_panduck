@@ -202,6 +202,19 @@ def _get(url, timeout):
         return None
 
 
+def parse_spec(v):
+    """(major, minor) from a SPEC_VERSION string, or None if it is not one.
+
+    Module level rather than nested, because spec_superseded needs the same parse and two
+    copies of a version parser is exactly how two rules drift apart.
+    """
+    try:
+        major, _, minor = str(v).partition(".")
+        return int(major), int(minor or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def spec_compatible(local_v, upstream_v):
     """Is upstream's SPEC_VERSION compatible with ours, per duck_block_utils' contract?
 
@@ -220,19 +233,45 @@ def spec_compatible(local_v, upstream_v):
     only reason this is knowable at all.
     """
 
-    def parse(v):
-        try:
-            major, _, minor = str(v).partition(".")
-            return int(major), int(minor or 0)
-        except (TypeError, ValueError):
-            return None
-
-    lo, up = parse(local_v), parse(upstream_v)
+    lo, up = parse_spec(local_v), parse_spec(upstream_v)
     if lo is None or up is None:
         return False  # unparseable: refuse to call it compatible
     if lo[0] != up[0]:
         return False  # major differs -- breaking by the contract
     return up[1] >= lo[1]  # minor floor; upstream ahead on minor is additive
+
+
+def spec_superseded(local_v, upstream_v, supersedes):
+    """Is the major difference a RENUMBERING rather than a break?
+
+    THE RULE ABOVE CANNOT TELL THE TWO APART, and that is not a flaw in it -- a major
+    change IS breaking by the contract, and a renumber changes the major. Measured on
+    the same rule: 6.6 -> 1.2 reads as breaking, identically to a real 2.0.
+
+    So the renumber carries evidence a check can see. duck_block_utils publishes
+    SPEC_VERSION_SUPERSEDES alongside SPEC_VERSION for the one release it takes
+    consumers to re-vendor: 1.2 supersedes 6.6, same shape, no constant moved.
+
+    ACCEPTED ONLY WHEN THE SUPERSEDED VALUE IS AT OR AHEAD OF OURS. A consumer pinned
+    at 6.6 is looking at the same vocabulary renamed and is fine; one pinned at 6.7 --
+    were there such a thing -- would be looking at something the renumber did not
+    cover, and gets the breaking verdict it deserves. The escape hatch is for the
+    renumbering, not for any major mismatch that happens to ship one.
+
+    Recorded rather than made silent, per duck_block_utils' own precedent: they
+    documented the mis-numbered 1.1 -> 1.2 rather than quietly renumbering, which is
+    the only reason it is knowable. A renumber a consumer cannot see is worse than an
+    inflated number.
+    """
+    lo, sup = parse_spec(local_v), parse_spec(supersedes)
+    up = parse_spec(upstream_v)
+    if lo is None or up is None or sup is None:
+        return False
+    if lo[0] == up[0]:
+        return False  # not a renumber; the ordinary rule applies
+    if lo[0] != sup[0]:
+        return False  # we are not on the line being retired
+    return sup[1] >= lo[1]
 
 
 def verdict(breaking, added, verified):
@@ -350,7 +389,23 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
     # which are fine; the thing to go read is the spec.
     spec_moved = "SPEC_VERSION" in changed
     changed = [k for k in changed if k != "SPEC_VERSION"]
-    spec_breaking = spec_moved and not spec_compatible(local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION"))
+    # SPEC_VERSION_SUPERSEDES, when upstream publishes one, distinguishes a RENUMBERING
+    # from a break -- the major-equality rule cannot, because a renumber changes the major.
+    spec_breaking = spec_moved and not spec_compatible(
+        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
+    )
+    if spec_breaking and spec_superseded(
+        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION"), upstream.get("SPEC_VERSION_SUPERSEDES")
+    ):
+        spec_breaking = False
+        print(
+            f"  SPEC_VERSION {local.get('SPEC_VERSION')} -> {upstream.get('SPEC_VERSION')} is a"
+            f" RENUMBERING, not a break:\n"
+            f"    upstream records SPEC_VERSION_SUPERSEDES = {upstream.get('SPEC_VERSION_SUPERSEDES')},"
+            f" the line this copy is on.\n"
+            f"    Same shape, no constant moved. Re-vendor the header and set the local major to"
+            f" {upstream.get('SPEC_VERSION', '?').split('.')[0]}."
+        )
     if changed:
         breaking = True
         print("DRIFT  value changed upstream (our output silently stops matching):")
@@ -483,12 +538,30 @@ def test_count_blindness():
         if spec_compatible(lo, up) != want:
             failures.append(f"spec_compatible({lo!r}, {up!r}) -- {why}")
 
+    # THE RENUMBERING ESCAPE HATCH, pinned in both directions. Four of these seven must be
+    # REFUSED -- an escape hatch that accepts everything is not a hatch, it is a hole, and
+    # this one exists precisely because the ordinary rule cannot tell a renumber from a
+    # break. duck_block_utils renumbered 6.6 -> 1.2 with no shape change (their PR #30,
+    # c233f18) and published SPEC_VERSION_SUPERSEDES so a check could see the difference.
+    for lo, up, sup, want, why in [
+        ("6.5", "1.2", "6.6", True, "the renumber itself: this copy is on the retired 6.x line"),
+        ("6.6", "1.2", "6.6", True, "pinned exactly at the superseded value"),
+        ("6.5", "2.0", None, False, "a real major break, with no supersedes published"),
+        ("6.5", "1.2", None, False, "a renumber CLAIMED but not evidenced"),
+        ("6.7", "1.2", "6.6", False, "ahead of what the renumber covered"),
+        ("6.5", "1.2", "5.0", False, "supersedes a line this copy is not on"),
+        ("1.2", "1.3", "6.6", False, "majors already equal -- the ordinary rule applies"),
+    ]:
+        if spec_superseded(lo, up, sup) != want:
+            failures.append(f"spec_superseded({lo!r}, {up!r}, {sup!r}) -- {why}")
+
     for f in failures:
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
     print("self-test OK: rename, value change and cosmetic churn classified correctly " "with the count held constant;")
-    print("              field offsets excluded; an undated read never reports OK")
+    print("              field offsets excluded; an undated read never reports OK;")
+    print("              a renumbering is accepted only on the line it retires")
     return 0
 
 

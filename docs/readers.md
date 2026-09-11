@@ -338,8 +338,22 @@ makes it a different case from a whole-file `.toml` blob, where verbatim is the 
 final answer. It is raw here because delegating would make this reader's output depend on
 which extensions happen to be installed: panduck's delegation lives in the SQL dispatch
 layer, and a C++ reader cannot reach those functions. One consistent behaviour beats two
-that vary by environment. A consumer wanting blocks calls `md_to_blocks()` on the content
-today; a post-parse helper for embedded formats discharges it later.
+that vary by environment. A consumer wanting blocks calls
+`parse_markdown_to_duck_blocks()` — a **scalar** from the `markdown` extension — on the
+content today; a post-parse helper for embedded formats discharges it later.
+
+```sql
+LOAD markdown;
+SELECT unnest(parse_markdown_to_duck_blocks(content))
+FROM read_panduck_doc('notebook.ipynb')
+WHERE element_type = 'raw' AND attributes['format'] = 'markdown';
+```
+
+> This paragraph named `md_to_blocks()` until 2026-09-10. **No such function exists**, in
+> the `markdown` extension or anywhere else, and it never did — the name was written into
+> the reader's source comment when the reader landed and copied here and into
+> `ipynb_reader.test` from there. Anyone following it got a `Catalog Error`. Corrected
+> rather than deleted, because the advice itself is right and only the name was wrong.
 
 Notebook metadata **exceeds pandoc deliberately**: pandoc puts the whole thing into one
 opaque `jupyter` MetaMap, so asking "who wrote this" means walking a blob. Each recovered

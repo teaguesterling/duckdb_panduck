@@ -69,7 +69,9 @@ python
 # It is raw because delegating would make this reader's output depend on which extensions
 # happen to be installed: panduck's delegation lives in the SQL dispatch layer, and a C++
 # reader cannot reach those functions. One consistent behaviour beats two that vary by
-# environment. A consumer wanting blocks can call md_to_blocks() on this content today.
+# environment. A consumer wanting blocks calls parse_markdown_to_duck_blocks() on this
+# content today -- a SCALAR from the markdown extension. This comment said md_to_blocks()
+# until 2026-09-10, which does not exist and never did; see docs/readers.md.
 #
 # Asserted as VERBATIM, markers and all: if this ever starts returning parsed text the
 # deferral has been discharged somewhere and this test is where that shows up.

@@ -145,8 +145,13 @@ private:
 				// a C++ reader cannot reach those functions. One consistent behaviour beats
 				// two that vary by environment.
 				//
-				// A consumer wanting blocks today can call md_to_blocks() on this content
-				// and normalise the result. The deferral is discharged by a post-parse
+				// A consumer wanting blocks today calls parse_markdown_to_duck_blocks() --
+				// a SCALAR from the markdown extension -- on this content, and normalises the
+				// result. THIS SENTENCE NAMED md_to_blocks() UNTIL NOW, WHICH DOES NOT EXIST:
+				// the markdown extension has never shipped that name. Anyone following the
+				// advice got a Catalog Error, which is the shape of #25 and l1t1's INSTALL
+				// report -- guidance that names a next step which does not work costs a
+				// reader more than saying nothing. The deferral is discharged by a post-parse
 				// helper for embedded formats -- NOT by markdown parsing landing in panduck,
 				// which would violate the isolation that put it here.
 				if (!source.empty()) {

@@ -248,7 +248,7 @@ panduck is in the DuckDB community extension repository as of
 if `INSTALL` reports the extension as unknown, the artifact has not been served yet — build
 from source below in the meantime.
 
-`doc_toc` additionally requires **duck_block_utils >= 3.0.0** (spec 6.5); every other
+`doc_toc` additionally requires **duck_block_utils >= 3.0.0** (spec 1.2, the renumbered 6.6); every other
 function is independent of it.
 
 ## Building

@@ -27,6 +27,7 @@ import os
 import argparse
 import os
 import subprocess
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -246,6 +247,66 @@ def skip(reason: str) -> int:
 #: lives here and is linked into panduck's own build.
 LOAD_PREFIX = ""
 
+#: True when the reference converter came from a branch that is not merged to its
+#: upstream main. A failure measured against one cannot be attributed to panduck.
+REFERENCE_UNPINNED = False
+
+
+def report_reference(path):
+    """Say WHICH duck_block_utils this ran against, before any result is printed.
+
+    THE GATE LOADED WHATEVER WAS IN A SIBLING'S BUILD DIRECTORY, and that directory is a
+    working tree. On 2026-09-10 it went red with two `caption` failures, on a commit of
+    panduck's that changed nothing near the converter: duck_block_utils had rebuilt an
+    UNMERGED branch (feat/spec-6.6-enforcement-scope, spec 6.6) while their main and the
+    registry both stood at 6.5. The failures were real -- in their branch, already fixed
+    there since -- and nothing about the message said so.
+
+    A red that cannot say WHOSE change it is cannot be acted on. It reads as "panduck's
+    converter copy has diverged" and means "a teammate has a branch checked out". That is
+    the same attribution problem this gate exists to detect, one level up: reporting a
+    difference without naming which side moved.
+
+    So the reference is IDENTIFIED, not merely loaded. Nothing here is a hard failure -- a
+    developer testing against a branch build is a legitimate thing to do, and refusing it
+    would trade a lying gate for an obstructive one. What is not legitimate is not knowing.
+    """
+    label = path
+    repo = os.path.dirname(os.path.abspath(path))
+    while repo != "/" and not os.path.isdir(os.path.join(repo, ".git")):
+        repo = os.path.dirname(repo)
+    state = ""
+    if os.path.isdir(os.path.join(repo, ".git")):
+
+        def git(*a):
+            try:
+                return subprocess.run(
+                    ("git", "-C", repo) + a, capture_output=True, text=True, check=True
+                ).stdout.strip()
+            except Exception:
+                return ""
+
+        branch, commit = git("branch", "--show-current"), git("log", "-1", "--format=%h")
+        merged = git("branch", "--contains", commit, "-r") if commit else ""
+        on_main = any(b.strip().endswith("/main") for b in merged.split("\n"))
+        state = f"{branch or 'detached'} @ {commit}"
+        if branch and branch != "main" and not on_main:
+            global REFERENCE_UNPINNED
+            REFERENCE_UNPINNED = True
+            state += "  <- NOT ON main: a failure below may be theirs, not panduck's"
+        label = os.path.basename(path)
+    mtime = ""
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+    except OSError:
+        pass
+    print(f"reference converter: {label}")
+    if state:
+        print(f"  {state}")
+    if mtime:
+        print(f"  built {mtime}")
+    print()
+
 
 def duckdb_bin():
     for candidate in ("build/release/duckdb", "build/debug/duckdb"):
@@ -310,10 +371,27 @@ def main() -> int:
         if not os.path.exists(args.load):
             return skip(f"converter extension not found at {args.load}")
         LOAD_PREFIX = f"LOAD '{args.load}'; "
+        report_reference(args.load)
 
     duckdb = duckdb_bin()
     if duckdb is None:
         return skip("no built duckdb binary (run `make` first)")
+
+    # DOES THE REFERENCE ACTUALLY LOAD? Asked once, before any probe, because otherwise the
+    # load error is reported as a CONTENT failure -- once per block type. Pointing this at a
+    # duck_block_utils built for another DuckDB produced
+    #     FAIL: `blockquote` does not survive a round trip -- it reads back as
+    #           <ERROR> ... built specifically for DuckDB version 'v1.4.3' ...
+    # thirty-odd times: every probe blaming the round trip for a file that never opened. A
+    # failure that names the wrong thing is worse than a blunt one, and this gate exists to
+    # attribute differences.
+    if args.load:
+        probe = run(duckdb, "SELECT 1;")
+        if "<ERROR>" in probe or "Error" in probe:
+            print(f"FAIL: the reference converter did not load.\n      {probe.strip()}")
+            print("\n      Nothing below was measured. This is a reference problem, not a")
+            print("      panduck result -- most often a build for a different DuckDB version.")
+            return 1
 
     failed = False
 
@@ -672,6 +750,23 @@ def main() -> int:
             print(f"      recorded reason: {reason}")
     else:
         print(f"  all {len(CONTENT_EXEMPT) + len(RENDER_EXEMPT) + len(INHERENT)} exclusions still hold")
+
+    if failed and REFERENCE_UNPINNED:
+        # NOT A PASS, AND IT DOES NOT CLAIM TO BE. The gate's assertion is "panduck's copy
+        # of the converter agrees with duck_block_utils' copy". Measured against a branch
+        # that is not merged upstream, it cannot make that assertion about PANDUCK -- the
+        # difference is as likely to be theirs, mid-review, as ours.
+        #
+        # Failing here would block panduck on a teammate's checkout; passing silently would
+        # report coverage the run did not provide. So it exits 0 and says, in the words the
+        # result actually supports, that nothing was established.
+        print()
+        print("INCONCLUSIVE: the reference converter is an unmerged branch, so the failures")
+        print("  above cannot be attributed to panduck. This run establishes NOTHING about")
+        print("  this repo -- it is not a pass. Re-run once the reference is on its main,")
+        print("  or point --load at a known build:")
+        print("    PANDUCK_CONVERTER_EXT=<path> make check-converter")
+        return 0
 
     if failed:
         return 1

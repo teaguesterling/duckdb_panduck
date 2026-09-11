@@ -49,9 +49,16 @@ check-vocabulary:
 # assertions run unchanged -- which is the point: the net does not know which side of the
 # move it is on.
 .PHONY: check-converter
+# THE REFERENCE IS OVERRIDABLE, because the default is a sibling's WORKING TREE and a
+# working tree moves for reasons that have nothing to do with panduck. The default is still
+# the local build -- it is the only one that catches divergence early -- but the gate now
+# NAMES what it loaded and refuses to convict panduck on an unmerged branch. Point it at a
+# known build to get a verdict that means something:
+#     PANDUCK_CONVERTER_EXT=~/.duckdb/extensions/<ver>/<plat>/duck_block_utils.duckdb_extension \
+#       make check-converter
+PANDUCK_CONVERTER_EXT ?= $(realpath ../duckdb_duck_block_utils)/build/release/extension/duck_block_utils/duck_block_utils.duckdb_extension
 check-converter:
-	python3 test/converter/check_roundtrip_sweep.py \
-	  --load "$(realpath ../duckdb_duck_block_utils)/build/release/extension/duck_block_utils/duck_block_utils.duckdb_extension"
+	python3 test/converter/check_roundtrip_sweep.py --load "$(PANDUCK_CONVERTER_EXT)"
 
 # Check every reader's output against duck_block_utils' pure-SQL conformance macros.
 # Until this target existed, panduck's test suite checked panduck's own behaviour and

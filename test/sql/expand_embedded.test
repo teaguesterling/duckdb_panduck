@@ -53,3 +53,17 @@ raw	markdown
 
 # doc_toc SEES NOTHING BY DEFAULT, which is #39 restated: the headings are inside a raw
 # markdown cell. Needs duck_block_utils, so it lives with the gated half.
+
+# THE DEFAULT ON duckeye's DISCRIMINATOR FIXTURE. Three headings live inside one markdown
+# cell; without expansion none of them exist. No extension needed to assert that.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/nested_headings.ipynb')
+WHERE element_type = 'heading';
+----
+0
+
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/nested_headings.ipynb')
+WHERE element_type = 'raw' AND attributes['format'] = 'markdown';
+----
+1

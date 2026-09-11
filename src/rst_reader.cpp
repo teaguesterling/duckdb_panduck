@@ -98,6 +98,31 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 	flush();
 }
 
+//! A table cell's text with its inline markup RESOLVED, not carried literally.
+//!
+//! `**a**` is a cell containing `a`, not a cell containing four asterisks. panduck's own
+//! sibling already answers this: webbed reads `<td><b>a</b></td>` as `"a"`. So this is not a
+//! vocabulary question needing a ruling -- there is a worked answer in the fleet, and .rst
+//! was the reader diverging from it.
+//!
+//! REUSES ParseInlines RATHER THAN STRIPPING CHARACTERS. The resolver already exists and is
+//! used for paragraph text; it simply was never reached on the cell path. Deleting `*` by
+//! hand would also eat a literal asterisk in prose, and would need re-deciding every time
+//! rst grows a marker.
+//!
+//! FLATTENED TO TEXT because a cell in the native {headers, rows} schema is a STRING. The
+//! emphasis is lost either way; the choice is only whether the markers are lost with it.
+//! Reported by duckeye (#38), who found it against pandoc, which resolves the same cell.
+std::string CellText(const std::string &s) {
+	std::vector<RstInline> runs;
+	ParseInlines(s, 2, runs);
+	std::string out;
+	for (auto &r : runs) {
+		out += r.content;
+	}
+	return out;
+}
+
 std::vector<std::string> GridCells(const std::string &row) {
 	std::vector<std::string> cells;
 	size_t i = row.find('|');
@@ -516,6 +541,15 @@ private:
 			first = 1;
 		}
 		std::vector<std::vector<std::string>> body(rows.begin() + (long)first, rows.end());
+		// RESOLVED HERE, at the last point before the cells become an opaque JSON string.
+		for (auto &h : headers) {
+			h = CellText(h);
+		}
+		for (auto &r : body) {
+			for (auto &c : r) {
+				c = CellText(c);
+			}
+		}
 		RstBlock b;
 		b.element_type = DuckBlockTypes::TYPE_TABLE;
 		b.content = BuildTableJson(headers, body);

@@ -51,6 +51,37 @@ std::string Slugify(const std::string &text) {
 	return out;
 }
 
+//! Strip a leading textile CELL MODIFIER, and report whether it marked a header cell.
+//!
+//! Textile writes alignment and cell role as a prefix ending in `.`:
+//!     <. left   >. right   =. centre   <>. justify   ^. top   ~. bottom   _. header
+//!
+//! Only `_.` was handled, so the others SURVIVED INTO THE CELL VALUE -- `|<. a|` read as the
+//! four characters `<. a` where the cell contains `a`. pandoc reads the same table as `a`,
+//! and panduck's own webbed reads `<td><b>a</b></td>` as `"a"`, so the fleet already had the
+//! answer. Reported for .rst by duckeye (#38); this reader had the same defect, unreported,
+//! plus a second one below.
+//!
+//! THE `.` IS REQUIRED before anything is stripped. Without it a cell legitimately beginning
+//! with `<` or `~` would lose its first characters, and a modifier without its terminator is
+//! not a modifier.
+bool StripCellModifier(std::string &v) {
+	size_t i = 0;
+	bool header = false;
+	while (i < v.size() &&
+	       (v[i] == '<' || v[i] == '>' || v[i] == '=' || v[i] == '^' || v[i] == '~' || v[i] == '-' || v[i] == '_')) {
+		if (v[i] == '_') {
+			header = true;
+		}
+		i++;
+	}
+	if (i > 0 && i < v.size() && v[i] == '.') {
+		v = Trim(v.substr(i + 1));
+		return header;
+	}
+	return false;
+}
+
 //! Strip inline markup down to text, for table cells which are flattened into the native
 //! {headers, rows} schema.
 std::string PlainText(const std::string &s) {
@@ -473,9 +504,8 @@ private:
 			std::vector<std::string> values;
 			for (auto &cell : cells) {
 				std::string v = cell;
-				if (v.rfind("_.", 0) == 0) {
+				if (StripCellModifier(v)) {
 					is_header = true;
-					v = Trim(v.substr(2));
 				}
 				values.push_back(PlainText(v));
 			}

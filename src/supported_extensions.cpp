@@ -90,8 +90,9 @@ const FormatReader FORMATS[] = {
      "carrying its kind in attributes['source_type']; a code cell's OUTPUTS are content and "
      "are kept, because a notebook read without them is a script. A markdown cell is held "
      "RAW with encoding='markdown' -- a DEFERRAL rather than a resting place, since that "
-     "content would be duck_blocks, discharged by a post-parse helper for embedded formats "
-     "rather than by markdown parsing landing here. Notebook title, authors and kernel are "
+     "content would be duck_blocks. PASS expand_embedded := true to parse it -- or call "
+     "panduck_expand_embedded(blocks) -- which happens in the SQL layer, not by markdown "
+     "parsing landing in this reader. Notebook title, authors and kernel are "
      "recovered as kind='value', which EXCEEDS pandoc: it puts the whole of a notebook's "
      "metadata into one opaque `jupyter` blob"},
     {"latex", EXT_LATEX, "read_latex_blocks", STATUS_IMPLEMENTED,

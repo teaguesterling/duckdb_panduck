@@ -646,7 +646,7 @@ void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result)
 //!
 //! ISSUE #27. doc_toc gated on duck_block_utils being PRESENT, which succeeds for any
 //! installed version, then named duck_blocks_toc_structs -- a function that exists only at
-//! spec 6.5, renumbered 1.2. A user on an older build passed the gate and got
+//! spec 1.2 (6.5 on the retired line). A user on an older build passed the gate and got
 //!
 //!     Catalog Error: Scalar Function with name duck_blocks_toc_structs does not exist!
 //!     Did you mean "duck_blocks_toc"?
@@ -973,8 +973,8 @@ SELECT * FROM query(
     THEN error('panduck: doc_toc needs the duck_block_utils extension (INSTALL duck_block_utils FROM community)')
     -- PRESENCE IS NOT ENOUGH; THE VERSION IS THE REQUIREMENT (#27). ensure_extension succeeds
     -- for ANY installed duck_block_utils, and the body below names duck_blocks_toc_structs,
-    -- which exists only at spec 6.5, renumbered 1.2. A user on an older build passed the gate
-    -- and got
+    -- which exists only at spec 1.2 (6.5 on the retired line). A user on an older build
+    -- passed the gate and got
     --
     --     Catalog Error: Scalar Function with name duck_blocks_toc_structs does not exist!
     --     Did you mean "duck_blocks_toc"?
@@ -988,7 +988,7 @@ SELECT * FROM query(
     -- own, binds always, and asks the question that actually matters: does the name I am
     -- about to emit exist?
     WHEN NOT panduck_function_exists('duck_blocks_toc_structs')
-    THEN error('panduck: doc_toc needs duck_block_utils >= 3.0.0 (spec 6.5, renumbered 1.2); the installed '
+    THEN error('panduck: doc_toc needs duck_block_utils >= 3.0.0 (spec 1.2, or 6.5 on the retired line); the installed '
                'build has no duck_blocks_toc_structs. Run UPDATE EXTENSIONS, or see '
                'panduck_dependencies()')
     -- SWAPPED TO duck_blocks_toc_structs, the END STATE, not gated on the installed build.

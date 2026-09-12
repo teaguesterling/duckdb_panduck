@@ -441,3 +441,60 @@ SELECT panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_p
      LIKE '%"meta":{%';
 ----
 true
+
+#
+# ---------------------------------------------------------------------------------------
+# FRAGMENTS ARE WRAPPED, NOT DROPPED (#36, reported by duckeye).
+# ---------------------------------------------------------------------------------------
+#
+# A run of list_items with no enclosing list used to export as "blocks": [] -- silently, no
+# error, while duck_blocks_validate called the same input valid. duck_blocks_to_md rendered
+# it correctly, so TWO WRITERS DISAGREED ABOUT ONE INPUT and the silent one returned nothing,
+# which is indistinguishable from "this document has no blocks". duckeye lost real debugging
+# time to exactly that.
+#
+# spec 1.2 made fragments legal input and declared each one's implicit parent in the
+# vocabulary header: list_item -> list, caption -> figure, inline -> plain. The behaviour is
+# PORTED from duck_block_utils v3.1.0 (6c1c2e5) rather than re-derived -- panduck's converter
+# is a vendored copy of theirs, and check-divergence exists to keep the two aligned.
+#
+# WRAP FOR BOTH, INCLUDING BARE INLINES. duckeye argued this and I argued for raising on an
+# inline instead; they were right, and their reason is the one that matters: the property
+# whose absence cost the time is that two writers DISAGREED, not that one was silent. Raising
+# for inlines and wrapping for list_items keeps them disagreeing, just audibly. `Plain` is
+# also what this codebase already emits for a non-paragraph inline inside a list item.
+
+query I
+SELECT regexp_extract(panduck_blocks_to_pandoc_json(
+  [{'kind':'block','element_type':'list_item','content':'alpha','level':2,
+    'encoding':'text','attributes':MAP{},'element_order':0}]), '"blocks":(.*)$', 1);
+----
+[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Str","c":"alpha"}]}]]}]}
+
+# A bare caption is wrapped in the figure that owns it, not degraded to a paragraph.
+query I
+SELECT regexp_extract(panduck_blocks_to_pandoc_json(
+  [{'kind':'block','element_type':'caption','content':'cap','level':1,
+    'encoding':'text','attributes':MAP{},'element_order':0}]), '"blocks":(.*)$', 1)
+  LIKE '%"t":"Figure"%';
+----
+true
+
+# A bare inline becomes Plain -- NOT Para, which would introduce a blank line on the way
+# back out to markdown.
+query I
+SELECT regexp_extract(panduck_blocks_to_pandoc_json(
+  [{'kind':'inline','element_type':'text','content':'orphan','level':2,
+    'encoding':'text','attributes':MAP{},'element_order':0}]), '"blocks":(.*)$', 1);
+----
+[{"t":"Plain","c":[{"t":"Str","c":"orphan"}]}]}
+
+# THE NO-OP PROPERTY, which is what makes it safe to apply unconditionally: a WHOLE document
+# is unchanged by repair. If this ever fails, the wrapping is reaching input it should not.
+query I
+SELECT starts_with(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')),
+                   '{"pandoc-api-version":[1,23,1],"meta":{')
+   AND contains(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/pandoc_pstyle.docx')),
+                '"blocks":[{"t":"Header"');
+----
+true

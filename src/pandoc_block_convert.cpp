@@ -1,3 +1,4 @@
+#include "duck_block_repair.hpp"
 #include "pandoc_block_convert.hpp"
 #include "panduck_duckdb_compat.hpp"
 #include "block_normalize.hpp"
@@ -2175,7 +2176,26 @@ static yyjson_mut_val *ConvertFigureToPandocVal(yyjson_mut_doc *doc, const vecto
 	return fig_obj;
 }
 
-static string BuildBlocksJson(const vector<Value> &blocks_list) {
+static string BuildBlocksJson(const vector<Value> &blocks_in) {
+	// FRAGMENTS ARE WRAPPED BEFORE EXPORT, NOT DROPPED. spec 1.2 made fragments legal input
+	// and declared each one's implicit parent in the vocabulary header -- list_item -> list,
+	// caption -> figure, inline -> plain. Before this, an orphan list_item run fell through
+	// the KIND_BLOCK / TYPE_LIST_ITEM skips below and the document came out as
+	//
+	//     "blocks": []
+	//
+	// with no error, while duck_blocks_validate called the same input valid.
+	//
+	// duckeye reported it as #36 and lost real debugging time: duck_blocks_to_md rendered
+	// the same six list_items correctly, so TWO WRITERS DISAGREED ABOUT ONE INPUT and the
+	// silent one returned nothing -- indistinguishable from "this document has no blocks".
+	//
+	// ON A WHOLE DOCUMENT REPAIR IS A NO-OP, so it is applied unconditionally: it changes
+	// what happens to fragments and nothing else. The parameter is renamed rather than the
+	// body rewritten, which is how upstream did it -- everything below reads blocks_list and
+	// is untouched.
+	vector<Value> blocks_list = blocks_in;
+	panduck::RepairBlocks(blocks_list);
 	yyjson_mut_doc *doc = yyjson_mut_doc_new(nullptr);
 	yyjson_mut_val *blocks_arr = yyjson_mut_arr(doc);
 	yyjson_mut_doc_set_root(doc, blocks_arr);

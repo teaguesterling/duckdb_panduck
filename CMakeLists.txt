@@ -124,6 +124,7 @@ include_directories(src/include)
 include_directories(duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
+    src/duck_block_repair.cpp
     src/docx_reader.cpp
     src/panduck_extension.cpp
     src/epub_reader.cpp

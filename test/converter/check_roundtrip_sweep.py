@@ -128,10 +128,16 @@ INHERENT = {
         "deprecation.",
     ),
     "caption": (
-        "paragraph",
-        "Only a STANDALONE caption, which is malformed anyway -- a caption belongs to "
-        "the container before it. Inside a figure it round-trips: figure > plain > "
-        "caption > plain. The sweep's synthetic probe is unrepresentative here.",
+        "figure",
+        "A STANDALONE caption is a FRAGMENT, and spec 1.2 made fragments legal input with a "
+        "declared implicit parent -- ImplicitParentOf() in the vocabulary header says "
+        "caption -> figure. So the exporter now WRAPS it instead of degrading it, and a bare "
+        "caption comes back as the figure that owns it. Inside a figure it round-trips "
+        "unchanged: figure > plain > caption > plain.\n"
+        "      This exception read `paragraph` until 2026-09-11, describing the PRE-1.2 "
+        "degradation, and it was the last thing still asserting the old behaviour after "
+        "panduck adopted the new one -- the gate caught its own stale expectation, which is "
+        "the right way round.",
     ),
 }
 

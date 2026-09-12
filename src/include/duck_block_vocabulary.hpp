@@ -31,11 +31,23 @@
 // untaken branch, which broke the extension-absent case. panduck's live gate is a catalog
 // probe for the function it actually needs.
 //
-// THE INSTALLED duck_block_utils IS STILL 6.5 AND THAT IS FINE. 1.2 is merged upstream but
-// not yet released or served, so duck_block_spec_version() from a community build reports
-// 6.5 for now. Vendoring is SOURCE-side; nothing at runtime asserts on the number. The
-// parsed-fixture manifest still records 6.5 for the same reason -- it records what BUILT
-// the fixtures, not what this header says.
+// THE INSTALLED duck_block_utils IS ALSO 1.2 AS OF 2026-09-12. duck_block_utils v3.1.0 is
+// SERVED -- measured from a stock CLI into an empty extension_directory, not read off a
+// changelog:
+//
+//     INSTALL duck_block_utils FROM community  ->  6c1c2e5, duck_block_spec_version() 1.2
+//
+// This paragraph said "STILL 6.5 ... not yet released or served" for one day, which was true
+// when written and stopped being true when the release was cut. Corrected rather than
+// deleted, because the source-vs-runtime distinction it draws is the useful part and is
+// permanent: vendoring is SOURCE-side, and nothing in panduck asserts on the number at
+// runtime.
+//
+// The parsed-fixture manifest records the spec version that BUILT each fixture, which is a
+// fact about the past rather than about this header. It read 6.5 until the release landed;
+// the drift job then reported "versions moved but output is byte-identical" and named
+// duck_block_spec as the mover, which is the whole reason that column exists. Refreshed to
+// 1.2 in the same change -- a LABEL-ONLY regeneration, verified: no parquet moved.
 
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.

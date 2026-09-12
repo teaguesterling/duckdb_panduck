@@ -124,9 +124,8 @@ Against an older build it raises rather than returning wrong rows. Check with:
 
 ```sql
 LOAD duck_block_utils;
-SELECT duck_block_spec_version();   -- needs 1.2 or later
---                                     (the renumbered 6.6; an installed build still
---                                      reports 6.5 until the 1.2 release is served)
+SELECT duck_block_spec_version();   -- needs 1.2 or later (the renumbered 6.6)
+--                                     served since duck_block_utils v3.1.0
 ```
 
 Every other panduck function is independent of it.

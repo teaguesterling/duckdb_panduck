@@ -39,12 +39,27 @@ jobs:
   # than `continue-on-error:` -- a job that calls a REUSABLE workflow accepts only a
   # fixed set of keys, and `continue-on-error` makes the whole file fail to parse,
   # scheduling zero jobs rather than one advisory one.
+  # TARGETS THE VERSION THE COMMUNITY REGISTRY ACTUALLY GATES ON, which is not the same
+  # thing as DuckDB main. This job used to build `main` and was named for it, and that gap
+  # let a real break through: on commit 5a0331b this canary passed on every platform while
+  # the registry's test_against_latest failed on both Linux arches, same source, because
+  # the registry builds the v2.0-cyanoptera TAG. `main` still pulled in
+  # duckdb/catalog/catalog.hpp transitively; the tag did not.
+  #
+  # A canary named for one target and gating another is the shape this repo keeps finding:
+  # a check whose label describes something other than the thing it guards. Building the
+  # tag means a next-version break surfaces here, on a push to main, instead of in the
+  # registry PR after a release is already tagged and published.
+  #
+  # Bump this string when the registry moves to the next DuckDB. The authority is the
+  # `duckdb_version` line in the failing/passing test_against_latest job on our own
+  # descriptor PR -- read it there rather than guessing from DuckDB's release page.
   duckdb-next-build:
-    name: Canary — build against DuckDB main (advisory)
+    name: Canary — build against DuckDB v2.0-cyanoptera (advisory)
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: main
+      duckdb_version: v2.0-cyanoptera
       ci_tools_version: main
       extension_name: panduck
 

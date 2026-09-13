@@ -3,6 +3,12 @@
 
 #include "supported_extensions.hpp"
 
+// Catalog::GetEntry below needs the COMPLETE type, not the forward declaration. On
+// DuckDB v1.5.5 this header arrived transitively and omitting it was invisible; on
+// DuckDB-next it does not, and the call fails to compile with "incomplete type
+// 'duckdb::Catalog' used in nested name specifier". Included explicitly rather than
+// left to whichever header happens to pull it in -- that is the property that changed.
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/catalog/default/default_table_functions.hpp"
 #include "duckdb/common/file_system.hpp"

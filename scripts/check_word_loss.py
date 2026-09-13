@@ -14,7 +14,11 @@ Not a substitute for the per-construct tests: it cannot see a heading read as a
 paragraph, because the words are all still there. The two checks fail differently on
 purpose.
 
-Usage:  python3 scripts/check_word_loss.py [--duckdb PATH] [--strict]
+Usage:  python3 scripts/check_word_loss.py [--duckdb PATH] [--extension PATH] [--strict]
+
+--strict is REQUIRED IN CI. Without it every prerequisite miss -- no duckdb, no pandoc,
+no fixture -- prints a line and returns 0, so an unwired or misconfigured job goes green
+having measured nothing. That is the failure this script exists to catch, one layer up.
 """
 import argparse
 import re
@@ -51,13 +55,21 @@ def words(text):
     return set(re.findall(r"[A-Za-z][A-Za-z0-9_]{1,}", text))
 
 
-def panduck_words(duckdb, reader, path):
+def panduck_words(duckdb, reader, path, extension=None):
     seen = set()
     # Both joins: a space-join splits H<sub>2</sub>O into "H 2 O", an empty join runs
     # neighbouring elements together. A word need only survive one of them.
     for sep in (" ", ""):
         sql = f"SELECT coalesce(string_agg(content, '{sep}'), '') FROM {reader}('{path}');"
-        out = subprocess.run([duckdb, "-noheader", "-list", "-c", sql],
+        # CI runs a stock duckdb against the extension artifact the build matrix already
+        # produced, rather than rebuilding panduck: -unsigned is required to LOAD a
+        # locally built .duckdb_extension. Locally, the statically linked build needs
+        # neither. Same shape as test/roundtrip/check_roundtrip.py.
+        cmd = [duckdb]
+        if extension:
+            cmd.append("-unsigned")
+            sql = f"LOAD '{extension}'; " + sql
+        out = subprocess.run(cmd + ["-noheader", "-list", "-c", sql],
                              capture_output=True, text=True)
         if out.returncode != 0:
             raise RuntimeError(out.stdout.strip() + out.stderr.strip())
@@ -68,10 +80,17 @@ def panduck_words(duckdb, reader, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--duckdb", default=str(ROOT / "build" / "release" / "duckdb"))
+    ap.add_argument("--extension", default=None,
+                    help="panduck.duckdb_extension to LOAD (implies -unsigned); "
+                         "omit when panduck is linked in")
     ap.add_argument("--strict", action="store_true",
                     help="fail when a prerequisite is missing instead of skipping")
     args = ap.parse_args()
 
+    extension = str(Path(args.extension).resolve()) if args.extension else None
+    if extension and not Path(extension).exists():
+        print(f"no extension at {extension}")
+        return 1 if args.strict else 0
     if not Path(args.duckdb).exists():
         print(f"no duckdb at {args.duckdb}; build first")
         return 1 if args.strict else 0
@@ -92,7 +111,7 @@ def main():
             print(f"  {fmt:<9} SKIP    pandoc could not read it")
             failures += args.strict
             continue
-        missing = words(ref.stdout) - panduck_words(args.duckdb, reader, str(path))
+        missing = words(ref.stdout) - panduck_words(args.duckdb, reader, str(path), extension)
         unexpected = sorted(w for w in missing if (fmt, w) not in EXPECTED)
         declared = sorted(w for w in missing if (fmt, w) in EXPECTED)
         note = f"  [{len(declared)} declared]" if declared else ""

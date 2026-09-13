@@ -340,7 +340,27 @@ which extensions happen to be installed: panduck's delegation lives in the SQL d
 layer, and a C++ reader cannot reach those functions. One consistent behaviour beats two
 that vary by environment. A consumer wanting blocks calls
 `parse_markdown_to_duck_blocks()` — a **scalar** from the `markdown` extension — on the
-content today; a post-parse helper for embedded formats discharges it later.
+content today; **or asks panduck to do it** — the post-parse helper this deferral was waiting
+on has landed.
+
+```sql
+-- The reader's default is unchanged: one raw block, no headings.
+SELECT count(*) FROM doc_toc('notebook.ipynb');                          -- 0
+
+-- expand_embedded parses the cell in the SQL layer, where delegation lives.
+SELECT level, title FROM doc_toc('notebook.ipynb', expand_embedded := true);
+-- 1 | Notebook Title
+```
+
+`expand_embedded := true` is accepted by `read_panduck_doc`, `doc_toc`, `doc_section`,
+`doc_search_sections` and `doc_container`. `panduck_expand_embedded(blocks)` is the same
+thing for a caller who already holds blocks.
+
+**It is opt-in, and that is the point.** The reason this reader holds a markdown cell raw is
+that a C++ reader parsing markdown would make its output depend on which extensions happen
+to be installed. A parameter defaulting to `false` preserves exactly that: an unchanged call
+reads identically with or without the `markdown` extension present. Asking for expansion is
+asking for the dependency, knowingly.
 
 ```sql
 LOAD markdown;

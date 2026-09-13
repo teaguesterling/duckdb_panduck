@@ -344,7 +344,11 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 			child.element_order = order++;
 			// No href branch: the only inlines this reader emits are the metadata values'
 			// text runs. Markdown cells are held raw, so their links never become inlines
-			// here -- they are still inside the raw content, awaiting the post-parse helper.
+			// here -- they are still inside the raw content until expand_embedded parses it.
+			// That helper LANDED (#39): read_panduck_doc(src, expand_embedded := true), and the
+			// same parameter on doc_toc/doc_section/doc_search_sections/doc_container. It parses
+			// in the SQL layer where delegation lives, so this reader keeps the independence the
+			// comment above defends -- the default is still one raw block.
 			rows.push_back(std::move(child));
 		}
 	}

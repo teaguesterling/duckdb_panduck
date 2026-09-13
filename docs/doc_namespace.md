@@ -167,6 +167,38 @@ as `doc_section`, in the same order — so it is the same shape and composes wit
 different thing: it returns one row per section as `(section, start_order, blocks)`, which
 is the right shape for enumerating matches and the wrong one for slicing a document.
 
+## `expand_embedded := true` — parse a document held inside another
+
+A `.ipynb` markdown cell is held as one `raw` block, deliberately: panduck's delegation
+lives in the SQL layer, so a C++ reader that parsed markdown would make its output depend
+on which extensions happen to be installed. The consequence is that a notebook has **no
+headings** and nothing to navigate.
+
+```sql
+SELECT count(*) FROM doc_toc('notebook.ipynb');                        -- 0
+SELECT level, title FROM doc_toc('notebook.ipynb', expand_embedded := true);
+-- 1 | Notebook Title
+```
+
+Accepted by `read_panduck_doc`, `doc_toc`, `doc_section`, `doc_search_sections` and
+`doc_container`. `panduck_expand_embedded(blocks)` is the same operation for a caller who
+already holds blocks — the parameter is that helper applied for you, not a second
+implementation that could drift from it.
+
+**Opt-in, and the default is the point.** An unchanged call reads identically with or
+without the `markdown` extension present; asking for expansion is asking for the
+dependency, knowingly. A document with nothing embedded is returned unchanged, so the
+parameter is safe to pass blindly.
+
+Two details worth knowing:
+
+- **Levels are offset, not copied.** Parsed blocks arrive at their own depth — 1 for a
+  heading — while the raw block they replace sits inside the host document. A heading from
+  a notebook cell lands at depth 2, *under* the cell's `div`, rather than level-with it.
+- **`element_order` keeps its origin.** It is renumbered contiguously, but a reader that
+  starts at 0 still starts at 0. Normalising here would silently rewrite one reader's
+  numbering to match another's.
+
 ## `doc_search_sections(src, pattern, format := 'auto')`
 
 **Find the section by its content**, where `doc_section` finds it by its heading. The

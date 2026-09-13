@@ -19,7 +19,8 @@ SELECT * FROM doc_section('report.docx', 'Meth', match := 'contains');  -- ...by
 SELECT * FROM doc_search_sections('report.docx', 'p < 0.05');  -- section BY ITS CONTENT
 
 -- A notebook's markdown cells are held raw, so it has no headings by default.
--- expand_embedded parses them, and makes the notebook navigable:
+-- expand_embedded parses them, and makes the notebook navigable.
+-- Needs the markdown extension; without it this errors rather than returning 0 headings.
 SELECT * FROM doc_toc('analysis.ipynb', expand_embedded := true);
 ```
 

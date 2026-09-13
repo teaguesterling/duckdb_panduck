@@ -54,6 +54,62 @@ jobs:
   # Bump this string when the registry moves to the next DuckDB. The authority is the
   # `duckdb_version` line in the failing/passing test_against_latest job on our own
   # descriptor PR -- read it there rather than guessing from DuckDB's release page.
+  # THREE ENCODINGS OF ONE FACT, asserted equal instead of maintained in parallel: the
+  # duckdb submodule pin, the duckdb_version this workflow's build jobs ship, and the
+  # version the community registry builds. When they drift, the local build and the served
+  # artifact are different software and nothing says so.
+  #
+  # Copied from duck_block_utils 31e97b7 (their PR #33), the fleet reference, so all the
+  # repos assert the same rule the same way. The workflow filename grepped below is this
+  # file's own name; it matches theirs, so the literal needed no change.
+  #
+  # THE AUTHORITY IS THE REGISTRY, not the constant in this job. A constant checked only
+  # against itself passes for a year after the registry moves -- which is not hypothetical:
+  # on 2026-09-13 panduck's canary built DuckDB `main`, went green on 5a0331b, and the
+  # registry rejected that exact commit for a v2.0-cyanoptera compile error.
+  #
+  # TWO DEGRADED PATHS, deliberately different. UNREACHABLE is the world being unavailable
+  # -- a NOTE, with the summary line saying the assertion was NOT made, so a green run that
+  # measured nothing is legible without opening the logs. REACHABLE BUT UNPARSEABLE is this
+  # check being wrong about the file (input renamed, default moved) -- a FAILURE, because
+  # only the check can fix that, and silently passing is how this class of check rots.
+  duckdb-pin:
+    name: DuckDB submodule pin equals the shipped tag
+    runs-on: ubuntu-latest
+    env:
+      DUCKDB_VERSION: v1.5.5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare the submodule pin with the tag's commit
+        run: |
+          set -eu
+          want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}^{}" | cut -f1)
+          [ -n "$want" ] || want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}" | cut -f1)
+          have=$(git ls-tree HEAD duckdb | awk '{print $3}')
+          echo "shipped tag ${DUCKDB_VERSION} -> ${want}"
+          echo "submodule pin          -> ${have}"
+          [ -n "$want" ] || { echo "::error::could not resolve tag ${DUCKDB_VERSION} upstream"; exit 1; }
+          [ "$want" = "$have" ] || { echo "::error::duckdb submodule pin ${have} is not the ${DUCKDB_VERSION} tag ${want}; run: git -C duckdb fetch --tags && git -C duckdb checkout ${DUCKDB_VERSION}"; exit 1; }
+          n=$(grep -c "duckdb_version: ${DUCKDB_VERSION}$" .github/workflows/MainDistributionPipeline.yml)
+          [ "$n" -ge 1 ] || { echo "::error::no build job in this workflow ships duckdb_version: ${DUCKDB_VERSION}; this job's constant has drifted"; exit 1; }
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          sha=$(curl -sf https://api.github.com/repos/duckdb/community-extensions/commits/main | grep -m1 -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
+          if body=$(curl -sf "https://raw.githubusercontent.com/duckdb/community-extensions/${sha:-main}/.github/workflows/build.yml"); then
+            registry=$(printf '%s' "$body" | grep -m1 -o "inputs.duckdb_version || 'v[0-9][0-9.]*'" | grep -o "'v[0-9][0-9.]*'" | tr -d "'" || true)
+            if [ -z "$registry" ]; then
+              echo "::error::community-extensions build.yml at ${sha:-main} was fetched but has no \"inputs.duckdb_version || 'vX.Y.Z'\" default; this check's parse is wrong about the registry, fix the check"
+              echo "duckdb-pin: FAILED, registry file fetched but unparseable" >> "$summary"; exit 1
+            elif [ "$registry" != "$DUCKDB_VERSION" ]; then
+              echo "::error::the community registry builds at ${registry} (build.yml default at ${sha:-main}) but this repo ships and pins ${DUCKDB_VERSION}; the served artifact and the local build differ"
+              echo "duckdb-pin: FAILED, registry builds ${registry}, repo pins ${DUCKDB_VERSION}" >> "$summary"; exit 1
+            fi
+            mode="checked against the registry (${registry} at ${sha:-main})"
+          else
+            echo "::notice::could not reach the community registry; the pin was checked against the local constant only"
+            mode="NOT checked against the registry (unreachable); local constant ${DUCKDB_VERSION} only"
+          fi
+          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} build job(s) ship it; ${mode}" | tee -a "$summary"
+
   duckdb-next-build:
     name: Canary — build against DuckDB v2.0-cyanoptera (advisory)
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

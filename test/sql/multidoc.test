@@ -20,6 +20,25 @@ require panduck
 # happens to hold webbed, and fails in a clean container -- or worse, passes there too but
 # only because some other test file installed it first, making the result depend on file
 # execution order. register_reader.test failed CI for precisely that reason.
+#
+# THE GUARD ABOVE DOES NOT ACTUALLY GUARD, and saying so is the point of this paragraph
+# (#34). `webbed` is a COMMUNITY extension: a bare INSTALL looks in the core repository and
+# returns HTTP 404. So on the clean container this was written to protect against, the
+# statement cannot install anything -- and where it appears to work, webbed was already
+# there, which is the ambient dependency it was meant to remove.
+#
+# WORSE, IN CI IT BUYS A SKIP RATHER THAN A FAILURE. sqllogictest skips a statement whose
+# error matches 'HTTP', and today's run on main reports "skip on error_message matching
+# 'HTTP': 5". So a bare INSTALL of an unavailable community extension quietly removes the
+# assertions that depend on it instead of failing.
+#
+# NOT SIMPLY CHANGED TO `FROM community`. That was tried: it works, it stops the skip -- and
+# it turned osx_arm64 red at doc_namespace.test:154, a DIFFERENT file, on markdown being
+# unavailable. The likeliest reading is that a successful community install changes the
+# failure mode of a later autoinstall from HTTP-matching (skipped) to something else (hard
+# failure), so the change did not create that gap, it stopped hiding it. That is a
+# hypothesis, not a measurement -- see #34 -- and the honest state today is that this
+# statement is decoration whose comment used to claim otherwise.
 statement ok
 INSTALL webbed;
 

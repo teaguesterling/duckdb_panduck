@@ -117,10 +117,34 @@ SELECT * FROM read_panduck_doc(['test/fixtures/constructs.docx',
 ```
 
 `filename := true` adds a trailing `filename` column with the path each block came from.
-It is **off by default for every source form**, because the released `duck_block_utils`
-(**3f2a0f0**, spec 6.3) refuses an eight-field struct at the binder — so panduck's default
-output stays the canonical seven columns and keeps working against the fleet that exists.
-`element_order` is per document; `ORDER BY filename, element_order` is a global order.
+It is **off by default for every source form**, so panduck's default output stays the
+canonical seven columns. `element_order` is per document; `ORDER BY filename,
+element_order` is a global order.
+
+> **The original reason for that default has expired; the default has not changed.** This
+> paragraph used to say `duck_block_utils` "refuses an eight-field struct at the binder",
+> citing the then-released **3f2a0f0** (spec 6.3, on the retired 6.x line). Measured
+> 2026-09-13 against what the community repository actually serves — `6c1c2e5`, spec 1.2,
+> installed into a clean `extension_directory` from a stock CLI so panduck's own statically
+> linked copy could not answer instead:
+>
+> ```
+> 8th field named 'filename'   accepted
+> 8th field named 'src'        Binder Error
+> 8th field named 'zzz'        Binder Error
+> seven fields                 accepted
+> six fields                   Binder Error
+> ```
+>
+> So the fleet was taught `filename` specifically, and the binder no longer refuses it. The
+> default stays `false` for a different and now-explicit reason: **changing the default
+> column set is a breaking change for every consumer that selects `*`**, which is a decision
+> to make deliberately rather than inherit from a constraint that has lapsed. Recorded
+> rather than quietly rewritten, because a justification that has expired reads as though it
+> were still load-bearing.
+>
+> Scope of the measurement: this is `duck_block_utils` only. Whether `markdown` and `webbed`
+> accept an eighth field was not tested and is not claimed.
 
 ```sql
 SELECT filename, count(*) AS headings
@@ -131,7 +155,9 @@ GROUP BY 1 ORDER BY 1;
 
 Core's `filename := 'custom_name'` rename form is **deliberately unsupported**: an eighth
 field named anything but `filename` does not bind as a `duck_block`, so honouring it would
-hand back rows no consumer accepts.
+hand back rows no consumer accepts. That one is not a lapsed constraint — it is the `src`
+and `zzz` rows measured above, and it is the reason the eighth field's *name* is the whole
+of what the fleet was taught.
 
 A glob matching nothing **raises**, as it does in core. `pages` is real for PDF and raises
 for formats that have none. `attributes := 'all'` asks in panduck's own vocabulary and

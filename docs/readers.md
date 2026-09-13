@@ -362,6 +362,17 @@ to be installed. A parameter defaulting to `false` preserves exactly that: an un
 reads identically with or without the `markdown` extension present. Asking for expansion is
 asking for the dependency, knowingly.
 
+**And if you ask without having it, the query fails rather than under-reporting:**
+
+```
+Invalid Input Error: panduck: expand_embedded needs the markdown extension
+                     (INSTALL markdown FROM community)
+```
+
+Stated because the plausible guess is the opposite one. A reader that silently returned
+the unexpanded notebook would be indistinguishable from a notebook with no headings, on
+exactly the machines where extensions are installed unevenly.
+
 ```sql
 LOAD markdown;
 SELECT unnest(parse_markdown_to_duck_blocks(content))

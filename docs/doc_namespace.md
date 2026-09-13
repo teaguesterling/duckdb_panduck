@@ -190,6 +190,21 @@ without the `markdown` extension present; asking for expansion is asking for the
 dependency, knowingly. A document with nothing embedded is returned unchanged, so the
 parameter is safe to pass blindly.
 
+**Without `markdown`, the query fails — it does not quietly return the unexpanded
+document.** Measured against an empty `extension_directory`:
+
+```
+Invalid Input Error: panduck: expand_embedded needs the markdown extension
+                     (INSTALL markdown FROM community)
+```
+
+This is worth stating because the opposite is the plausible guess, and it is the guess
+that costs you: a notebook reader that silently returned zero headings on a machine
+missing one extension would look like a document with no headings. The guard is
+`panduck_ensure_extension('markdown')`, and it exists so the caller does not instead get
+a Catalog Error naming `parse_markdown_to_duck_blocks` — a function they never typed
+(#25's shape).
+
 Two details worth knowing:
 
 - **Levels are offset, not copied.** Parsed blocks arrive at their own depth — 1 for a

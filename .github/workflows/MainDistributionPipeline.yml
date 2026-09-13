@@ -206,6 +206,22 @@ jobs:
           python3 test/roundtrip/check_roundtrip.py \
             --require --duckdb ./duckdb-cli/duckdb --extension "$EXT"
 
+      # WORD LOSS, in the same job because it needs exactly what this job already has:
+      # pandoc, a stock CLI, and the built artifact. It is the strongest format-agnostic
+      # audit in the repo -- words pandoc sees that panduck does not -- and it is the
+      # invariant the DOCX hyperlink bug violated. It had never run in CI (#59).
+      #
+      # --strict IS LOAD-BEARING, NOT DECORATION. Without it, every prerequisite miss --
+      # no duckdb, no pandoc, no fixture -- prints a line and returns 0, so this step
+      # would go green forever having measured nothing. Wiring an orphaned guard without
+      # its strict flag creates a new instance of exactly the defect the guard exists to
+      # catch. Same reason check_roundtrip.py above is passed --require.
+      - name: Word loss (pandoc sees words panduck does not)
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          python3 scripts/check_word_loss.py \
+            --strict --duckdb ./duckdb-cli/duckdb --extension "$EXT"
+
   # FIXTURE DRIFT AT THE pdf / markdown / webbed BOUNDARY.
   #
   # panduck's markdown, html and pdf readers are not panduck's code -- they dispatch to

@@ -1,0 +1,366 @@
+# name: test/sql/rst_indentation.test
+# description: RST containment by indentation -- block quotes, list item bodies, comment bodies, bare ::
+# group: [sql]
+
+#
+# RST EXPRESSES CONTAINMENT BY INDENTATION ALONE, and one question decides every case here:
+# what does an indented run belong to? Before #64 the reader answered "nothing" for most of
+# them, so the text survived but the structure did not:
+#
+#   a block quote                    -> level-1 paragraphs            (pandoc: BlockQuote)
+#   a list item's second paragraph   -> level-1 paragraph, list SPLIT (pandoc: one list)
+#   a comment's indented body        -> leaked into the document      (pandoc: dropped)
+#   a bare `::` literal block        -> hr + paragraph                (pandoc: CodeBlock)
+#
+# They are one file because they are one rule, and fixing the first alone would have MOVED
+# the other three: a continuation paragraph or a comment body would have become a false
+# QUOTE instead of a false paragraph. Every expected shape below was measured against
+# pandoc 3.1.3 first; the levels follow this reader's existing convention -- a container's
+# children at level+1, a list item's children at the item's level+1.
+
+require panduck
+
+# ---------------------------------------------------------------------------------------
+# GUARDS: indented shapes the reader ALREADY got right. They pass before and after #64; they
+# are here so the new rule cannot quietly take them over.
+# ---------------------------------------------------------------------------------------
+
+# A definition: a term with its body on the NEXT line, no blank between. Not a quote.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Term\n   The definition, no blank line.\n\nAfter.\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	Term
+2	list_item	The definition, no blank line.
+1	paragraph	After.
+
+# An attached `::` literal block. Not a quote.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Code follows::\n\n   literal text\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Code follows:
+1	code	literal text
+1	paragraph	After.
+
+# A directive body is the directive's, not a quote.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'.. note::\n\n   A note body.\n\nAfter.\n') ORDER BY element_order;
+----
+1	div	(empty)
+2	paragraph	A note body.
+1	paragraph	After.
+
+# ---------------------------------------------------------------------------------------
+# BLOCK QUOTES (#64): an indented run that nothing above it claims.
+# ---------------------------------------------------------------------------------------
+
+# The reported case. Before #64: `1 paragraph A quoted warning.` -- and duck_blocks_to_md
+# gave `A quoted warning.` where the pandoc route gave `> A quoted warning.`
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Title\n=====\n\nBefore the quote.\n\n   A quoted warning.\n\nAfter the quote.\n') ORDER BY element_order;
+----
+1	heading	Title
+1	paragraph	Before the quote.
+1	blockquote	(empty)
+2	paragraph	A quoted warning.
+1	paragraph	After the quote.
+
+# An attribution is a second paragraph INSIDE the quote, as pandoc has it.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n   Quoted line one.\n   Quoted line two.\n\n   -- Attribution\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	blockquote	(empty)
+2	paragraph	Quoted line one. Quoted line two.
+2	paragraph	-- Attribution
+1	paragraph	After.
+
+# Deeper indentation inside a quote is a quote inside the quote.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n   Outer quote.\n\n      Inner quote.\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	blockquote	(empty)
+2	paragraph	Outer quote.
+2	blockquote	(empty)
+3	paragraph	Inner quote.
+1	paragraph	After.
+
+# The quote's base is the DOCUMENT's column, not the first line's: a quote can open the
+# document, and a document indented throughout is one quote (pandoc agrees on both).
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'   A quote as the very first block.\n\nAfter.\n') ORDER BY element_order;
+----
+1	blockquote	(empty)
+2	paragraph	A quote as the very first block.
+1	paragraph	After.
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'   Whole document is indented.\n\n   Second paragraph, same indent.\n') ORDER BY element_order;
+----
+1	blockquote	(empty)
+2	paragraph	Whole document is indented.
+2	paragraph	Second paragraph, same indent.
+
+# A quote holds any block, not only paragraphs.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n   - a bullet inside a quote\n   - second\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	blockquote	(empty)
+2	list	(empty)
+3	list_item	a bullet inside a quote
+3	list_item	second
+1	paragraph	After.
+
+# The `..` + blank line idiom: an EMPTY comment ends a definition list so the indented run
+# after it is a quote rather than more definition. constructs.rst uses exactly this.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Term\n   Def.\n\n..\n\n   A quote after a comment.\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	Term
+2	list_item	Def.
+1	blockquote	(empty)
+2	paragraph	A quote after a comment.
+
+# ---------------------------------------------------------------------------------------
+# LIST ITEM BODIES. An item owns what is indented to its TEXT COLUMN or deeper. Before #64 a
+# second paragraph fell out to level 1 and SPLIT the list in two.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'- item one\n\n  continuation of item one\n\n- item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one
+3	paragraph	continuation of item one
+2	list_item	item two
+
+# The text column is the MARKER'S width, not a fixed 2: `10. ` puts it at 4.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'10. item ten\n\n    continuation of ten\n\n11. item eleven\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item ten
+3	paragraph	continuation of ten
+2	list_item	item eleven
+
+# ...and so is extra space after a bullet: `-   item` puts it at 4.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'-   item one\n\n    continuation, text column 4\n\n-   item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one
+3	paragraph	continuation, text column 4
+2	list_item	item two
+
+# THE CASE THAT FIXES THE RULE: indented past the bullet but SHORT of the text column is
+# not the item's. pandoc ends the list, quotes the run, and starts a new list -- so a rule of
+# "indented under an item belongs to it" would be wrong here.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'-   item one\n\n  indent 2, less than text column 4\n\n-   item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one
+1	blockquote	(empty)
+2	paragraph	indent 2, less than text column 4
+1	list	(empty)
+2	list_item	item two
+
+# Deeper than the text column is a quote INSIDE the item.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'- item one\n\n     deeper than the item text\n\n- item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one
+3	blockquote	(empty)
+4	paragraph	deeper than the item text
+2	list_item	item two
+
+# A nested list after a blank line stays in its item. Before #64 this was THREE lists.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'- a\n\n  - b\n  - c\n\n- d\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	a
+3	list	(empty)
+4	list_item	b
+4	list_item	c
+2	list_item	d
+
+# ---------------------------------------------------------------------------------------
+# COMMENT BODIES. A comment owns an indented run that starts on the VERY NEXT line; a blank
+# line ends the comment. Before #64 the body leaked into the document as prose.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n..\n   A multi-line comment body,\n   not a quote.\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	paragraph	After.
+
+# The body continues across a blank line while it stays indented.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'.. comment\n   body\n\n   more after blank\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	After.
+
+# ...but a blank line straight after the comment line means the comment has NO body, and the
+# indented run is a quote, even when the comment has text.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'.. comment text\n\n   indented after a blank\n') ORDER BY element_order;
+----
+1	blockquote	(empty)
+2	paragraph	indented after a blank
+
+# A comment inside a quote is dropped, and the quote continues past it.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n   Quoted.\n\n   .. a comment inside the quote\n\n   Still quoted.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	blockquote	(empty)
+2	paragraph	Quoted.
+2	paragraph	Still quoted.
+
+# ---------------------------------------------------------------------------------------
+# BARE `::`. rst_reader.test has long SAID "a bare `::` paragraph disappears entirely" but only
+# tested the attached `Follows::` form. The scanner read a lone `::` as a two-character
+# adornment, so it became an hr and its literal block became a paragraph.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n::\n\n   literal text\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	code	literal text
+1	paragraph	After.
+
+# A real transition is still an hr: the fix is for a lone `::`, not for adornment lines.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'A\n\n----\n\nB\n') ORDER BY element_order;
+----
+1	paragraph	A
+1	hr	(empty)
+1	paragraph	B
+
+# ---------------------------------------------------------------------------------------
+# WRAPPED LINES. The line that claims a run absorbs its WRAPS -- the lines that follow it with
+# no blank between -- before any body begins. Measured when designing #64, and the reason the
+# list rule is "wraps first, then the body": without it, a wrapped item's second line becomes
+# a child paragraph, which pandoc does not do. Before #64 each of these SPLIT its list.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'- item one\n  wraps here\n- item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one wraps here
+2	list_item	item two
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'1. item one\n   wraps here\n2. item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one wraps here
+2	list_item	item two
+
+# Wrap first, THEN the body: the joined text stays on the item, the later paragraph is its child.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'- item one\n  wraps here\n\n  second paragraph\n\n- item two\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	item one wraps here
+3	paragraph	second paragraph
+2	list_item	item two
+
+# A field value wraps the same way, and the field list stays ONE list.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E':Author: A. Writer\n   continued value\n:Version: 1.0\n\nAfter.\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	Author
+2	list_item	A. Writer continued value
+2	list_item	Version
+2	list_item	1.0
+1	paragraph	After.
+
+# ...but after a BLANK line the indented run is not the field's: pandoc quotes it. (pandoc
+# also reads the value `A. Writer` as an upper-alpha enumerated list; panduck keeps it as the
+# text it is, which is a separate, pre-existing difference and not what this asserts.)
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E':Author: A. Writer\n\n   indented after blank\n\nAfter.\n') ORDER BY element_order;
+----
+1	list	(empty)
+2	list_item	Author
+2	list_item	A. Writer
+1	blockquote	(empty)
+2	paragraph	indented after blank
+1	paragraph	After.
+
+# A quote's own wrapped lines are one paragraph.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Para.\n\n   Quote line one\n   quote line two\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Para.
+1	blockquote	(empty)
+2	paragraph	Quote line one quote line two
+1	paragraph	After.
+
+# ---------------------------------------------------------------------------------------
+# EXPLICIT MARKUP IS NOT ALL COMMENTARY. The scanner files every non-directive `..` line under
+# COMMENT, but a FOOTNOTE or CITATION body is document text. The first cut of #64 dropped it
+# with real comments' bodies, and the word-loss guard caught it on constructs.rst ("body") --
+# these 31 targeted assertions had not. pandoc carries the body as a Note; panduck keeps it
+# as prose at the current depth, which is what it emitted before #64.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Text with a footnote. [1]_\n\n.. [1]\n   The footnote body.\n') ORDER BY element_order;
+----
+1	paragraph	Text with a footnote. [1]_
+1	paragraph	The footnote body.
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'See [CIT2002]_.\n\n.. [CIT2002]\n   A citation body.\n') ORDER BY element_order;
+----
+1	paragraph	See [CIT2002]_.
+1	paragraph	A citation body.
+
+# A hyperlink target's body is its URL, resolved into the link by pandoc and never text of its
+# own. Dropped -- where before #64 the URL leaked into the document as a paragraph.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'A link_.\n\n.. _link:\n   https://example.com\n') ORDER BY element_order;
+----
+1	paragraph	A link_.

@@ -38,6 +38,10 @@ struct Line {
 	int indent = 0;     //!< leading columns, which is how RST expresses containment
 	bool ordered = false;
 	int start = 1;
+	//! BULLET/ENUM: the column where the item's TEXT begins -- the marker's width, not a fixed
+	//! 2 (`10. x` and `-   x` both put it at 4). An item owns lines indented to this column or
+	//! deeper; a line indented past the marker but short of it ends the list (pandoc, #64).
+	int text_col = 0;
 	bool header_sep = false; //!< GRID_SEP written with `=` -- promotes the rows above it
 	std::vector<int> spans;  //!< SIMPLE_SEP: the rule runs' WIDTHS
 	//! SIMPLE_SEP: where each rule run STARTS. Widths alone are not enough to locate a

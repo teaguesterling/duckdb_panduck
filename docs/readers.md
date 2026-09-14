@@ -321,6 +321,22 @@ becomes `div` carrying the directive name in `attributes['source_type']`, where 
 visible as a gap rather than silently private. **The body is descended into, never dropped**:
 a directive body is prose, and the one exception is `code-block`, whose body is its content.
 
+**Containment is by indentation, and the line that opens a run claims it.** A definition
+term, a field, a list item, a directive, a comment and a `::` each consume the indented run
+after them. A run nothing claims is a `blockquote`, and deeper indentation inside one nests
+another. Three rules were measured against pandoc rather than assumed (#64):
+
+- **A list item owns lines at its *text column* or deeper**, and the column is the marker's
+  width: `10. ` and `-   ` both put it at 4. A line indented past the bullet but short of that
+  column is not the item's. The list ends there and the run is quoted beside it.
+- **Wrapped lines are absorbed before any body.** `- item one` followed by `  wraps here` is
+  one item reading `item one wraps here`, not an item with a child paragraph. A field value
+  wraps the same way.
+- **A comment's body starts on the very next line.** `..` followed by a blank line has no
+  body, which is why that pair is RST's idiom for ending a list before a quote. Footnote and
+  citation bodies (`.. [1]`) are document text and are kept as prose; a *one-line* footnote
+  is still dropped (#67).
+
 ## `read_ipynb_blocks(path)`
 
 Every cell is a `div` carrying `attributes['source_type']` = its `cell_type`. Cell

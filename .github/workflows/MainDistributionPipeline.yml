@@ -142,6 +142,21 @@ jobs:
   #
   # It runs independently of the build: the check reads the C++ table as text, so it
   # needs no compiled extension and gives a fast, standalone signal.
+  # SINGLE-ARROW LAMBDAS IN SQL STRINGS (#65). DuckDB 1.5.5 prints a deprecation WARNING on
+  # stdout for `x -> ...` -- inside every consumer's output -- and from 2.0 the default
+  # lambda_syntax rejects it at bind time. A static scan rather than a test, because the expand
+  # macro's lambdas reference parse_markdown_to_duck_blocks and so are never bound on a runner
+  # without the markdown extension. The script self-tests before scanning and exits 2 if its
+  # own detection is broken, so a green run cannot mean "found nothing because it looked at
+  # nothing". Needs no build, no DuckDB, no network: seconds.
+  lambda-syntax:
+    name: No single-arrow lambdas in SQL strings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan src/ for single-arrow lambdas
+        run: python3 scripts/check_lambda_syntax.py
+
   pandoc-alignment:
     name: Pandoc AST alignment
     runs-on: ubuntu-latest

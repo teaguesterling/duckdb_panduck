@@ -1205,7 +1205,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "panduck_renumber_blocks",
      {"bs", "base", nullptr},
      {{nullptr, nullptr}},
-     "list_transform(bs, (pd_e, pd_i) -> {kind: pd_e.kind, element_type: pd_e.element_type, "
+     "list_transform(bs, lambda pd_e, pd_i: {kind: pd_e.kind, element_type: pd_e.element_type, "
      "  content: pd_e.content, level: pd_e.level, encoding: pd_e.encoding, attributes: pd_e.attributes, "
      // THE CAST IS REQUIRED, not tidiness: a list index is BIGINT, so `i - 1 + base`
      // widens and duck_blocks_toc_structs rejected the result outright --
@@ -1252,12 +1252,18 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      //     Binder Error: column "element_type" must appear in the GROUP BY clause
      // -- an error naming a column the caller never grouped, about a lambda they cannot see.
      // A short generic name in a macro body is a name the caller can collide with.
+     //
+     // `lambda x: ...`, NEVER `x -> ...` (#65). DuckDB 1.5.5 prints a deprecation WARNING on
+     // stdout for the arrow form -- inside every consumer's output -- and from 2.0 the default
+     // lambda_syntax rejects it at bind time. `make check-lambda-syntax` scans every SQL
+     // string in src/ for it, because without the markdown extension these lambdas are
+     // never bound and a test cannot see them.
      "panduck_renumber_blocks("
-     "  flatten(list_transform(blocks, pd_blk -> "
+     "  flatten(list_transform(blocks, lambda pd_blk: "
      "    CASE WHEN pd_blk.element_type = 'raw' "
      "          AND pd_blk.attributes['format'] = 'markdown' "
      "         THEN list_transform(parse_markdown_to_duck_blocks(pd_blk.content), "
-     "                pd_sub -> {kind: pd_sub.kind, element_type: pd_sub.element_type, "
+     "                lambda pd_sub: {kind: pd_sub.kind, element_type: pd_sub.element_type, "
      "                      content: pd_sub.content, "
      "                      level: pd_sub.level + pd_blk.level - 1, "
      "                      encoding: pd_sub.encoding, attributes: pd_sub.attributes, "
@@ -1268,7 +1274,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // markdown extension does and panduck passes it through. Forcing a base here would
      // silently renumber one of them, so the input's own origin is kept and the disagreement
      // stays visible where it belongs -- upstream.
-     "  coalesce(list_min(list_transform(blocks, pd_ord -> pd_ord.element_order)), 0))"},
+     "  coalesce(list_min(list_transform(blocks, lambda pd_ord: pd_ord.element_order)), 0))"},
 
     //! panduck_expand_embedded(blocks) -- replace embedded-format `raw` blocks with their
     //! parsed contents. Gated, so a missing markdown extension is refused in panduck's words

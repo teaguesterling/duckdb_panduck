@@ -95,10 +95,12 @@ jobs:
   # lines the community registry builds. When they drift, the local build and the served
   # artifact are different software and nothing says so.
   #
-  # Copied verbatim from duck_block_utils cf408b5 (their PR #33, the reviewed final), so
-  # every repo in the fleet asserts the same rule the same way. The only repo-specific line
-  # is `wf=`, this file's own name, which matches theirs. Its degraded paths -- unreachable
-  # is a NOTE, a non-200 fetch or an unparseable registry file is a FAILURE -- are
+  # Copied verbatim from duck_block_utils main at 82241ea (their PR #33, squash-merged; the
+  # reviewed branch head was cf408b5, which is NOT in main's history, so compare against
+  # 82241ea), so every repo in the fleet asserts the same rule the same way. The only
+  # repo-specific line is `wf=`, this file's own name, which matches theirs. Its degraded
+  # paths -- unreachable is a NOTE, a non-200 fetch or an unparseable registry file is a
+  # FAILURE -- are
   # documented inline in the run block below and deliberately NOT restated here, so there
   # is one description of them rather than two that can drift apart.
   #

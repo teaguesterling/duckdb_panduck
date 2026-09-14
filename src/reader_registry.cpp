@@ -1678,7 +1678,7 @@ const DefaultTableMacro DOC_SECTION_MACRO = {
     {"src", "section", nullptr},
     {{"format", "'auto'"}, {"match", "'exact'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
     R"SQL(
-WITH b AS (SELECT * FROM read_panduck_doc(
+WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
     -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
     -- element_order, which RESTARTS per document, so a glob or a list does not widen the
     -- section -- it stacks several documents at the same element_order values with no
@@ -1717,6 +1717,30 @@ WITH b AS (SELECT * FROM read_panduck_doc(
          -- the identical string, measured.
          ELSE panduck_source_list(src)[1] END, format := format,
     expand_embedded := expand_embedded)),
+-- METADATA IS NEVER BODY (#54). A document's metadata arrives as a value tree -- `author` is a
+-- kind='value' row whose TEXT sits in a kind='inline' child -- or as one block/metadata row
+-- (markdown frontmatter). Readers append the value rows after the body, so segmenting by
+-- element_order alone put them inside the LAST section, and a search for an author's name
+-- returned that section: constructs.docx gave 38 rows for 'Test Author'.
+--
+-- THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54). A value or metadata
+-- row is a ROOT, and it and every following row with a GREATER level is not body; the subtree
+-- ends at the next row whose level is at or above the root's. Spec 1.3's IsBody(kind,
+-- element_type) is per row and calls those inline leaves body, so it cannot be the test. When
+-- duck_block_utils ships duck_blocks_body (spec 1.4), this becomes a call to it.
+--
+-- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
+-- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
+meta_roots AS (SELECT element_order AS r_o, coalesce(level, 1) AS r_l
+               FROM b WHERE kind = 'value' OR element_type = 'metadata'),
+meta_spans AS (SELECT r.r_o AS m_s,
+                      coalesce(min(n.element_order), (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
+               FROM meta_roots r LEFT JOIN b n
+                 ON n.element_order > r.r_o AND coalesce(n.level, 1) <= r.r_l
+               GROUP BY r.r_o),
+body AS MATERIALIZED (SELECT * FROM b
+         WHERE NOT EXISTS (SELECT 1 FROM meta_spans x
+                           WHERE b.element_order >= x.m_s AND b.element_order < x.m_e)),
 -- ONE PAST THE LAST BLOCK, so an open-ended span (a section with no following heading at
 -- its level or above) gets a real number instead of NULL. The NULL end is what forced the
 -- old body's `... OR (SELECT o FROM stop) IS NULL` and it does not survive contact with
@@ -1725,7 +1749,7 @@ eod AS (SELECT coalesce(max(element_order), 0) + 1 AS o FROM b),
 hits AS (SELECT element_order AS o,
                 coalesce(try_cast(attributes['heading_level'] AS INTEGER), 1) AS lvl,
                 row_number() OVER (ORDER BY element_order) AS rn
-         FROM b
+         FROM body
          WHERE element_type = 'heading'
            AND CASE lower(match)
                  WHEN 'contains'
@@ -1750,7 +1774,7 @@ h AS (SELECT o, lvl FROM hits WHERE lower(match) = 'contains' OR rn = 1),
 -- a chapter carries its subsections. LEFT JOIN rather than the old correlated `stop`,
 -- because there are now many spans and each needs its own end.
 spans AS (SELECT h.o AS s_o, coalesce(min(nxt.element_order), (SELECT o FROM eod)) AS e_o
-          FROM h LEFT JOIN b nxt
+          FROM h LEFT JOIN body nxt
             ON nxt.element_type = 'heading' AND nxt.element_order > h.o
            AND coalesce(try_cast(nxt.attributes['heading_level'] AS INTEGER), 1) <= h.lvl
           GROUP BY h.o),
@@ -1761,7 +1785,7 @@ spans AS (SELECT h.o AS s_o, coalesce(min(nxt.element_order), (SELECT o FROM eod
 keep AS (SELECT s.s_o, s.e_o FROM spans s
          WHERE NOT EXISTS (SELECT 1 FROM spans p WHERE p.s_o < s.s_o AND p.e_o >= s.e_o))
 SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order
-FROM b
+FROM body b
 -- EXISTS, not a join: it emits each block at most once whatever the spans do. After the
 -- containment drop they are disjoint and a join would agree, but this does not depend on
 -- that argument holding.
@@ -1826,12 +1850,36 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
                     'read_panduck_doc(src, filename := true) for multiple documents')
          ELSE panduck_source_list(src)[1] END, format := format,
     expand_embedded := expand_embedded)),
+-- METADATA IS NEVER BODY (#54). A document's metadata arrives as a value tree -- `author` is a
+-- kind='value' row whose TEXT sits in a kind='inline' child -- or as one block/metadata row
+-- (markdown frontmatter). Readers append the value rows after the body, so segmenting by
+-- element_order alone put them inside the LAST section, and a search for an author's name
+-- returned that section: constructs.docx gave 38 rows for 'Test Author'.
+--
+-- THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54). A value or metadata
+-- row is a ROOT, and it and every following row with a GREATER level is not body; the subtree
+-- ends at the next row whose level is at or above the root's. Spec 1.3's IsBody(kind,
+-- element_type) is per row and calls those inline leaves body, so it cannot be the test. When
+-- duck_block_utils ships duck_blocks_body (spec 1.4), this becomes a call to it.
+--
+-- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
+-- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
+meta_roots AS (SELECT element_order AS r_o, coalesce(level, 1) AS r_l
+               FROM b WHERE kind = 'value' OR element_type = 'metadata'),
+meta_spans AS (SELECT r.r_o AS m_s,
+                      coalesce(min(n.element_order), (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
+               FROM meta_roots r LEFT JOIN b n
+                 ON n.element_order > r.r_o AND coalesce(n.level, 1) <= r.r_l
+               GROUP BY r.r_o),
+body AS MATERIALIZED (SELECT * FROM b
+         WHERE NOT EXISTS (SELECT 1 FROM meta_spans x
+                           WHERE b.element_order >= x.m_s AND b.element_order < x.m_e)),
 -- SEGMENT KEY = the element_order of the nearest heading at or before this block, NULL for
 -- anything before the first one. Every heading opens a segment regardless of level, which
 -- is precisely "stops at the next heading of ANY level".
 t AS (SELECT *, max(CASE WHEN element_type = 'heading' THEN element_order END)
                     OVER (ORDER BY element_order ROWS UNBOUNDED PRECEDING) AS seg
-      FROM b),
+      FROM body),
 -- The section's FLATTENED text: every block's content joined in order, so a phrase that
 -- straddles two blocks still selects the section. The heading's own text is part of the
 -- section it opens, so searching a title finds that section without pulling in the

@@ -242,12 +242,6 @@ jobs:
       extension_name: panduck
       format_checks: 'format'
 
-  # Panduck deliberately does not link pandoc, so nothing in the build above would
-  # notice if pandoc changed its AST underneath us. This job installs a real pandoc and
-  # diffs its emitted constructor set against src/pandoc_ast_map.cpp.
-  #
-  # It runs independently of the build: the check reads the C++ table as text, so it
-  # needs no compiled extension and gives a fast, standalone signal.
   # SINGLE-ARROW LAMBDAS IN SQL STRINGS (#65). DuckDB 1.5.5 prints a deprecation WARNING on
   # stdout for `x -> ...` -- inside every consumer's output -- and from 2.0 the default
   # lambda_syntax rejects it at bind time. A static scan rather than a test, because the expand
@@ -263,6 +257,12 @@ jobs:
       - name: Scan src/ for single-arrow lambdas
         run: python3 scripts/check_lambda_syntax.py
 
+  # Panduck deliberately does not link pandoc, so nothing in the build above would
+  # notice if pandoc changed its AST underneath us. This job installs a real pandoc and
+  # diffs its emitted constructor set against src/pandoc_ast_map.cpp.
+  #
+  # It runs independently of the build: the check reads the C++ table as text, so it
+  # needs no compiled extension and gives a fast, standalone signal.
   pandoc-alignment:
     name: Pandoc AST alignment
     runs-on: ubuntu-latest

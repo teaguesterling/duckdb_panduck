@@ -62,7 +62,7 @@ jobs:
   # this job used to build DuckDB `main`, and on 5a0331b it went green on every platform
   # while the registry's test_against_latest rejected that exact commit -- `main` still
   # pulled in duckdb/catalog/catalog.hpp transitively and v2.0-cyanoptera did not. It was
-  # retargeted to the tag, then ungated on PRs (Teague, 2026-09-13, adopting the fleet
+  # retargeted to that branch, then ungated on PRs (Teague, 2026-09-13, adopting the fleet
   # reference). panduck's `on: push` is already restricted to main, so the double build the
   # gate below prevents cannot occur here; the gate is copied verbatim anyway so every repo
   # carries the same line.

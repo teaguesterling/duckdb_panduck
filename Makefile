@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -180,5 +180,13 @@ regen-parsed-fixtures:
 # error matches 'HTTP', which is how other markdown-dependent files survive CI. panduck's gate
 # raises a clearer message that matches nothing, so it fails hard instead. Gating deliberately
 # is the honest version of what those files get by accident.
+# panduck's native body walk (doc_section, doc_search_sections) against duck_blocks_body, spec
+# 1.4 (#54): two encodings of one rule, compared. Needs a duck_block_utils >= 1.4 build; the
+# test SKIPS without one. Defaults to the same sibling build check-converter uses.
+PANDUCK_BODY_PARITY_EXT ?= $(PANDUCK_CONVERTER_EXT)
+.PHONY: check-body-parity
+check-body-parity:
+	PANDUCK_BODY_PARITY_EXT="$(PANDUCK_BODY_PARITY_EXT)" ./build/release/test/unittest "test/sql/doc_body_parity.test"
+
 check-expand:
 	PANDUCK_TEST_EXPAND=1 ./build/release/test/unittest test/sql/expand_embedded_markdown.test

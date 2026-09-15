@@ -33,8 +33,8 @@ WHAT IT REPORTS, and why the arms are separate:
   SPEC   a MAJOR mismatch, or a copy claiming a minor AHEAD of the release.
          FAILS. A copy behind on minor is aligned.
   PROVENANCE  the stamp is missing, malformed, disagrees with the file or with
-         its release label, or the header at the stamped sha differs from the
-         copy by anything but one inserted comment block. FAILS.
+         its release label, or the copy differs from the header at the stamped
+         sha anywhere from the title line down (byte-exact). FAILS.
   BEHIND in the release, not in our copy. PASSES -- re-vendor only if needed.
   GAPS   published vocabulary that no panduck code branches on, so it can only
          reach a fallthrough. Not breaking, but this is the arm that earns its
@@ -88,7 +88,6 @@ Usage:
 """
 
 import argparse
-import difflib
 import os
 import re
 import subprocess
@@ -127,6 +126,9 @@ STAMP_RE = re.compile(
     r"(?:\s+\[duck_block_utils (v[0-9]+\.[0-9]+\.[0-9]+)\])?\s*$"
 )
 RELEASE_TAG_RE = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
+# The header's title line. Provenance is anchored here: above it is the copy's own preamble,
+# from it down must be the header at the stamped sha, byte for byte.
+TITLE_LINE = "// The duck_block vocabulary -- PUBLISHED INTERFACE."
 
 # Vocabulary panduck deliberately does not branch on. Recorded WITH REASONS so an
 # intentional gap and an unexplained one never look the same -- an allowlist
@@ -206,8 +208,10 @@ def find_local(root):
 
 def git_out(repo, *args):
     """stdout of a git command in a clone, or None if it failed."""
+    # Bytes, decoded by hand: text=True applies universal newlines and would turn a CRLF
+    # header into LF before the byte-exact provenance comparison ever saw it.
     try:
-        return subprocess.check_output(["git", "-C", repo, *args], stderr=subprocess.PIPE, text=True)
+        return subprocess.check_output(["git", "-C", repo, *args], stderr=subprocess.PIPE).decode("utf-8")
     except subprocess.CalledProcessError:
         return None
 
@@ -351,8 +355,10 @@ def classify(local, upstream):
 
 
 def _stamp_line(text):
-    """The provenance stamp line, if one is present near the top; None otherwise."""
-    for line in text.splitlines()[:12]:
+    """The provenance stamp line from the copy's preamble (above the title line, any length)."""
+    lines = text.splitlines()
+    end = lines.index(TITLE_LINE) if TITLE_LINE in lines else len(lines)
+    for line in lines[:end]:
         if line.startswith(STAMP_PREFIX):
             return line
     return None
@@ -372,15 +378,17 @@ def provenance_problems(local_text, at_stamp_text, label_sha):
     label_sha is the commit the stamp's release label resolves to (None: no label, or not
     resolved -- the caller reports an unresolvable label itself).
 
-    THE ONE ALLOWED DIFFERENCE is a single inserted block of comment or blank lines that
-    carries the stamp: the note saying where the copy came from. Anything else -- a changed
-    line, code inside the block, a second insertion -- is a local edit. A local edit that
-    happens to match a NEWER release is invisible to the name+value comparison, which is
-    why provenance is checked against the sha the copy names rather than the release.
+    ANCHORED ON THE TITLE LINE, as duck_block_utils' consumer check (#38) reads it. Above
+    TITLE_LINE is the copy's own preamble -- the stamp and whatever notes the consumer keeps,
+    any length. From TITLE_LINE to the end the copy must be BYTE-IDENTICAL to the header at
+    the stamped sha: no line-ending or trailing-newline tolerance. A constant added above the
+    title is not provenance's to catch; it parses as EXTRA and fails there. A local edit
+    below it that happens to match a NEWER release is invisible to the name+value
+    comparison, which is why provenance is checked against the sha the copy names.
     """
     line = _stamp_line(local_text)
     if line is None:
-        return [f"stamp missing: no '{STAMP_PREFIX} <sha> (SPEC_VERSION x.y)' line near the top"]
+        return [f"stamp missing: no '{STAMP_PREFIX} <sha> (SPEC_VERSION x.y)' line above the title line"]
     stamp = parse_stamp(local_text)
     if stamp is None:
         return [f"stamp malformed: {line.strip()!r}"]
@@ -393,17 +401,28 @@ def provenance_problems(local_text, at_stamp_text, label_sha):
     if at_stamp_text is None:
         problems.append(f"the header at the stamped sha {stamp['sha']} could not be read")
         return problems
-    up_lines, lo_lines = at_stamp_text.splitlines(), local_text.splitlines()
-    hunks = [
-        op for op in difflib.SequenceMatcher(None, up_lines, lo_lines, autojunk=False).get_opcodes() if op[0] != "equal"
-    ]
-    inserted = lo_lines[hunks[0][3] : hunks[0][4]] if len(hunks) == 1 and hunks[0][0] == "insert" else None
-    if inserted is None or line not in inserted or any(l.strip() and not l.lstrip().startswith("//") for l in inserted):
-        where = ", ".join(f"{op} at copy lines {j1 + 1}-{j2}" for op, _, _, j1, j2 in hunks[:3]) or "no difference"
+    ours, theirs = _from_title(local_text), _from_title(at_stamp_text)
+    if ours is None:
+        problems.append(f"the copy has no title line {TITLE_LINE!r} to anchor the comparison")
+    elif theirs is None:
+        problems.append(f"the header at {stamp['sha']} has no title line {TITLE_LINE!r} -- has its shape changed?")
+    elif ours != theirs:
+        a, b = ours.splitlines(keepends=True), theirs.splitlines(keepends=True)
+        k = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        line_no = local_text[: len(local_text) - len(ours)].count("\n") + 1 + k
         problems.append(
-            f"the copy differs from the header at {stamp['sha']} by more than one inserted comment block ({where})"
+            f"the copy differs from the header at {stamp['sha']} below the title line "
+            f"(first difference at copy line {line_no})"
         )
     return problems
+
+
+def _from_title(text):
+    """text from the line that IS the title line to the end, byte for byte; None if absent."""
+    if text.startswith(TITLE_LINE):
+        return text
+    i = text.find("\n" + TITLE_LINE)
+    return text[i + 1 :] if i >= 0 else None
 
 
 def pick_release_tag(tags):
@@ -909,7 +928,10 @@ def main():
     local_path = args.local or find_local(root)
     if not local_path or not os.path.exists(local_path):
         sys.exit("error: no duck_block_vocabulary.hpp found at " + (args.local or " or ".join(LOCAL_CANDIDATES)))
-    local_text = open(local_path, encoding="utf-8").read()
+    # newline="" keeps line endings as they are on disk. The default translates CRLF to LF,
+    # which made a CRLF copy pass the byte-exact provenance comparison end to end while the
+    # self-test (fed strings, not files) correctly failed it.
+    local_text = open(local_path, encoding="utf-8", newline="").read()
     local = parse_constants(local_text)
     stamp = parse_stamp(local_text)
     kind = "upstream" if args.ref else "release"

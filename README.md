@@ -309,7 +309,7 @@ Because the C++ constants catch a renamed type but *not* a changed value — whi
 clean and silently stops matching — the copy comes with a check:
 
 ```sh
-make check-vocabulary   # compares against upstream by name and value
+make check-vocabulary   # compares against the latest duck_block_utils release by name and value
 ```
 
 It skips cleanly when upstream is unreachable (`--strict` makes that a failure). See
@@ -331,7 +331,7 @@ make check          # every guard below, all of them, then fails if any failed
 
 | Guard | Checks |
 |---|---|
-| `check-vocabulary` | the vendored `duck_block` header against upstream, by name and value |
+| `check-vocabulary` | the vendored `duck_block` header against the latest duck_block_utils release, by name and value, plus provenance |
 | `check-conformance` | every fixture through every reader, against upstream's pure-SQL macros |
 | `check-converter` | every block type through the export and render paths |
 | `check-divergence` | panduck's copy of the Pandoc converter against upstream's |

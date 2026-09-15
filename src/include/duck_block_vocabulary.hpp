@@ -1,6 +1,26 @@
 #pragma once
 
-// Vendored at upstream commit: 6c1c2e5 (SPEC_VERSION 1.2)  [duck_block_utils v3.1.0]
+// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils v3.3.0]
+//
+// 1.3 -> 1.4 (#54) CHANGES EXACTLY TWO CODE LINES, verified by diff over the whole file:
+// SPEC_VERSION "1.3" -> "1.4", and a new PREDICATE_REVISION = "1.3". The other 30 changed
+// lines are comments -- among them IsBody's "NECESSARY, NOT SUFFICIENT". The body below is
+// byte-identical to teaguesterling/duckdb_duck_block_utils at v3.3.0 (95a84e6); origin/main's
+// header matched it when this was vendored. check-vocabulary counted PREDICATE_REVISION as one
+// additive constant before the re-sync (95 local, 96 upstream), measured rather than assumed.
+//
+// BODY IS A SUBTREE PROPERTY (1.4), and panduck applies it NATIVELY. A value or metadata row
+// roots a subtree; it and every following row at a greater level is not body. duck_block_utils
+// provides that walk as duck_blocks_body(blocks), but panduck's doc_section and
+// doc_search_sections carry their own copy in SQL, deliberately: this header gives panduck
+// constants, not duck_block_utils' functions, and a call would make both macros fail for
+// anyone who installed panduck alone. The two encodings of one rule are compared by
+// test/sql/doc_body_parity.test wherever both are installed (`make check-body-parity`).
+//
+// ---- history, kept because it is still true of how this file got here ----
+// 1.2 -> 1.3 (#54) changed exactly two things: SPEC_VERSION 1.2 -> 1.3 and a new per-row
+// IsBody(kind, element_type). That predicate calls a metadata value tree's inline leaves body,
+// measured on constructs.docx, which is what led to 1.4 and to the native walk above.
 //
 // STEP 1 OF THIS FILE'S OWN RE-VENDORING GUIDANCE -- "record the provenance where a reader
 // will find it" -- which panduck's copy did not carry until now. webbed's does. The sha is
@@ -48,7 +68,6 @@
 // the drift job then reported "versions moved but output is byte-identical" and named
 // duck_block_spec as the mover, which is the whole reason that column exists. Refreshed to
 // 1.2 in the same change -- a LABEL-ONLY regeneration, verified: no parquet moved.
-
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
@@ -223,7 +242,9 @@ struct DuckBlockVocabulary {
 	static constexpr const char *KIND_INLINE = "inline";
 	// Non-prose data attached to a document -- currently its metadata. Consumers that
 	// walk document content filter on KIND_BLOCK and ignore these automatically, which
-	// is what makes the kind additive rather than breaking.
+	// is what makes the kind additive rather than breaking. The converse is NOT true:
+	// filtering on kind does not give you the body, because the verbatim `metadata`
+	// blob is a block. IsBody() below is the body predicate (1.3).
 	static constexpr const char *KIND_VALUE = "value";
 
 	// ========================================================================
@@ -459,12 +480,45 @@ struct DuckBlockVocabulary {
 	//               major-equality constant from 6 to 1 once and is done. The next
 	//               breaking change is 2.0; the next additive one is 1.3.
 	//
+	//   1.2 -> 1.3  `IsBody(kind, element_type)`: the document's BODY is kind IN
+	//               (block, inline) AND element_type <> metadata. Additive: a new
+	//               predicate stating a rule the prose implied but never wrote down,
+	//               so every consumer wrote its own. It changes duck_blocks_to_text's
+	//               OUTPUT for a document carrying a frontmatter or tailmatter blob:
+	//               the blob no longer renders as prose. That is a fix to the
+	//               reference tool, not a shape change; a consumer that copied
+	//               to_text's behaviour was reproducing a leak (duckeye and markdown
+	//               sessions, 2026-09-11).
+	//
+	//   1.3 -> 1.4  BODY IS A SUBTREE PROPERTY. 1.3's per-row IsBody() said a value
+	//               container is not body and then said its inline child text IS:
+	//               Pandoc-derived readers (docx, odt, org, epub, rtf, tex) emit
+	//               metadata as kind='value' rows whose text lives in kind='inline'
+	//               children, so a row filter leaked "Test Author" into body while
+	//               duck_blocks_to_text, which walks the tree, stayed clean (panduck
+	//               #54 fixture, 2026-09-14). The definition is now: a row is body iff
+	//               kind IN (block, inline), element_type <> metadata, AND no ancestor
+	//               by level is a value or metadata row. IsBody() is kept, unchanged,
+	//               as the NECESSARY per-row test; duck_blocks_body(blocks) applies the
+	//               subtree rule to a list. The value-tree level contract is stated
+	//               (descendants strictly deeper than their root) and validated (L6).
+	//               PREDICATE_REVISION added (see below). Additive.
+	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "1.2";
+	static constexpr const char *SPEC_VERSION = "1.4";
 	// The last number of the internal 6.x line that 1.2 replaces. A consumer check
 	// that reads MAJOR from SPEC_VERSION treats this line's major as equivalent to
 	// the current one for the one release it takes to re-vendor. Removed at 2.0.
 	static constexpr const char *SPEC_VERSION_SUPERSEDES = "6.6";
+	// The SPEC_VERSION at which any constexpr PREDICATE in this header (ImplicitParentOf,
+	// RequiresAncestor, IsBody) last changed its answers. Consumer drift checks compare
+	// constants by name and value and cannot see a predicate's body (markdown measured
+	// 95 constants before and after IsBody landed), so a predicate edit would read as
+	// "in sync" everywhere. This constant changes value when a predicate does, which is
+	// the one kind of change those checks are built to see. Rules: a predicate body
+	// change is at least a MINOR bump with a history entry naming the predicate and its
+	// old and new rule; a change that flips an existing answer is MAJOR.
+	static constexpr const char *PREDICATE_REVISION = "1.3";
 
 	// ========================================================================
 	// Block type names
@@ -552,6 +606,28 @@ struct DuckBlockVocabulary {
 		       : SameName(element_type, TYPE_CAPTION)
 		           ? (SameName(ancestor_type, TYPE_FIGURE) || SameName(ancestor_type, TYPE_TABLE))
 		           : false;
+	}
+
+	// Is this element part of the document's BODY -- what a text renderer, an indexer
+	// or an embedder should see? NOT expressible as a kind filter: the verbatim
+	// `metadata` blob is kind='block' because it is content-shaped (it has a source
+	// position and a level), but it is no more body than the kind='value' tree is.
+	// Found when duckeye's text renderer printed a markdown file's frontmatter above
+	// its first heading while the same metadata from a .docx (kind='value') stayed
+	// out, and duck_blocks_to_text did the same (markdown and duckeye sessions,
+	// 2026-09-11): two conformant producers, consumers diverging, the #29 shape again.
+	// `raw` IS body -- document content in its source format -- and merely has no
+	// text rendering, which is a renderer's decision, not this predicate's.
+	//
+	// NECESSARY, NOT SUFFICIENT (1.4). This is a per-row test and cannot see an ancestor:
+	// the inline leaves of a kind='value' metadata tree answer TRUE here. Body is a
+	// SUBTREE property: a row is body iff this predicate holds AND no ancestor by level
+	// is a value or metadata row. Filter a LIST with duck_blocks_body(blocks), which
+	// applies both; use this alone only where the row is already known to be under a
+	// block. The value-tree contract that makes the walk correct: a value tree's
+	// descendants sit strictly deeper than their root (validated as L6).
+	static constexpr bool IsBody(const char *kind, const char *element_type) {
+		return (SameName(kind, KIND_BLOCK) || SameName(kind, KIND_INLINE)) && !SameName(element_type, TYPE_METADATA);
 	}
 	// A structurally-valid element whose type is not in the standard vocabulary.
 	// Distinct from TYPE_RAW, which is literal content in a *named* format; this is a

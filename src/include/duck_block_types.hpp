@@ -35,10 +35,11 @@
 // later added ~88 lines of guidance without moving one name or value. A text diff screams
 // at that, gets muted, and then catches nothing on the day it matters.
 //
-// Copied from duck_block_utils v3.1.0 @ 6c1c2e5, SPEC_VERSION 1.2 (the renumbered 6.6 -- the
-// duck_blocks v1.1 spec -- the two are DELIBERATELY separate axes and
-// duck_block_spec_version() still reports the 6.x number). Being behind by commits
-// is not the same as being wrong -- what makes the copy correct is that check-vocabulary
+// Copied from duck_block_utils v3.3.0 @ 95a84e6, SPEC_VERSION 1.4 -- additive on 1.3 and 1.2, which
+// renumbered the retired 6.x line's 6.6. duck_block_spec_version() reports the same public
+// number: measured 1.2 on the served v3.1.0 build and 1.4 on a v3.3.0 build (#54). The older
+// note here, that it "still reports the 6.x number", stopped being true at v3.1.0.
+// Being behind by commits is not the same as being wrong -- what makes the copy correct is that check-vocabulary
 // reports it in sync, not that the sha is the newest.
 //
 // WHAT THIS COPY DOES NOT COVER. It is a COMPILE-TIME dependency on constant names, and
@@ -107,14 +108,7 @@ public:
 		return DuckBlockListType();
 	}
 
-	// Field indices for doc_element struct
-	static constexpr idx_t KIND_IDX = 0;
-	static constexpr idx_t ELEMENT_TYPE_IDX = 1;
-	static constexpr idx_t CONTENT_IDX = 2;
-	static constexpr idx_t LEVEL_IDX = 3;
-	static constexpr idx_t ENCODING_IDX = 4;
-	static constexpr idx_t ATTRIBUTES_IDX = 5;
-	static constexpr idx_t ELEMENT_ORDER_IDX = 6;
+	// Field indices for doc_element struct: see the note below -- the *_IDX offsets are inherited.
 
 	// Kind values
 
@@ -122,7 +116,13 @@ public:
 
 	// Inline element type names
 
-	// ENCODING_* AND ATTR_HEADING_LEVEL ARE INHERITED, not redeclared here.
+	// ENCODING_*, ATTR_HEADING_LEVEL AND THE *_IDX FIELD OFFSETS ARE INHERITED, not redeclared here.
+	//
+	// The *_IDX offsets (KIND_IDX .. ELEMENT_ORDER_IDX) were the second instance of the
+	// shape described below, found after the first was fixed: seven `static constexpr
+	// idx_t` copies hiding DuckBlockVocabulary's `uint64_t` ones (idx_t IS uint64_t), all
+	// equal to the vendored values 0..6 when removed. Reported by duck_block_utils'
+	// consumer check once it parsed integer constants (their #37); panduck #72.
 	//
 	// They WERE declared locally, shadowing DuckBlockVocabulary's. That built clean --
 	// C++ name hiding is legal, not an error -- so every `DuckBlockTypes::ENCODING_JSON`

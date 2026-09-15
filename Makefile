@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-lambda-syntax test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -29,7 +29,10 @@ check:
 	if [ $$rc -ne 0 ]; then echo "FAILED: one or more checks above"; else echo "All checks passed."; fi; \
 	exit $$rc
 
-# Check the vendored duck_block vocabulary against upstream, by NAME AND VALUE. A
+# Check the vendored duck_block vocabulary against duck_block_utils' latest RELEASE (not
+# main), by NAME AND VALUE, and check the copy's provenance stamp. Since spec 1.4 a copy
+# BEHIND a release on minor passes: re-vendor only on a spec major change, or when panduck
+# needs something a later minor added. A
 # vendored copy and a submodule pin are both copies, and neither notices when upstream
 # moves; more importantly, the C++ constants catch a rename but NOT a changed value,
 # which compiles clean and silently stops matching. Skips cleanly (exit 0) when upstream
@@ -186,5 +189,13 @@ regen-parsed-fixtures:
 # error matches 'HTTP', which is how other markdown-dependent files survive CI. panduck's gate
 # raises a clearer message that matches nothing, so it fails hard instead. Gating deliberately
 # is the honest version of what those files get by accident.
+# panduck's native body walk (doc_section, doc_search_sections) against duck_blocks_body, spec
+# 1.4 (#54): two encodings of one rule, compared. Needs a duck_block_utils >= 1.4 build; the
+# test SKIPS without one. Defaults to the same sibling build check-converter uses.
+PANDUCK_BODY_PARITY_EXT ?= $(PANDUCK_CONVERTER_EXT)
+.PHONY: check-body-parity
+check-body-parity:
+	PANDUCK_BODY_PARITY_EXT="$(PANDUCK_BODY_PARITY_EXT)" ./build/release/test/unittest "test/sql/doc_body_parity.test"
+
 check-expand:
 	PANDUCK_TEST_EXPAND=1 ./build/release/test/unittest test/sql/expand_embedded_markdown.test

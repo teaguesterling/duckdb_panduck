@@ -1,0 +1,128 @@
+# name: test/sql/doc_body.test
+# description: metadata is never body -- doc_section and doc_search_sections must not return it (#54)
+# group: [sql]
+
+#
+# DOCUMENT METADATA WAS BEING RETURNED AS SECTION CONTENT. Readers append a document's metadata
+# after its body, as a value tree: `author` is a kind='value' row whose TEXT sits in a
+# kind='inline' child. doc_section and doc_search_sections segment the stream by element_order
+# alone, so the metadata landed inside the LAST section -- and a search for an author's name,
+# which appears nowhere in the body, returned that section. Measured on constructs.docx before
+# the fix: doc_search_sections('Test Author') returned 38 rows.
+#
+# THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54): a row is body only
+# if its kind is block or inline, its element_type is not metadata, AND no ancestor by level is
+# kind='value' or element_type='metadata'. Spec 1.3's IsBody(kind, element_type) is per row and
+# calls the inline leaves of a value tree body, so it cannot be the whole test.
+#
+# Every needle below was checked to occur ONLY inside metadata in its fixture, so a hit can only
+# be metadata leaking. The guards check that the fix removes metadata and nothing else: each
+# section keeps exactly its measured count of body rows.
+
+require panduck
+
+# ---------------------------------------------------------------------------------------
+# SEARCH: a string that exists only in metadata finds nothing.
+# ---------------------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/constructs.docx', 'Test Author');
+----
+0
+
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/constructs.odt', '2026-09-03T05:45:59Z');
+----
+0
+
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/handwritten.org', 'Handwritten');
+----
+0
+
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/pandoc.epub', 'urn:uuid:2de3e5d7-f4aa-40fe-acf7-76ca33766b4a');
+----
+0
+
+# A document with no headings is one section -- which before the fix meant a metadata search
+# returned the ENTIRE notebook.
+query I
+SELECT count(*) FROM doc_search_sections('test/fixtures/notebook.ipynb', 'A. Writer');
+----
+0
+
+# ---------------------------------------------------------------------------------------
+# SECTIONS: the last section carries its body and no metadata.
+# ---------------------------------------------------------------------------------------
+
+query II
+SELECT count(*) FILTER (WHERE kind = 'value'), count(*) FILTER (WHERE content = 'Test Author')
+FROM doc_section('test/fixtures/constructs.docx', 'Heading Three');
+----
+0	0
+
+query II
+SELECT count(*) FILTER (WHERE kind = 'value'), count(*) FILTER (WHERE content = 'Handwritten')
+FROM doc_section('test/fixtures/handwritten.org', 'Heading Two');
+----
+0	0
+
+query I
+SELECT count(*) FILTER (WHERE kind = 'value') FROM doc_section('test/fixtures/libreoffice_stylesheet.rtf', 'Heading Two');
+----
+0
+
+# GUARDS: the fix removes metadata and NOTHING ELSE. Each count is the section's body rows,
+# measured before the fix as (section rows) minus (rows inside a metadata subtree).
+query I
+SELECT count(*) FROM doc_section('test/fixtures/constructs.docx', 'Heading Three');
+----
+32
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/constructs.odt', 'Heading Three');
+----
+32
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/handwritten.org', 'Heading Two');
+----
+6
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/pandoc.epub', 'Heading Two');
+----
+7
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/libreoffice_stylesheet.rtf', 'Heading Two');
+----
+6
+
+# ...and real body text in the last section is still found.
+query I
+SELECT count(*) > 0 FROM doc_search_sections('test/fixtures/constructs.docx', 'E=mc');
+----
+true
+
+# ---------------------------------------------------------------------------------------
+# THE WRITER HALF: metadata is serialised into the format's metadata home, never into body
+# position (#54). For the pandoc writer that home is `meta`. Asserted in BOTH directions on one
+# document, plus a real body string in `blocks`, so this can fail whichever way the writer goes
+# wrong -- a writer that dumped everything into `blocks` would pass a presence check alone.
+# Struct-field access rather than json_extract: the json extension is not autoloaded in this
+# build, measured under a clean HOME, which is what a CI runner has.
+# ---------------------------------------------------------------------------------------
+
+query III
+WITH a AS (
+  SELECT panduck_blocks_to_pandoc_ast(list(struct_pack(
+      kind := kind, element_type := element_type, content := content, level := level,
+      encoding := encoding, attributes := attributes, element_order := element_order)
+    ORDER BY element_order)) AS ast
+  FROM read_panduck_doc('test/fixtures/constructs.docx'))
+SELECT ast['meta'] LIKE '%Test Author%', ast['blocks'] LIKE '%Test Author%', ast['blocks'] LIKE '%E=mc%'
+FROM a;
+----
+true	false	true

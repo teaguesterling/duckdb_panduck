@@ -1,4 +1,6 @@
 #include "rst_reader.hpp"
+
+#include <algorithm>
 #include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
 
@@ -178,7 +180,7 @@ class Builder {
 public:
 	std::vector<RstBlock> Build(const std::string &src) {
 		lines_ = ScanRst(src);
-		Run(0, lines_.size(), 1);
+		Run(0, lines_.size(), 1, 0);
 		return std::move(blocks_);
 	}
 
@@ -258,7 +260,22 @@ private:
 		return body;
 	}
 
-	void Run(size_t from, size_t to, int depth) {
+	//! The shallowest indent among the non-blank lines of [from, to): a nested run's own left
+	//! margin. `fallback` when the run is all blank.
+	int MinIndent(size_t from, size_t to, int fallback) const {
+		int m = -1;
+		for (size_t j = from; j < to && j < lines_.size(); j++) {
+			if (lines_[j].kind != LineKind::BLANK && (m < 0 || lines_[j].indent < m)) {
+				m = lines_[j].indent;
+			}
+		}
+		return m < 0 ? fallback : m;
+	}
+
+	//! Parse [from, to) at `depth`. `base` is the run's OWN LEFT MARGIN -- 0 for the document, a
+	//! directive body's indent, a quote's, a list item's text column. RST expresses containment
+	//! by indentation alone, so the margin is what makes a line "indented" at all (#64).
+	void Run(size_t from, size_t to, int depth, int base) {
 		std::vector<std::string> para;
 		bool literal_pending = false;
 		auto flush = [&]() {
@@ -284,13 +301,69 @@ private:
 
 		for (size_t i = from; i < to; i++) {
 			auto &line = lines_[i];
+			// A LITERAL BLOCK claims the indented run after a `::` paragraph, whatever its first line
+			// looks like -- code can open with `- ` or `+--+`. Checked before the quote rule, which
+			// would otherwise take it (#64).
+			if (literal_pending && line.kind != LineKind::BLANK) {
+				literal_pending = false;
+				if (line.indent > base) {
+					size_t end = std::min(IndentedRun(i, base), to);
+					RstBlock b;
+					b.element_type = DuckBlockTypes::TYPE_CODE;
+					b.content = RawBody(i, end, line.indent);
+					b.level = depth;
+					blocks_.push_back(std::move(b));
+					i = end - 1;
+					continue;
+				}
+			}
+			// A BLOCK QUOTE is an indented run that nothing above it claims (#64). Every claim is made
+			// by the line that OPENS a run -- a definition term, a field, a list item, a directive, a
+			// comment, a `::` -- and each consumes its run before control returns here. So an
+			// unclaimed line indented past this run's margin, at the START of a block, is a quote.
+			// Before #64 it read as a level-1 paragraph, and duck_blocks_to_md lost the `>`.
+			if (para.empty() && line.kind != LineKind::BLANK && line.indent > base) {
+				size_t end = std::min(IndentedRun(i, base), to);
+				RstBlock q;
+				q.element_type = DuckBlockTypes::TYPE_BLOCKQUOTE;
+				q.level = depth;
+				blocks_.push_back(std::move(q));
+				Run(i, end, depth + 1, MinIndent(i, end, line.indent));
+				i = end - 1;
+				continue;
+			}
 			switch (line.kind) {
 			case LineKind::BLANK:
 				flush();
 				continue;
 			case LineKind::COMMENT:
+				// A COMMENT'S BODY is the indented run that starts on the VERY NEXT line. A blank line
+				// straight after the comment means it has none, and the run after the blank is a quote
+				// -- the `..` + blank idiom. Measured against pandoc; before #64 the body leaked into
+				// the document as prose.
+				if (i + 1 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].indent > line.indent) {
+					size_t end = std::min(IndentedRun(i + 1, line.indent), to);
+					// A FOOTNOTE OR CITATION BODY IS DOCUMENT TEXT, not commentary. The scanner files
+					// `.. [1]` and `.. [CIT]` under COMMENT with every other non-directive `..`, so the
+					// label is what tells them apart. pandoc carries the body as a Note; panduck keeps it
+					// as prose at this depth, which is what it emitted before #64. Dropping it was the
+					// first cut of #64, and only the word-loss guard noticed.
+					if (!line.text.empty() && line.text[0] == '[') {
+						flush();
+						Run(i + 1, end, depth, MinIndent(i + 1, end, line.indent + 1));
+					}
+					i = end - 1;
+				}
 				continue; // produces nothing, and must not fall through as prose
 			case LineKind::ADORNMENT: {
+				// A LONE `::` IS A LITERAL-BLOCK MARKER, not a transition. `::` is a legal two-character
+				// adornment, so the scanner cannot tell; nothing preceding it can. flush() already turns
+				// a paragraph ENDING in `::` into a pending literal -- this is the paragraph that is ONLY
+				// `::`, which never reached flush() and became an hr (#64).
+				if (para.empty() && line.text == "::") {
+					literal_pending = true;
+					continue;
+				}
 				// A TRANSITION when nothing precedes it, a heading UNDERLINE when text does.
 				// The scanner cannot tell them apart; this is the only place that can.
 				if (!para.empty()) {
@@ -340,7 +413,7 @@ private:
 			}
 			case LineKind::DIRECTIVE: {
 				flush();
-				size_t end = IndentedRun(i + 1, line.indent);
+				size_t end = std::min(IndentedRun(i + 1, line.indent), to);
 				Directive(line, i + 1, end, depth);
 				i = end - 1;
 				continue;
@@ -358,9 +431,18 @@ private:
 				// document metadata at all, and the opposite reading is the obvious one --
 				// which is why it is asserted rather than assumed.
 				while (j < to && lines_[j].kind == LineKind::FIELD) {
+					const int field_indent = lines_[j].indent;
+					std::string value = lines_[j].text;
 					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].name, depth + 1, DuckBlockTypes::ROLE_TERM);
-					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].text, depth + 1, DuckBlockTypes::ROLE_DEFINITION);
 					j++;
+					// A FIELD VALUE WRAPS onto indented lines that follow it with no blank between -- the
+					// same value, as pandoc reads it. Before #64 each wrap leaked out as a level-1
+					// paragraph and split the field list in two.
+					while (j < to && lines_[j].kind == LineKind::TEXT && lines_[j].indent > field_indent) {
+						value += (value.empty() ? "" : " ") + lines_[j].text;
+						j++;
+					}
+					Emit(DuckBlockTypes::TYPE_LIST_ITEM, value, depth + 1, DuckBlockTypes::ROLE_DEFINITION);
 				}
 				i = j - 1;
 				continue;
@@ -379,24 +461,10 @@ private:
 				continue;
 			}
 			case LineKind::TEXT: {
-				if (literal_pending) {
-					size_t end = IndentedRun(i, line.indent - 1);
-					if (end > i) {
-						RstBlock b;
-						b.element_type = DuckBlockTypes::TYPE_CODE;
-						b.content = RawBody(i, end, line.indent);
-						b.level = depth;
-						blocks_.push_back(std::move(b));
-						literal_pending = false;
-						i = end - 1;
-						continue;
-					}
-					literal_pending = false;
-				}
 				// A DEFINITION: a term line whose next line is indented and not a list.
 				if (para.empty() && i + 1 < to && lines_[i + 1].indent > line.indent &&
 				    lines_[i + 1].kind == LineKind::TEXT) {
-					size_t end = IndentedRun(i + 1, line.indent);
+					size_t end = std::min(IndentedRun(i + 1, line.indent), to);
 					RstBlock list;
 					list.element_type = DuckBlockTypes::TYPE_LIST;
 					list.list_type = DuckBlockTypes::LIST_TYPE_DEFINITION;
@@ -450,7 +518,7 @@ private:
 		// LaTeX reader's rule applies: an unknown environment usually wraps paragraphs, so
 		// dropping it loses them.
 		if (to > from) {
-			Run(from, to, depth + 1);
+			Run(from, to, depth + 1, MinIndent(from, to, line.indent + 1));
 		}
 	}
 
@@ -486,12 +554,26 @@ private:
 				// list carrying both, with the second list's numbering lost entirely.
 				break;
 			}
-			Emit(DuckBlockTypes::TYPE_LIST_ITEM, line.text, depth + 1);
+			const int text_col = line.text_col > 0 ? line.text_col : indent + 2;
+			std::string text = line.text;
 			j++;
-			// A NESTED list is the indented run after an item.
-			size_t end = IndentedRun(j, indent);
-			if (end > j && (lines_[j].kind == LineKind::BULLET || lines_[j].kind == LineKind::ENUM)) {
-				j = List(j, end, depth + 2);
+			// THE ITEM'S TEXT WRAPS onto following lines indented to its text column with no blank
+			// between -- one run, as pandoc reads it. Absorbed BEFORE the body, or a wrapped item's
+			// second line would become a child paragraph. Before #64 the wrap split the list.
+			while (j < to && lines_[j].kind == LineKind::TEXT && lines_[j].indent >= text_col) {
+				text += (text.empty() ? "" : " ") + lines_[j].text;
+				j++;
+			}
+			Emit(DuckBlockTypes::TYPE_LIST_ITEM, text, depth + 1);
+			// THE ITEM'S BODY is everything indented to its TEXT COLUMN or deeper: more paragraphs, a
+			// nested list, a quote. Measured against pandoc, the column is the marker's width, and a
+			// line indented past the marker but SHORT of it is not the item's: the list ends there and
+			// the run is quoted beside it (#64). Before #64 only a nested list was recognised, and only
+			// with no blank line before it.
+			size_t end = std::min(IndentedRun(j, text_col - 1), to);
+			if (end > j) {
+				Run(j, end, depth + 2, text_col);
+				j = end;
 			}
 		}
 		return j;

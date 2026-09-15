@@ -1,0 +1,140 @@
+# name: test/sql/doc_body_parity.test
+# description: panduck's native body walk equals duck_blocks_body (spec 1.4) -- two encodings of one rule
+# group: [sql]
+
+#
+# TWO ENCODINGS OF ONE RULE, COMPARED (#54). "Metadata is never body" is a SUBTREE rule: a value or
+# metadata row roots a subtree, and it and every following row at a greater level is not body.
+# duck_block_utils 1.4 implements it as duck_blocks_body(blocks). panduck's doc_section and
+# doc_search_sections implement it natively in SQL, deliberately: the vendored header carries
+# constants, not duck_block_utils' functions, and calling duck_blocks_body would make both
+# macros fail for anyone who installed panduck alone. Two copies of a rule drift unless something
+# compares them. This file is that comparison.
+#
+# GATED, because duck_block_utils >= 1.4 is not served yet (measured: a clean install gives
+# 3.1.0, spec 1.2). `make check-body-parity` points PANDUCK_BODY_PARITY_EXT at a local build.
+# Without the variable the whole file SKIPS -- recorded here so a skipped run is not read as a
+# passing one (#34).
+#
+# doc_search_sections(src, '') is the native walk's whole output: the empty pattern matches every
+# segment, so it returns every body row of the document.
+
+require panduck
+
+require-env PANDUCK_BODY_PARITY_EXT
+
+statement ok
+LOAD '${PANDUCK_BODY_PARITY_EXT}';
+
+# THE CONTROL THAT THE COMPARATOR IS REAL: the loaded build exposes duck_blocks_body. A variable
+# pointing at an older duck_block_utils would otherwise fail every query below for a reason that
+# has nothing to do with parity.
+query I
+SELECT count(*) FROM duckdb_functions() WHERE function_name = 'duck_blocks_body';
+----
+1
+
+# THE CONTROL THAT PARITY CAN FAIL: 1.3's per-row IsBody is a DIFFERENT rule, and on
+# constructs.docx it keeps the three metadata strings duck_blocks_body drops (author, date,
+# title). If this ever reads 0, the comparison below has stopped being able to see a difference.
+query I
+SELECT count(*) FROM (
+  SELECT element_order, kind, element_type, content, level FROM read_panduck_doc('test/fixtures/constructs.docx')
+  WHERE duck_block_is_body(kind, element_type)
+  EXCEPT ALL
+  SELECT element_order, kind, element_type, content, level FROM (
+    SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order)
+                                    FROM read_panduck_doc('test/fixtures/constructs.docx') b)), recursive := true)));
+----
+3
+
+# ...and parity is not vacuous: both sides carry the document's full body.
+query II
+SELECT (SELECT count(*) FROM doc_search_sections('test/fixtures/constructs.docx', '')),
+       (SELECT len(duck_blocks_body((SELECT list(b ORDER BY b.element_order)
+                                     FROM read_panduck_doc('test/fixtures/constructs.docx') b))));
+----
+46	46
+
+# PARITY, per fixture, in BOTH directions: rows only the native walk keeps, rows only
+# duck_blocks_body keeps. Every format that emits metadata, plus two with none as guards.
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/constructs.docx', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/constructs.docx') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/constructs.odt', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/constructs.odt') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/handwritten.org', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/handwritten.org') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/pandoc.epub', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/pandoc.epub') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/libreoffice_stylesheet.rtf', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/libreoffice_stylesheet.rtf') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/notebook.ipynb', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/notebook.ipynb') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/pandoc.tex', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/pandoc.tex') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/handwritten.tex', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/handwritten.tex') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0
+
+query II
+WITH pd AS (SELECT element_order, kind, element_type, content, level FROM doc_search_sections('test/fixtures/constructs.rst', '')),
+dbu AS (SELECT element_order, kind, element_type, content, level FROM (
+  SELECT unnest(duck_blocks_body((SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc('test/fixtures/constructs.rst') b)), recursive := true)))
+SELECT (SELECT count(*) FROM (SELECT * FROM pd EXCEPT ALL SELECT * FROM dbu)),
+       (SELECT count(*) FROM (SELECT * FROM dbu EXCEPT ALL SELECT * FROM pd));
+----
+0	0

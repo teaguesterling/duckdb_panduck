@@ -555,14 +555,172 @@ def test_count_blindness():
         if spec_superseded(lo, up, sup) != want:
             failures.append(f"spec_superseded({lo!r}, {up!r}, {sup!r}) -- {why}")
 
+    failures += release_contract_failures()
+
     for f in failures:
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
     print("self-test OK: rename, value change and cosmetic churn classified correctly " "with the count held constant;")
     print("              field offsets excluded; an undated read never reports OK;")
-    print("              a renumbering is accepted only on the line it retires")
+    print("              a renumbering is accepted only on the line it retires;")
+    print("              BEHIND passes, EXTRA/CHANGED/AHEAD/MAJOR and provenance problems fail")
     return 0
+
+
+def release_contract_failures():
+    """The post-1.4 contract, settled with duck_block_utils (their consumer check #38).
+
+    Compare against the latest duck_block_utils RELEASE, not main: spec releases are
+    batched, so main can carry constants no release has, and comparing against it reddens an
+    up-to-date copy mid-batch -- the churn this contract exists to stop. A copy on an older
+    minor of the same major is ALIGNED. So:
+
+      FAILED  MAJOR mismatch, a CHANGED value (strings AND integers, *_IDX included), an
+              EXTRA constant the release lacks, a copy claiming a minor AHEAD of the release,
+              or a PROVENANCE problem.
+      BEHIND  constants missing only, at the same or an older minor. Passes.
+    """
+    failures = []
+    U = {"SPEC_VERSION": "1.4", "TYPE_A": "a", "KIND_IDX": "0", "PREDICATE_REVISION": "1.3"}
+
+    def with_(d, **kw):
+        out = dict(d)
+        for k, v in kw.items():
+            if v is None:
+                out.pop(k, None)
+            else:
+                out[k] = v
+        return out
+
+    for local, upstream, status, reasons, why in [
+        (U, U, "OK", set(), "identical to the release"),
+        (with_(U, PREDICATE_REVISION=None), U, "BEHIND", {"MISSING"}, "missing a constant at the same minor"),
+        (
+            with_(U, SPEC_VERSION="1.3", PREDICATE_REVISION=None),
+            U,
+            "BEHIND",
+            {"MISSING"},
+            "an older minor missing what the newer one added is aligned",
+        ),
+        (with_(U, SPEC_VERSION="1.3"), U, "BEHIND", set(), "an older minor with nothing missing still says BEHIND"),
+        (with_(U, EXTRA_X="x"), U, "FAILED", {"EXTRA"}, "a constant the release does not have"),
+        (
+            with_(U, EXTRA_X="x", PREDICATE_REVISION=None),
+            U,
+            "FAILED",
+            {"EXTRA", "MISSING"},
+            "EXTRA is not excused by also being behind",
+        ),
+        (with_(U, TYPE_A="b"), U, "FAILED", {"CHANGED"}, "a changed string value"),
+        (with_(U, KIND_IDX="1"), U, "FAILED", {"CHANGED"}, "a changed INTEGER value -- the *_IDX offsets count"),
+        (with_(U, SPEC_VERSION="1.5"), U, "FAILED", {"AHEAD"}, "a copy claiming a minor the release does not have"),
+        (with_(U, SPEC_VERSION="2.0"), U, "FAILED", {"MAJOR"}, "copy on a newer major than the release"),
+        (U, with_(U, SPEC_VERSION="2.0"), "FAILED", {"MAJOR"}, "release on a newer major: the one forced re-vendor"),
+        (
+            with_(U, SPEC_VERSION="6.5", PREDICATE_REVISION=None),
+            with_(U, SPEC_VERSION="1.2", SPEC_VERSION_SUPERSEDES="6.6", PREDICATE_REVISION=None),
+            "BEHIND",
+            {"MISSING", "RENUMBER"},
+            "the 6.x renumbering hatch still holds",
+        ),
+    ]:
+        got = classify(local, upstream)
+        if got["status"] != status or set(got["reasons"]) != reasons:
+            failures.append(
+                f"classify: {why} -- want {status} {sorted(reasons)}, got {got['status']} {sorted(got['reasons'])}"
+            )
+
+    if verdict(False, True, verified=True)[:2] != (0, "BEHIND"):
+        failures.append("missing constants on a verified read did not pass as BEHIND")
+
+    # PROVENANCE. The copy must say where it came from, say it consistently, and BE that:
+    # the header at the stamped sha, plus one inserted block of comments and nothing else.
+    up_text = (
+        "#pragma once\n"
+        "\n"
+        "// upstream banner\n"
+        'static constexpr const char *SPEC_VERSION = "1.4";\n'
+        'static constexpr const char *TYPE_A = "a";\n'
+    )
+    full_sha = "95a84e6dbfb25d1925df2ad402f978c438a3f724"
+    stamp = "// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils v3.3.0]\n"
+    lines = up_text.splitlines(keepends=True)
+
+    def vendored(stamp_line=stamp, block="// why it was re-vendored\n//\n", body=None):
+        rest = lines[2:] if body is None else body
+        return "".join(lines[:2]) + stamp_line + block + "".join(rest)
+
+    if parse_stamp(vendored()) != {"sha": "95a84e6", "spec": "1.4", "tag": "v3.3.0"}:
+        failures.append(f"parse_stamp misread a well-formed stamp: {parse_stamp(vendored())}")
+    if parse_stamp(vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)\n")) != {
+        "sha": "95a84e6",
+        "spec": "1.4",
+        "tag": None,
+    }:
+        failures.append("parse_stamp refused a stamp without the optional release label")
+
+    for local_text, at_sha, tag_sha, want_problem, why in [
+        (vendored(), up_text, full_sha, False, "a faithful copy with its provenance block"),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)\n"),
+            up_text,
+            None,
+            False,
+            "no release label, nothing to cross-check",
+        ),
+        (up_text, up_text, None, True, "stamp missing"),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: main (SPEC_VERSION 1.4)\n"),
+            up_text,
+            None,
+            True,
+            "stamp malformed (not a sha)",
+        ),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.3)  [duck_block_utils v3.3.0]\n"),
+            up_text,
+            full_sha,
+            True,
+            "stamp claims a different SPEC_VERSION than the file",
+        ),
+        (vendored(), None, full_sha, True, "the header at the stamped sha could not be read"),
+        (
+            vendored(body=[l.replace('"a"', '"b"') for l in lines[2:]]),
+            up_text,
+            full_sha,
+            True,
+            "a code line differs from the header at the stamped sha",
+        ),
+        (
+            vendored(block='// block\nstatic constexpr const char *EXTRA_X = "x";\n'),
+            up_text,
+            full_sha,
+            True,
+            "the inserted block carries code, not only comments",
+        ),
+        (
+            vendored(body=[lines[2], "// a second, separate insertion\n"] + lines[3:]),
+            up_text,
+            full_sha,
+            True,
+            "a second inserted hunk is a local edit, not the provenance block",
+        ),
+        (vendored(), up_text, "079123d0000000000000000000000000000000000", True, "the release label points elsewhere"),
+    ]:
+        got = provenance_problems(local_text, at_sha, tag_sha)
+        if bool(got) != want_problem:
+            failures.append(f"provenance_problems: {why} -- want {'a problem' if want_problem else 'none'}, got {got}")
+
+    # The release to compare against, from a local clone's tags: the highest plain vX.Y.Z,
+    # compared numerically (v3.10.0 > v3.9.0), never a pre-release.
+    tags = ["v3.3.0", "v3.10.0", "v3.9.0", "v4.0.0-rc1", "nightly", "v2.0.0"]
+    if pick_release_tag(tags) != "v3.10.0":
+        failures.append(f"pick_release_tag({tags}) -- want v3.10.0, got {pick_release_tag(tags)}")
+    if pick_release_tag(["nightly"]) is not None:
+        failures.append("pick_release_tag invented a release from no release tags")
+
+    return failures
 
 
 def main():

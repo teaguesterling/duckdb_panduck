@@ -21,7 +21,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
@@ -100,6 +100,12 @@ check-conformance:
 .PHONY: check-divergence
 check-wordloss:
 	python3 scripts/check_word_loss.py
+
+# No SQL string in src/ may use DuckDB's single-arrow lambda `x -> ...` (#65): 1.5.5 prints a
+# deprecation warning on stdout for it, and 2.0 rejects it by default. A STATIC scan, because
+# the expand macro's lambdas cannot be bound -- and so never checked -- without markdown.
+check-lambda-syntax:
+	python3 scripts/check_lambda_syntax.py
 
 check-divergence:
 	python3 scripts/check_converter_divergence.py

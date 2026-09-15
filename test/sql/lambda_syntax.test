@@ -1,0 +1,56 @@
+# name: test/sql/lambda_syntax.test
+# description: panduck's SQL macros bind under DuckDB 2.0's lambda rule (#65)
+# group: [sql]
+
+#
+# WHY THIS FILE EXISTS. DuckDB 1.5.5 accepts the single-arrow lambda `x -> ...` under the
+# DEFAULT lambda_syntax and prints a deprecation WARNING on stdout. From 2.0 the default
+# REJECTS it: the binder's condition changed from `setting == DISABLE_SINGLE_ARROW` to
+# `setting != ENABLE_SINGLE_ARROW` (bind_function_expression.cpp, v2.0-cyanoptera and main).
+# panduck's expand macros used four of them, so expand_embedded printed the warning into
+# every consumer's output today, and would fail to bind the day 2.0 ships.
+#
+# SET lambda_syntax='DISABLE_SINGLE_ARROW' applies 2.0's rule on 1.5.5, so this runs in CI
+# now instead of waiting for a 2.0 binary.
+#
+# WHAT IT CAN AND CANNOT REACH WITHOUT THE markdown EXTENSION, measured on main:
+#   panduck_renumber_blocks(...)          binds its lambda with nothing else    -> covered here
+#   panduck_expand_embedded_impl(...)     Catalog Error first, on
+#                                         parse_markdown_to_duck_blocks, so its three lambdas
+#                                         are never syntax-checked in this file
+# Those three are covered by `make check-lambda-syntax` (a static scan of every SQL string in
+# src/) and by the gated block at the end of expand_embedded_markdown.test. A test that could
+# silently not reach them is named as such rather than claimed as coverage.
+
+require panduck
+
+statement ok
+SET lambda_syntax='DISABLE_SINGLE_ARROW';
+
+# THE CONTROL. Without this, a SET that silently did nothing -- a renamed setting, a DuckDB
+# that ignores it -- would let every assertion below pass while testing the old rule.
+statement error
+SELECT list_transform([1], x -> x);
+----
+Deprecated lambda arrow
+
+# panduck_renumber_blocks binds under 2.0's rule. Empty input first: binding is the whole
+# question, and it is answered before any row exists.
+query I
+SELECT len(panduck_renumber_blocks([]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[], 0));
+----
+0
+
+# ...and still renumbers from `base`, contiguously, keeping each block's own fields. The
+# source blocks are 0 and 1, so 5 and 6 show the renumbering is real, not an identity.
+query III
+SELECT r.element_order, r.element_type, r.content
+FROM (SELECT unnest(panduck_renumber_blocks(list(b ORDER BY b.element_order), 5)) AS r
+      FROM read_org_blocks_string(E'* Heading\n\nA paragraph.\n') b)
+ORDER BY 1;
+----
+5	heading	Heading
+6	paragraph	A paragraph.
+
+statement ok
+RESET lambda_syntax;

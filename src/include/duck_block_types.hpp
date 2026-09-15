@@ -35,9 +35,9 @@
 // later added ~88 lines of guidance without moving one name or value. A text diff screams
 // at that, gets muted, and then catches nothing on the day it matters.
 //
-// Copied from duck_block_utils v3.2.0 @ 079123d, SPEC_VERSION 1.3 -- additive on 1.2, which
+// Copied from duck_block_utils v3.3.0 @ 95a84e6, SPEC_VERSION 1.4 -- additive on 1.3 and 1.2, which
 // renumbered the retired 6.x line's 6.6. duck_block_spec_version() reports the same public
-// number: measured 1.2 on the served v3.1.0 build and 1.3 on a v3.2.0 build (#54). The older
+// number: measured 1.2 on the served v3.1.0 build and 1.4 on a v3.3.0 build (#54). The older
 // note here, that it "still reports the 6.x number", stopped being true at v3.1.0.
 // Being behind by commits is not the same as being wrong -- what makes the copy correct is that check-vocabulary
 // reports it in sync, not that the sha is the newest.

@@ -1726,8 +1726,12 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
 -- THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54). A value or metadata
 -- row is a ROOT, and it and every following row with a GREATER level is not body; the subtree
 -- ends at the next row whose level is at or above the root's. Spec 1.3's IsBody(kind,
--- element_type) is per row and calls those inline leaves body, so it cannot be the test. When
--- duck_block_utils ships duck_blocks_body (spec 1.4), this becomes a call to it.
+-- element_type) is per row and calls those inline leaves body, so it cannot be the test.
+--
+-- THIS STAYS A NATIVE WALK. duck_block_utils 1.4 provides the same rule as duck_blocks_body(blocks),
+-- but calling it here would make this macro fail for anyone who installed panduck alone -- the
+-- vendored header carries constants, not that function. test/sql/doc_body_parity.test compares
+-- the two encodings wherever both are installed.
 --
 -- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
 -- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
@@ -1859,8 +1863,12 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
 -- THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54). A value or metadata
 -- row is a ROOT, and it and every following row with a GREATER level is not body; the subtree
 -- ends at the next row whose level is at or above the root's. Spec 1.3's IsBody(kind,
--- element_type) is per row and calls those inline leaves body, so it cannot be the test. When
--- duck_block_utils ships duck_blocks_body (spec 1.4), this becomes a call to it.
+-- element_type) is per row and calls those inline leaves body, so it cannot be the test.
+--
+-- THIS STAYS A NATIVE WALK. duck_block_utils 1.4 provides the same rule as duck_blocks_body(blocks),
+-- but calling it here would make this macro fail for anyone who installed panduck alone -- the
+-- vendored header carries constants, not that function. test/sql/doc_body_parity.test compares
+-- the two encodings wherever both are installed.
 --
 -- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
 -- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.

@@ -222,3 +222,39 @@ SELECT level, title FROM doc_toc('test/fixtures/nested_headings.ipynb', expand_e
 1	Top Title
 2	Sub Section
 3	Deeper Still
+
+#
+# ---------------------------------------------------------------------------------------
+# UNDER DuckDB 2.0's LAMBDA RULE (#65)
+# ---------------------------------------------------------------------------------------
+#
+# The expand macro's three lambdas reference parse_markdown_to_duck_blocks, so they cannot
+# be bound -- and so cannot be syntax-checked -- without this extension. This is the one
+# place they are exercised for real. SET lambda_syntax='DISABLE_SINGLE_ARROW' applies the
+# rule 2.0 makes the default; on main these assertions failed with
+#     Binder Error: Deprecated lambda arrow (->) detected.
+# Last in the file, so every assertion above still runs under the DEFAULT setting.
+
+statement ok
+SET lambda_syntax='DISABLE_SINGLE_ARROW';
+
+# The control: the setting is really in effect, or everything below tests the old rule.
+statement error
+SELECT list_transform([1], x -> x);
+----
+Deprecated lambda arrow
+
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true);
+----
+22
+
+query III
+SELECT element_type, content, level
+FROM read_panduck_doc('test/fixtures/notebook.ipynb', expand_embedded := true)
+WHERE element_type = 'heading';
+----
+heading	Notebook Title	2
+
+statement ok
+RESET lambda_syntax;

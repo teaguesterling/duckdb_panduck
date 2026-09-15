@@ -62,7 +62,7 @@ jobs:
   # this job used to build DuckDB `main`, and on 5a0331b it went green on every platform
   # while the registry's test_against_latest rejected that exact commit -- `main` still
   # pulled in duckdb/catalog/catalog.hpp transitively and v2.0-cyanoptera did not. It was
-  # retargeted to the tag, then ungated on PRs (Teague, 2026-09-13, adopting the fleet
+  # retargeted to that branch, then ungated on PRs (Teague, 2026-09-13, adopting the fleet
   # reference). panduck's `on: push` is already restricted to main, so the double build the
   # gate below prevents cannot occur here; the gate is copied verbatim anyway so every repo
   # carries the same line.
@@ -241,6 +241,21 @@ jobs:
       ci_tools_version: v1.5.5
       extension_name: panduck
       format_checks: 'format'
+
+  # SINGLE-ARROW LAMBDAS IN SQL STRINGS (#65). DuckDB 1.5.5 prints a deprecation WARNING on
+  # stdout for `x -> ...` -- inside every consumer's output -- and from 2.0 the default
+  # lambda_syntax rejects it at bind time. A static scan rather than a test, because the expand
+  # macro's lambdas reference parse_markdown_to_duck_blocks and so are never bound on a runner
+  # without the markdown extension. The script self-tests before scanning and exits 2 if its
+  # own detection is broken, so a green run cannot mean "found nothing because it looked at
+  # nothing". Needs no build, no DuckDB, no network: seconds.
+  lambda-syntax:
+    name: No single-arrow lambdas in SQL strings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan src/ for single-arrow lambdas
+        run: python3 scripts/check_lambda_syntax.py
 
   # Panduck deliberately does not link pandoc, so nothing in the build above would
   # notice if pandoc changed its AST underneath us. This job installs a real pandoc and

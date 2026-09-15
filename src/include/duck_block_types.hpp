@@ -108,14 +108,7 @@ public:
 		return DuckBlockListType();
 	}
 
-	// Field indices for doc_element struct
-	static constexpr idx_t KIND_IDX = 0;
-	static constexpr idx_t ELEMENT_TYPE_IDX = 1;
-	static constexpr idx_t CONTENT_IDX = 2;
-	static constexpr idx_t LEVEL_IDX = 3;
-	static constexpr idx_t ENCODING_IDX = 4;
-	static constexpr idx_t ATTRIBUTES_IDX = 5;
-	static constexpr idx_t ELEMENT_ORDER_IDX = 6;
+	// Field indices for doc_element struct: see the note below -- the *_IDX offsets are inherited.
 
 	// Kind values
 
@@ -123,7 +116,13 @@ public:
 
 	// Inline element type names
 
-	// ENCODING_* AND ATTR_HEADING_LEVEL ARE INHERITED, not redeclared here.
+	// ENCODING_*, ATTR_HEADING_LEVEL AND THE *_IDX FIELD OFFSETS ARE INHERITED, not redeclared here.
+	//
+	// The *_IDX offsets (KIND_IDX .. ELEMENT_ORDER_IDX) were the second instance of the
+	// shape described below, found after the first was fixed: seven `static constexpr
+	// idx_t` copies hiding DuckBlockVocabulary's `uint64_t` ones (idx_t IS uint64_t), all
+	// equal to the vendored values 0..6 when removed. Reported by duck_block_utils'
+	// consumer check once it parsed integer constants (their #37); panduck #72.
 	//
 	// They WERE declared locally, shadowing DuckBlockVocabulary's. That built clean --
 	// C++ name hiding is legal, not an error -- so every `DuckBlockTypes::ENCODING_JSON`

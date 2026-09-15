@@ -33,7 +33,7 @@ require panduck
 # TEST rather than of the machine: panduck is already loaded by `require` above, and
 # panduck_ensure_extension('pdf') then looks somewhere that cannot contain it.
 statement ok
-SET extension_directory='__TEST_DIR__/no_extensions_here';
+SET extension_directory='{TEST_DIR}/no_extensions_here';
 
 # THIS FILE IS THE PROBE FOR A DUCKDB PROPERTY, NOT JUST FOR #25.
 #

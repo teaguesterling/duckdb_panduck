@@ -61,7 +61,7 @@ LOAD duck_block_utils;
 # reader means the columns are the canonical seven rather than something hand-built.
 statement ok
 COPY (SELECT * FROM read_odt_blocks('test/fixtures/constructs.odt') ORDER BY element_order)
-  TO '__TEST_DIR__/bridge.parquet_duck_blocks' (FORMAT parquet);
+  TO '{TEST_DIR}/bridge.parquet_duck_blocks' (FORMAT parquet);
 
 # The extension is claimed at RUNTIME. Nothing in panduck's C++ knows this suffix exists.
 query IIII
@@ -71,17 +71,17 @@ SELECT * FROM panduck_register_doc_reader('parquet', 'read_parquet', ['.parquet_
 
 # The registry answers for it exactly as it does for a builtin reader.
 query I
-SELECT panduck_format_for('__TEST_DIR__/bridge.parquet_duck_blocks');
+SELECT panduck_format_for('{TEST_DIR}/bridge.parquet_duck_blocks');
 ----
 parquet
 
 query I
-SELECT panduck_can_read('__TEST_DIR__/bridge.parquet_duck_blocks');
+SELECT panduck_can_read('{TEST_DIR}/bridge.parquet_duck_blocks');
 ----
 true
 
 query I
-SELECT panduck_reader_function_for('__TEST_DIR__/bridge.parquet_duck_blocks');
+SELECT panduck_reader_function_for('{TEST_DIR}/bridge.parquet_duck_blocks');
 ----
 read_parquet
 
@@ -89,7 +89,7 @@ read_parquet
 # read_panduck_doc resolves the suffix, calls the registered function, and returns the same
 # document that went in.
 query I
-SELECT (SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks'))
+SELECT (SELECT count(*) FROM read_panduck_doc('{TEST_DIR}/bridge.parquet_duck_blocks'))
      = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
 ----
 true
@@ -97,7 +97,7 @@ true
 # And what comes back is duck_blocks, not merely rows with the right column names.
 query I
 SELECT bool_and(kind IN ('block', 'inline', 'value') AND encoding IS NOT NULL)
-FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks');
+FROM read_panduck_doc('{TEST_DIR}/bridge.parquet_duck_blocks');
 ----
 true
 
@@ -111,7 +111,7 @@ true
 # claim being made here is about DISPATCH over a registered reader, and doc_section carries
 # it without the version dependency: it slices the same bridged blocks by heading.
 query I
-SELECT count(*) > 0 FROM doc_section('__TEST_DIR__/bridge.parquet_duck_blocks', 'Heading Two');
+SELECT count(*) > 0 FROM doc_section('{TEST_DIR}/bridge.parquet_duck_blocks', 'Heading Two');
 ----
 true
 
@@ -119,7 +119,7 @@ true
 query I
 SELECT length(panduck_blocks_to_pandoc_ast(
     (SELECT list(b ORDER BY b.element_order)
-     FROM read_panduck_doc('__TEST_DIR__/bridge.parquet_duck_blocks') b))::VARCHAR) > 0;
+     FROM read_panduck_doc('{TEST_DIR}/bridge.parquet_duck_blocks') b))::VARCHAR) > 0;
 ----
 true
 
@@ -147,14 +147,14 @@ NULL	read_parquet
 
 statement ok
 COPY (SELECT * FROM read_odt_blocks('test/fixtures/constructs.odt') ORDER BY element_order)
-  TO '__TEST_DIR__/noext.noext_duck_blocks' (FORMAT parquet);
+  TO '{TEST_DIR}/noext.noext_duck_blocks' (FORMAT parquet);
 
 # THE OUTPUT, not the row count. A code-fallback read returns tree-sitter node types, or --
 # in the unittest binary, which is built with ENABLE_EXTENSION_AUTOLOADING=0 -- fails to bind
 # ast_to_blocks at all. The registered reader returns the document's own block vocabulary.
 query II
 SELECT element_order, element_type
-FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks')
+FROM read_panduck_doc('{TEST_DIR}/noext.noext_duck_blocks')
 ORDER BY element_order LIMIT 4;
 ----
 0	heading
@@ -163,13 +163,13 @@ ORDER BY element_order LIMIT 4;
 3	bold
 
 query I
-SELECT content FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks')
+SELECT content FROM read_panduck_doc('{TEST_DIR}/noext.noext_duck_blocks')
 WHERE element_type = 'heading' ORDER BY element_order LIMIT 1;
 ----
 Heading One
 
 query I
-SELECT (SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/noext.noext_duck_blocks'))
+SELECT (SELECT count(*) FROM read_panduck_doc('{TEST_DIR}/noext.noext_duck_blocks'))
      = (SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt'));
 ----
 true

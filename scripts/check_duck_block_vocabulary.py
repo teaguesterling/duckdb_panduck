@@ -768,10 +768,14 @@ def release_contract_failures():
         failures.append("missing constants on a verified read did not pass as BEHIND")
 
     # PROVENANCE. The copy must say where it came from, say it consistently, and BE that:
-    # the header at the stamped sha, plus one inserted block of comments and nothing else.
+    # from the header's title line to the end, BYTE-IDENTICAL to the header at the stamped
+    # sha. Above the title line is the copy's own -- stamp and notes, any length -- which is
+    # how duck_block_utils' #38 reads it, so webbed's 23-line and sitting_duck's 5-line
+    # preambles pass without special cases. No line-ending or trailing-newline tolerance.
     up_text = (
         "#pragma once\n"
         "\n"
+        "// The duck_block vocabulary -- PUBLISHED INTERFACE.\n"
         "// upstream banner\n"
         'static constexpr const char *SPEC_VERSION = "1.4";\n'
         'static constexpr const char *TYPE_A = "a";\n'
@@ -829,15 +833,25 @@ def release_contract_failures():
             vendored(block='// block\nstatic constexpr const char *EXTRA_X = "x";\n'),
             up_text,
             full_sha,
-            True,
-            "the inserted block carries code, not only comments",
+            False,
+            "above the title line is the copy's own; a constant there is EXTRA's job, not provenance's",
         ),
         (
             vendored(body=[lines[2], "// a second, separate insertion\n"] + lines[3:]),
             up_text,
             full_sha,
             True,
-            "a second inserted hunk is a local edit, not the provenance block",
+            "an insertion below the title line is a local edit",
+        ),
+        (vendored(body=lines[3:]), up_text, full_sha, True, "the title line is gone, so nothing anchors the copy"),
+        (vendored().replace("\n", "\r\n"), up_text, full_sha, True, "CRLF line endings are not the header"),
+        (vendored().rstrip("\n"), up_text, full_sha, True, "a missing trailing newline is not the header"),
+        (
+            vendored(stamp_line="".join(f"// preamble {i}\n" for i in range(20)) + stamp),
+            up_text,
+            full_sha,
+            False,
+            "a long preamble with the stamp deep in it (webbed's is 23 lines)",
         ),
         (vendored(), up_text, "079123d0000000000000000000000000000000000", True, "the release label points elsewhere"),
     ]:

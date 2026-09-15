@@ -1739,18 +1739,33 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
 -- vendored header carries constants, not that function. test/sql/doc_body_parity.test compares
 -- the two encodings wherever both are installed.
 --
+-- NOT O(roots x rows) (#76). A root's span ends at the next row at or above its level: one
+-- windowed min over the rows per DISTINCT root level (a handful). A row is inside a span when the
+-- running max of the span ends opened at or before it exceeds its own element_order -- one window,
+-- because a range NOT EXISTS over the spans was itself superlinear.
+--
+-- NOT AN ASOF JOIN, though ASOF is faster over a table the planner can size. DuckDB cannot estimate
+-- read_panduck_doc's output, and below asof_loop_join_threshold (64 on 1.5.5) it plans an ASOF as a
+-- nested loop: roots x rows again. Measured through an unestimable source, dense value roots in
+-- 80,001 rows: ASOF 1.42 s, this window 0.076 s (main's walk: 10.97 s). duckeye hit the same
+-- fallback. Every join below is an equality, or a cross product with the distinct root levels, so
+-- no plan depends on an estimate. element_order is unique within one document; the joins rely on it.
+--
 -- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
 -- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
 meta_roots AS (SELECT element_order AS r_o, coalesce(level, 1) AS r_l
                FROM b WHERE kind = 'value' OR element_type = 'metadata'),
+meta_next AS (SELECT l.r_l, n.element_order AS r_o,
+                     min(CASE WHEN coalesce(n.level, 1) <= l.r_l THEN n.element_order END)
+                       OVER (PARTITION BY l.r_l ORDER BY n.element_order
+                             ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS nx
+              FROM (SELECT DISTINCT r_l FROM meta_roots) l CROSS JOIN b n),
 meta_spans AS (SELECT r.r_o AS m_s,
-                      coalesce(min(n.element_order), (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
-               FROM meta_roots r LEFT JOIN b n
-                 ON n.element_order > r.r_o AND coalesce(n.level, 1) <= r.r_l
-               GROUP BY r.r_o),
-body AS MATERIALIZED (SELECT * FROM b
-         WHERE NOT EXISTS (SELECT 1 FROM meta_spans x
-                           WHERE b.element_order >= x.m_s AND b.element_order < x.m_e)),
+                      coalesce(x.nx, (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
+               FROM meta_roots r JOIN meta_next x USING (r_l, r_o)),
+body AS MATERIALIZED (SELECT b.* FROM b LEFT JOIN meta_spans s ON s.m_s = b.element_order
+         QUALIFY coalesce(max(s.m_e) OVER (ORDER BY b.element_order ROWS UNBOUNDED PRECEDING),
+                          b.element_order) <= b.element_order),
 -- ONE PAST THE LAST BLOCK, so an open-ended span (a section with no following heading at
 -- its level or above) gets a real number instead of NULL. The NULL end is what forced the
 -- old body's `... OR (SELECT o FROM stop) IS NULL` and it does not survive contact with
@@ -1876,18 +1891,33 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
 -- vendored header carries constants, not that function. test/sql/doc_body_parity.test compares
 -- the two encodings wherever both are installed.
 --
+-- NOT O(roots x rows) (#76). A root's span ends at the next row at or above its level: one
+-- windowed min over the rows per DISTINCT root level (a handful). A row is inside a span when the
+-- running max of the span ends opened at or before it exceeds its own element_order -- one window,
+-- because a range NOT EXISTS over the spans was itself superlinear.
+--
+-- NOT AN ASOF JOIN, though ASOF is faster over a table the planner can size. DuckDB cannot estimate
+-- read_panduck_doc's output, and below asof_loop_join_threshold (64 on 1.5.5) it plans an ASOF as a
+-- nested loop: roots x rows again. Measured through an unestimable source, dense value roots in
+-- 80,001 rows: ASOF 1.42 s, this window 0.076 s (main's walk: 10.97 s). duckeye hit the same
+-- fallback. Every join below is an equality, or a cross product with the distinct root levels, so
+-- no plan depends on an estimate. element_order is unique within one document; the joins rely on it.
+--
 -- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
 -- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
 meta_roots AS (SELECT element_order AS r_o, coalesce(level, 1) AS r_l
                FROM b WHERE kind = 'value' OR element_type = 'metadata'),
+meta_next AS (SELECT l.r_l, n.element_order AS r_o,
+                     min(CASE WHEN coalesce(n.level, 1) <= l.r_l THEN n.element_order END)
+                       OVER (PARTITION BY l.r_l ORDER BY n.element_order
+                             ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS nx
+              FROM (SELECT DISTINCT r_l FROM meta_roots) l CROSS JOIN b n),
 meta_spans AS (SELECT r.r_o AS m_s,
-                      coalesce(min(n.element_order), (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
-               FROM meta_roots r LEFT JOIN b n
-                 ON n.element_order > r.r_o AND coalesce(n.level, 1) <= r.r_l
-               GROUP BY r.r_o),
-body AS MATERIALIZED (SELECT * FROM b
-         WHERE NOT EXISTS (SELECT 1 FROM meta_spans x
-                           WHERE b.element_order >= x.m_s AND b.element_order < x.m_e)),
+                      coalesce(x.nx, (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
+               FROM meta_roots r JOIN meta_next x USING (r_l, r_o)),
+body AS MATERIALIZED (SELECT b.* FROM b LEFT JOIN meta_spans s ON s.m_s = b.element_order
+         QUALIFY coalesce(max(s.m_e) OVER (ORDER BY b.element_order ROWS UNBOUNDED PRECEDING),
+                          b.element_order) <= b.element_order),
 -- SEGMENT KEY = the element_order of the nearest heading at or before this block, NULL for
 -- anything before the first one. Every heading opens a segment regardless of level, which
 -- is precisely "stops at the next heading of ANY level".

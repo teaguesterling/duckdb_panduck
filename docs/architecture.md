@@ -110,11 +110,18 @@ property of constants, not of how the header arrives — vendoring and submoduli
 equally blind to it.
 
 So the copy comes with `make check-vocabulary`
-(`scripts/check_duck_block_vocabulary.py`), which fetches the published header and
-compares **by name and value**. It reports three things separately, because they call for
-different responses: `DRIFT` (renamed, removed, or value changed) fails the check; `NEW`
-(published upstream, missing here) means re-sync; `GAPS` (published, but nothing in
-panduck branches on it) means a type can only reach a fallthrough.
+(`scripts/check_duck_block_vocabulary.py`), which fetches duck_block_utils' latest
+**release** (not `main`) and compares **by name and value**. Since spec 1.4 the contract
+is release-based: spec releases are batched, so `main` can carry constants no release has,
+and comparing against it turned every minor into a re-vendor. Re-vendor only on a
+`SPEC_VERSION` major change, or when panduck needs something a later minor added. The
+check reports separately, because each calls for a different response: `DRIFT` (a shared
+value changed, integer offsets included), `EXTRA` (a constant the release lacks), a spec
+major mismatch or a copy claiming a minor ahead of the release, and a provenance problem
+(the stamp is missing or inconsistent, or the copy differs from the header at its stamped
+sha anywhere from the header's title line down) all fail; `BEHIND` (published in the release, missing here)
+passes; `GAPS` (published, but nothing in panduck branches on it) means a type can only
+reach a fallthrough.
 
 `GAPS` is the arm that earns its keep — the equivalent check found inline `generic`
 silently dropping `source_type` in `duckdb_markdown` and in `duck_block_utils`

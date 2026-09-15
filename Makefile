@@ -29,7 +29,10 @@ check:
 	if [ $$rc -ne 0 ]; then echo "FAILED: one or more checks above"; else echo "All checks passed."; fi; \
 	exit $$rc
 
-# Check the vendored duck_block vocabulary against upstream, by NAME AND VALUE. A
+# Check the vendored duck_block vocabulary against duck_block_utils' latest RELEASE (not
+# main), by NAME AND VALUE, and check the copy's provenance stamp. Since spec 1.4 a copy
+# BEHIND a release on minor passes: re-vendor only on a spec major change, or when panduck
+# needs something a later minor added. A
 # vendored copy and a submodule pin are both copies, and neither notices when upstream
 # moves; more importantly, the C++ constants catch a rename but NOT a changed value,
 # which compiles clean and silently stops matching. Skips cleanly (exit 0) when upstream

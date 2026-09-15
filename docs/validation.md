@@ -140,7 +140,7 @@ each a narrow guard that earned its place by catching something.
 
 | Target | What it compares | What it caught |
 |---|---|---|
-| `check-vocabulary` | the vendored `duck_block_types.hpp` against upstream, by name **and value** | a constant that matched by name while its value had moved |
+| `check-vocabulary` | the vendored `duck_block_vocabulary.hpp` against duck_block_utils' latest release, by name **and value**, plus its provenance stamp; behind on minor passes | a constant that matched by name while its value had moved |
 | `check-conformance` | every fixture's output against upstream's own conformance macros | element types outside the closed vocabulary — twice, `encoding='mediawiki'` and `encoding='org'` |
 | `check-converter` | the relocated Pandoc converter against its own regression sweep | that moving a file between repos silently drops the tests that lived beside it |
 | `check-divergence` | panduck's copy of the converter against upstream's, at a resolved SHA | a missing recursion bound that **segfaulted** on a deeply nested AST |

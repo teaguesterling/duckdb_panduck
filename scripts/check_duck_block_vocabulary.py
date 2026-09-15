@@ -16,12 +16,26 @@ the readers silently stop emitting a type any consumer recognises. Nothing in
 C++ catches that. Only this check does, which is why it is not optional
 bookkeeping.
 
-WHAT IT REPORTS, and why the three arms are separate:
+WHAT IT COMPARES AGAINST: THE LATEST RELEASE, NOT MAIN. Since spec 1.4 the contract
+with duck_block_utils is release-based (settled with their consumer check, #38).
+Spec releases are batched, so main can carry constants no release has yet, and
+comparing against main reddened an up-to-date copy mid-batch -- which is what turned
+every minor into a re-vendor. Re-vendor only on a SPEC_VERSION MAJOR change, or when
+panduck needs something a later minor added (a constant, or a predicate whose answers
+changed). The next forced sync is a 2.0.
 
-  DRIFT  a constant renamed, removed, or changed value upstream. BREAKING;
-         exits 1.
-  NEW    published upstream, absent from our copy. Not breaking -- it means
-         re-sync, and possibly new reader work.
+WHAT IT REPORTS, and why the arms are separate:
+
+  DRIFT  a shared constant's value differs from the release -- strings AND
+         integers, so a moved *_IDX offset counts. FAILS.
+  EXTRA  in our copy, not in the release: a local edit, or vendored from an
+         unreleased main. FAILS.
+  SPEC   a MAJOR mismatch, or a copy claiming a minor AHEAD of the release.
+         FAILS. A copy behind on minor is aligned.
+  PROVENANCE  the stamp is missing, malformed, disagrees with the file or with
+         its release label, or the copy differs from the header at the stamped
+         sha anywhere from the title line down (byte-exact). FAILS.
+  BEHIND in the release, not in our copy. PASSES -- re-vendor only if needed.
   GAPS   published vocabulary that no panduck code branches on, so it can only
          reach a fallthrough. Not breaking, but this is the arm that earns its
          keep: it is what surfaced inline `generic` silently dropping
@@ -48,7 +62,9 @@ the whole check rests on. Upstream rewrote every idx_t to uint64_t in 3957f36
 and later added ~88 lines of vendoring guidance -- hundreds of changed bytes,
 not one changed name or value. A text diff screams at that; this stays silent.
 A check that cries wolf gets muted within a week, and a muted check catches
-nothing on the day it matters.
+nothing on the day it matters. The PROVENANCE arm does diff text, but only against
+the header at the sha the copy itself names -- the file it claims to be -- so
+upstream churn cannot reach it.
 
 For the same reason the printed counts are CONTEXT, NOT THE ASSERTION. A pure
 rename leaves the count identical (67 vs 67) while breaking every consumer;
@@ -64,8 +80,9 @@ branch on" scan reads panduck's readers plus pandoc_ast_map.cpp, which is
 already an explicit registry of what panduck maps, plans and drops.
 
 Usage:
-    python3 scripts/check_duck_block_vocabulary.py            # fetch over HTTPS
-    python3 scripts/check_duck_block_vocabulary.py --upstream ../duck_block_utils
+    python3 scripts/check_duck_block_vocabulary.py            # latest release, over HTTPS
+    python3 scripts/check_duck_block_vocabulary.py --upstream ../duckdb_duck_block_utils --fetch
+    python3 scripts/check_duck_block_vocabulary.py --ref main  # preview what the next release brings
     python3 scripts/check_duck_block_vocabulary.py --strict   # offline is a failure
     python3 scripts/check_duck_block_vocabulary.py --self-test
 """
@@ -80,7 +97,7 @@ import urllib.request
 
 HEADER_REL = "src/include/duck_block_vocabulary.hpp"
 UPSTREAM_REPO = "teaguesterling/duckdb_duck_block_utils"
-UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}/commits/main"
+UPSTREAM_API = f"https://api.github.com/repos/{UPSTREAM_REPO}"
 # NOTE the {ref} slot. Fetching this with ref="main" is WRONG and the reason this
 # indirection exists: raw.githubusercontent.com serves BRANCH urls from a cache that
 # lags, so a branch fetch can hand back a superseded header and the check then reports
@@ -99,6 +116,19 @@ LOCAL_CANDIDATES = [
 ]
 
 CONST_RE = re.compile(r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;')
+
+# The vendored copy's provenance stamp, e.g.
+#   // Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils v3.3.0]
+# The release label is optional; a sha and a spec are not.
+STAMP_PREFIX = "// Vendored at upstream commit:"
+STAMP_RE = re.compile(
+    r"^// Vendored at upstream commit: ([0-9a-f]{7,40}) \(SPEC_VERSION ([0-9]+\.[0-9]+)\)"
+    r"(?:\s+\[duck_block_utils (v[0-9]+\.[0-9]+\.[0-9]+)\])?\s*$"
+)
+RELEASE_TAG_RE = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
+# The header's title line. Provenance is anchored here: above it is the copy's own preamble,
+# from it down must be the header at the stamped sha, byte for byte.
+TITLE_LINE = "// The duck_block vocabulary -- PUBLISHED INTERFACE."
 
 # Vocabulary panduck deliberately does not branch on. Recorded WITH REASONS so an
 # intentional gap and an unexplained one never look the same -- an allowlist
@@ -176,16 +206,19 @@ def find_local(root):
     return None
 
 
-def read_upstream_git(repo, ref):
-    """Read the header from a local clone at a ref, without checking anything out."""
+def git_out(repo, *args):
+    """stdout of a git command in a clone, or None if it failed."""
+    # Bytes, decoded by hand: text=True applies universal newlines and would turn a CRLF
+    # header into LF before the byte-exact provenance comparison ever saw it.
     try:
-        return subprocess.check_output(
-            ["git", "-C", repo, "show", f"{ref}:{HEADER_REL}"],
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        sys.exit(f"error: cannot read {HEADER_REL} from {repo}@{ref}\n" f"{exc.stderr.strip()}")
+        return subprocess.check_output(["git", "-C", repo, *args], stderr=subprocess.PIPE).decode("utf-8")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def read_upstream_git(repo, ref):
+    """Read the header from a local clone at a ref, without checking anything out. None if absent."""
+    return git_out(repo, "show", f"{ref}:{HEADER_REL}")
 
 
 def _get(url, timeout):
@@ -274,20 +307,148 @@ def spec_superseded(local_v, upstream_v, supersedes):
     return sup[1] >= lo[1]
 
 
-def verdict(breaking, added, verified):
+def classify(local, upstream):
+    """Pure alignment decision against a RELEASE: status OK / BEHIND / FAILED, with reasons.
+
+    Reasons: EXTRA (ours, not the release's), CHANGED (a shared value differs -- integers
+    included, so a moved *_IDX offset fails), MISSING (the release's, not ours), AHEAD (the
+    copy claims a minor no release has), MAJOR (spec major differs, or is unparseable),
+    RENUMBER (the major differs but the release supersedes this copy's line -- see
+    spec_superseded). EXTRA, CHANGED, AHEAD and MAJOR fail; MISSING and an older minor are
+    BEHIND and pass.
+
+    SPEC_VERSION is compared as a version, never as a value: equal-or-older minor is the
+    contract, and a value comparison would call every minor bump CHANGED.
+    """
+    lo_v, up_v = local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
+    lo, up = parse_spec(lo_v), parse_spec(up_v)
+    extra = sorted(set(local) - set(upstream))
+    missing = sorted(set(upstream) - set(local))
+    changed = sorted(k for k in (set(local) & set(upstream)) - {"SPEC_VERSION"} if local[k] != upstream[k])
+
+    if lo is None or up is None:
+        spec = "major"
+    elif lo[0] != up[0]:
+        spec = "renumber" if spec_superseded(lo_v, up_v, upstream.get("SPEC_VERSION_SUPERSEDES")) else "major"
+    elif not spec_compatible(lo_v, up_v):
+        spec = "ahead"
+    elif lo[1] < up[1]:
+        spec = "behind"
+    else:
+        spec = "same"
+
+    reasons = [spec.upper()] if spec in ("major", "ahead", "renumber") else []
+    if extra:
+        reasons.append("EXTRA")
+    if changed:
+        reasons.append("CHANGED")
+    if missing:
+        reasons.append("MISSING")
+
+    if {"EXTRA", "CHANGED", "AHEAD", "MAJOR"} & set(reasons):
+        status = "FAILED"
+    elif missing or spec in ("behind", "renumber"):
+        status = "BEHIND"
+    else:
+        status = "OK"
+    return {"status": status, "reasons": reasons, "spec": spec, "extra": extra, "missing": missing, "changed": changed}
+
+
+def _stamp_line(text):
+    """The provenance stamp line from the copy's preamble (above the title line, any length)."""
+    lines = text.splitlines()
+    end = lines.index(TITLE_LINE) if TITLE_LINE in lines else len(lines)
+    for line in lines[:end]:
+        if line.startswith(STAMP_PREFIX):
+            return line
+    return None
+
+
+def parse_stamp(text):
+    """{"sha", "spec", "tag"} from the vendored copy's stamp, or None if absent or malformed."""
+    line = _stamp_line(text)
+    m = STAMP_RE.match(line) if line else None
+    return {"sha": m.group(1), "spec": m.group(2), "tag": m.group(3)} if m else None
+
+
+def provenance_problems(local_text, at_stamp_text, label_sha):
+    """Why the copy is not demonstrably the header it claims to be; [] when it is.
+
+    at_stamp_text is upstream's header at the stamped sha (None: could not be read).
+    label_sha is the commit the stamp's release label resolves to (None: no label, or not
+    resolved -- the caller reports an unresolvable label itself).
+
+    ANCHORED ON THE TITLE LINE, as duck_block_utils' consumer check (#38) reads it. Above
+    TITLE_LINE is the copy's own preamble -- the stamp and whatever notes the consumer keeps,
+    any length. From TITLE_LINE to the end the copy must be BYTE-IDENTICAL to the header at
+    the stamped sha: no line-ending or trailing-newline tolerance. A constant added above the
+    title is not provenance's to catch; it parses as EXTRA and fails there. A local edit
+    below it that happens to match a NEWER release is invisible to the name+value
+    comparison, which is why provenance is checked against the sha the copy names.
+    """
+    line = _stamp_line(local_text)
+    if line is None:
+        return [f"stamp missing: no '{STAMP_PREFIX} <sha> (SPEC_VERSION x.y)' line above the title line"]
+    stamp = parse_stamp(local_text)
+    if stamp is None:
+        return [f"stamp malformed: {line.strip()!r}"]
+    problems = []
+    declared = parse_constants(local_text).get("SPEC_VERSION")
+    if stamp["spec"] != declared:
+        problems.append(f"stamp claims SPEC_VERSION {stamp['spec']}, the file declares {declared}")
+    if stamp["tag"] and label_sha and not label_sha.startswith(stamp["sha"]):
+        problems.append(f"stamp labels {stamp['tag']} at {stamp['sha']}, but {stamp['tag']} is {label_sha[:7]}")
+    if at_stamp_text is None:
+        problems.append(f"the header at the stamped sha {stamp['sha']} could not be read")
+        return problems
+    ours, theirs = _from_title(local_text), _from_title(at_stamp_text)
+    if ours is None:
+        problems.append(f"the copy has no title line {TITLE_LINE!r} to anchor the comparison")
+    elif theirs is None:
+        problems.append(f"the header at {stamp['sha']} has no title line {TITLE_LINE!r} -- has its shape changed?")
+    elif ours != theirs:
+        a, b = ours.splitlines(keepends=True), theirs.splitlines(keepends=True)
+        k = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        line_no = local_text[: len(local_text) - len(ours)].count("\n") + 1 + k
+        problems.append(
+            f"the copy differs from the header at {stamp['sha']} below the title line "
+            f"(first difference at copy line {line_no})"
+        )
+    return problems
+
+
+def _from_title(text):
+    """text from the line that IS the title line to the end, byte for byte; None if absent."""
+    if text.startswith(TITLE_LINE):
+        return text
+    i = text.find("\n" + TITLE_LINE)
+    return text[i + 1 :] if i >= 0 else None
+
+
+def pick_release_tag(tags):
+    """The newest plain vX.Y.Z among tag names, compared numerically; None if there is none.
+
+    A clone knows tags, not GitHub's release flags, so a pre-release is recognised by its
+    suffix and excluded -- the same set releases/latest excludes over HTTPS.
+    """
+    found = [(tuple(int(g) for g in m.groups()), t) for t in tags for m in [RELEASE_TAG_RE.match(t)] if m]
+    return max(found)[1] if found else None
+
+
+def verdict(breaking, behind, verified):
     """Pure decision: (exit_code, headline, detail). Separated from I/O so the
     self-test can pin it -- notably that an UNVERIFIED read never reports OK.
 
     "No drift seen" from a copy you could not date is not a clean bill of health.
     Saying OK there is the same false negative the check exists to prevent, which is
     how the stale-cache bug survived its first hour.
+
+    BEHIND PASSES. The contract is release-based: a copy on an older minor of the same
+    major, or missing constants a later minor added, is aligned. Re-vendoring for it is
+    driven by need, which is what stops the churn.
     """
     if breaking:
-        return (
-            1,
-            "FAILED",
-            ("vocabulary drift is breaking. Re-sync the copy and " "update the references."),
-        )
+        return (1, "FAILED", "the copy is not aligned with the release -- see the arms above.")
     if not verified:
         return (
             0,
@@ -299,44 +460,42 @@ def verdict(breaking, added, verified):
                 "--upstream <clone>."
             ),
         )
-    if added:
+    if behind:
         return (
             0,
-            "OK with news",
-            ("upstream added vocabulary. Re-sync and review " "whether panduck should handle it."),
+            "BEHIND",
+            (
+                "the release has vocabulary or a minor this copy lacks. Aligned by the contract:\n"
+                "         re-vendor only if panduck needs a constant or predicate answer that was added."
+            ),
         )
     return 0, "OK", ""
 
 
-def resolve_main_sha(timeout):
-    """Resolve upstream main to a commit sha, so the fetch can bypass the branch cache."""
-    body = _get(UPSTREAM_API, timeout)
-    if not body:
-        return None
-    m = re.search(r'"sha"\s*:\s*"([0-9a-f]{40})"', body)
+def resolve_commit(ref, timeout):
+    """Full commit sha for a ref (tag, branch or short sha) via the API; None if unreachable."""
+    body = _get(f"{UPSTREAM_API}/commits/{ref}", timeout)
+    m = re.search(r'"sha"\s*:\s*"([0-9a-f]{40})"', body) if body else None
     return m.group(1) if m else None
 
 
-def read_upstream_https(timeout):
-    """Fetch the published header at a resolved sha.
+def resolve_release(timeout):
+    """(tag, sha) of upstream's latest published release; None if unreachable.
 
-    Returns (text, ref_label) or (None, reason). Falls back to the branch url when the
-    API is unreachable, and SAYS SO -- a branch fetch may be stale, and a check that
-    quietly compares against cached content is worse than one that admits it could not
-    reach the authority.
+    releases/latest excludes drafts and pre-releases by GitHub's own definition, which is
+    the set the contract means by "release".
     """
-    sha = resolve_main_sha(timeout)
-    if sha:
-        text = _get(UPSTREAM_RAW.format(ref=sha), timeout)
-        if text:
-            return text, f"main @ {sha[:7]}", True
-        return None, "resolved main but could not fetch the header at that sha", False
-    text = _get(UPSTREAM_RAW.format(ref="main"), timeout)
-    if text:
-        # Reachable but UNDATED. Deliberately flagged unverified: this path once
-        # returned a header two spec versions behind while reporting no drift.
-        return text, "main (BRANCH URL -- may be cached/stale, sha unresolved)", False
-    return None, "upstream unreachable", False
+    body = _get(f"{UPSTREAM_API}/releases/latest", timeout)
+    m = re.search(r'"tag_name"\s*:\s*"([^"]+)"', body) if body else None
+    if not m:
+        return None
+    sha = resolve_commit(m.group(1), timeout)
+    return (m.group(1), sha) if sha else None
+
+
+def fetch_header(sha, timeout):
+    """The header at an immutable sha url -- never a branch url (see UPSTREAM_RAW)."""
+    return _get(UPSTREAM_RAW.format(ref=sha), timeout)
 
 
 def branched_on(root):
@@ -369,73 +528,66 @@ def branched_on(root):
     return named, literal
 
 
-def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
-    """Compare two constant maps. Returns (exit_code, headline)."""
-    removed = sorted(set(local) - set(upstream))
-    added = sorted(set(upstream) - set(local))
-    changed = sorted(k for k in set(local) & set(upstream) if local[k] != upstream[k])
+def report(local, upstream, root, show_gaps=True, verified=True, strict=False, provenance=None):
+    """Compare a copy's constants against a RELEASE's. Returns (exit_code, headline).
 
-    breaking = False
-    if removed:
-        breaking = True
-        print("DRIFT  gone upstream (our references would no longer compile):")
-        for k in removed:
+    The decision is classify()'s; this only prints it, so the self-test can pin the decision
+    without capturing output. provenance is provenance_problems()' list, or None if unchecked.
+    """
+    c = classify(local, upstream)
+    lo_v, up_v = local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
+
+    if c["extra"]:
+        print("EXTRA  in our copy, not in the release (a local edit, or vendored from an unreleased main):")
+        for k in c["extra"]:
             print(f"         {k} = {local[k]!r}")
+    if c["changed"]:
+        print("DRIFT  value differs from the release (our output silently stops matching):")
+        for k in c["changed"]:
+            print(f"         {k}: {local[k]!r} -> {upstream[k]!r}")
     # SPEC_VERSION is not vocabulary, it is a statement ABOUT the vocabulary, so it gets
     # its own arm. A bump can mean the SHAPE rules changed while every name and value
     # stayed put -- 2.0 ("one shape per element_type") moved list_item from carrying
-    # content to owning a paragraph child, and no constant moved at all. Reporting that
-    # as "our output silently stops matching" would point the reader at the type names,
-    # which are fine; the thing to go read is the spec.
-    spec_moved = "SPEC_VERSION" in changed
-    changed = [k for k in changed if k != "SPEC_VERSION"]
-    # SPEC_VERSION_SUPERSEDES, when upstream publishes one, distinguishes a RENUMBERING
-    # from a break -- the major-equality rule cannot, because a renumber changes the major.
-    spec_breaking = spec_moved and not spec_compatible(
-        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION")
-    )
-    if spec_breaking and spec_superseded(
-        local.get("SPEC_VERSION"), upstream.get("SPEC_VERSION"), upstream.get("SPEC_VERSION_SUPERSEDES")
-    ):
-        spec_breaking = False
+    # content to owning a paragraph child, and no constant moved at all.
+    if c["spec"] == "major":
+        print(f"SPEC   MAJOR mismatch: copy {lo_v!r}, release {up_v!r}")
+        print("       A breaking shape or vocabulary change, and the one re-vendor the contract")
+        print("       forces. Names and values may be untouched while the SHAPE rules changed --")
+        print("       read docs/duck_blocks_spec.md upstream before re-syncing.")
+    elif c["spec"] == "ahead":
+        print(f"SPEC   copy claims {lo_v!r}, AHEAD of the latest release {up_v!r}")
+        print("       No release has that minor: vendored from main mid-batch, or edited locally.")
+        print("       Vendor from a release tag.")
+    elif c["spec"] == "renumber":
         print(
-            f"  SPEC_VERSION {local.get('SPEC_VERSION')} -> {upstream.get('SPEC_VERSION')} is a"
-            f" RENUMBERING, not a break:\n"
-            f"    upstream records SPEC_VERSION_SUPERSEDES = {upstream.get('SPEC_VERSION_SUPERSEDES')},"
+            f"SPEC   {lo_v} -> {up_v} is a RENUMBERING, not a break:\n"
+            f"       the release records SPEC_VERSION_SUPERSEDES = {upstream.get('SPEC_VERSION_SUPERSEDES')},"
             f" the line this copy is on.\n"
-            f"    Same shape, no constant moved. Re-vendor the header and set the local major to"
-            f" {upstream.get('SPEC_VERSION', '?').split('.')[0]}."
+            f"       Same shape, no constant moved. Re-vendor the header and set the local major to"
+            f" {str(up_v).split('.')[0]}."
         )
-    if changed:
-        breaking = True
-        print("DRIFT  value changed upstream (our output silently stops matching):")
-        for k in changed:
-            print(f"         {k}: {local[k]!r} -> {upstream[k]!r}")
-    if spec_moved:
-        arrow = f"{local['SPEC_VERSION']!r} -> {upstream['SPEC_VERSION']!r}"
-        if spec_breaking:
-            breaking = True
-            print(f"SPEC   MAJOR version moved: {arrow}")
-            print("       A breaking shape or vocabulary change. Names and values may be")
-            print("       untouched while the SHAPE rules changed -- read")
-            print("       docs/duck_blocks_spec.md upstream before re-syncing; a version")
-            print("       bump is the only signal a structural change gives you.")
-        else:
-            print(f"SPEC   minor version moved: {arrow}")
-            print("       Additive by the stated contract, so this does not fail. Re-sync")
-            print("       when convenient and check whether the addition needs handling.")
-    if added:
-        print("NEW    published upstream, not in our copy:")
-        for k in added:
+    elif c["spec"] == "behind":
+        print(f"SPEC   copy {lo_v!r} is behind the release {up_v!r} on the same major.")
+        print("       Aligned by the contract: re-vendor only if panduck needs a constant, or a")
+        print("       predicate answer, that a later minor added.")
+    if c["missing"]:
+        print("BEHIND in the release, not in our copy (passes; re-vendor only if panduck needs one):")
+        for k in c["missing"]:
             print(f"         {k} = {upstream[k]!r}")
-    if not (removed or changed or added):
-        if spec_moved:
+    if not (c["extra"] or c["changed"] or c["missing"]):
+        if c["spec"] in ("major", "ahead"):
             # Both true at once, and the pairing is the whole point: names can be
             # perfectly in sync while the structure they describe has changed under you.
-            print("       (every name and value IS in sync -- that is exactly why a")
-            print("        shape change needs its own signal.)")
+            print("       (every name and value IS in sync -- that is exactly why the version")
+            print("        needs its own signal.)")
         else:
-            print("vocabulary is in sync (compared by name and value)")
+            print("vocabulary is in sync with the release (compared by name and value)")
+    if provenance:
+        print("PROVENANCE  the copy is not demonstrably the header it claims to be:")
+        for p in provenance:
+            print(f"         {p}")
+    elif provenance is not None:
+        print("provenance: stamp consistent; the copy is the header at the stamped sha plus its note")
 
     if show_gaps:
         named, literal = branched_on(root)
@@ -457,7 +609,7 @@ def report(local, upstream, root, show_gaps=True, verified=True, strict=False):
             print("       If a gap is deliberate, add it to INTENTIONAL_GAPS with a reason.")
 
     print()
-    code, headline, detail = verdict(breaking, bool(added), verified)
+    code, headline, detail = verdict(c["status"] == "FAILED" or bool(provenance), c["status"] == "BEHIND", verified)
     print(f"{headline}: {detail}" if detail else headline)
     if not verified and strict:
         print("       --strict: refusing to pass on an undated comparison.")
@@ -555,14 +707,186 @@ def test_count_blindness():
         if spec_superseded(lo, up, sup) != want:
             failures.append(f"spec_superseded({lo!r}, {up!r}, {sup!r}) -- {why}")
 
+    failures += release_contract_failures()
+
     for f in failures:
         print(f"SELF-TEST FAILED: {f}")
     if failures:
         return 1
     print("self-test OK: rename, value change and cosmetic churn classified correctly " "with the count held constant;")
     print("              field offsets excluded; an undated read never reports OK;")
-    print("              a renumbering is accepted only on the line it retires")
+    print("              a renumbering is accepted only on the line it retires;")
+    print("              BEHIND passes, EXTRA/CHANGED/AHEAD/MAJOR and provenance problems fail")
     return 0
+
+
+def release_contract_failures():
+    """The post-1.4 contract, settled with duck_block_utils (their consumer check #38).
+
+    Compare against the latest duck_block_utils RELEASE, not main: spec releases are
+    batched, so main can carry constants no release has, and comparing against it reddens an
+    up-to-date copy mid-batch -- the churn this contract exists to stop. A copy on an older
+    minor of the same major is ALIGNED. So:
+
+      FAILED  MAJOR mismatch, a CHANGED value (strings AND integers, *_IDX included), an
+              EXTRA constant the release lacks, a copy claiming a minor AHEAD of the release,
+              or a PROVENANCE problem.
+      BEHIND  constants missing only, at the same or an older minor. Passes.
+    """
+    failures = []
+    U = {"SPEC_VERSION": "1.4", "TYPE_A": "a", "KIND_IDX": "0", "PREDICATE_REVISION": "1.3"}
+
+    def with_(d, **kw):
+        out = dict(d)
+        for k, v in kw.items():
+            if v is None:
+                out.pop(k, None)
+            else:
+                out[k] = v
+        return out
+
+    for local, upstream, status, reasons, why in [
+        (U, U, "OK", set(), "identical to the release"),
+        (with_(U, PREDICATE_REVISION=None), U, "BEHIND", {"MISSING"}, "missing a constant at the same minor"),
+        (
+            with_(U, SPEC_VERSION="1.3", PREDICATE_REVISION=None),
+            U,
+            "BEHIND",
+            {"MISSING"},
+            "an older minor missing what the newer one added is aligned",
+        ),
+        (with_(U, SPEC_VERSION="1.3"), U, "BEHIND", set(), "an older minor with nothing missing still says BEHIND"),
+        (with_(U, EXTRA_X="x"), U, "FAILED", {"EXTRA"}, "a constant the release does not have"),
+        (
+            with_(U, EXTRA_X="x", PREDICATE_REVISION=None),
+            U,
+            "FAILED",
+            {"EXTRA", "MISSING"},
+            "EXTRA is not excused by also being behind",
+        ),
+        (with_(U, TYPE_A="b"), U, "FAILED", {"CHANGED"}, "a changed string value"),
+        (with_(U, KIND_IDX="1"), U, "FAILED", {"CHANGED"}, "a changed INTEGER value -- the *_IDX offsets count"),
+        (with_(U, SPEC_VERSION="1.5"), U, "FAILED", {"AHEAD"}, "a copy claiming a minor the release does not have"),
+        (with_(U, SPEC_VERSION="2.0"), U, "FAILED", {"MAJOR"}, "copy on a newer major than the release"),
+        (U, with_(U, SPEC_VERSION="2.0"), "FAILED", {"MAJOR"}, "release on a newer major: the one forced re-vendor"),
+        (
+            with_(U, SPEC_VERSION="6.5", PREDICATE_REVISION=None),
+            with_(U, SPEC_VERSION="1.2", SPEC_VERSION_SUPERSEDES="6.6", PREDICATE_REVISION=None),
+            "BEHIND",
+            {"MISSING", "RENUMBER"},
+            "the 6.x renumbering hatch still holds",
+        ),
+    ]:
+        got = classify(local, upstream)
+        if got["status"] != status or set(got["reasons"]) != reasons:
+            failures.append(
+                f"classify: {why} -- want {status} {sorted(reasons)}, got {got['status']} {sorted(got['reasons'])}"
+            )
+
+    if verdict(False, True, verified=True)[:2] != (0, "BEHIND"):
+        failures.append("missing constants on a verified read did not pass as BEHIND")
+
+    # PROVENANCE. The copy must say where it came from, say it consistently, and BE that:
+    # from the header's title line to the end, BYTE-IDENTICAL to the header at the stamped
+    # sha. Above the title line is the copy's own -- stamp and notes, any length -- which is
+    # how duck_block_utils' #38 reads it, so webbed's 23-line and sitting_duck's 5-line
+    # preambles pass without special cases. No line-ending or trailing-newline tolerance.
+    up_text = (
+        "#pragma once\n"
+        "\n"
+        "// The duck_block vocabulary -- PUBLISHED INTERFACE.\n"
+        "// upstream banner\n"
+        'static constexpr const char *SPEC_VERSION = "1.4";\n'
+        'static constexpr const char *TYPE_A = "a";\n'
+    )
+    full_sha = "95a84e6dbfb25d1925df2ad402f978c438a3f724"
+    stamp = "// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils v3.3.0]\n"
+    lines = up_text.splitlines(keepends=True)
+
+    def vendored(stamp_line=stamp, block="// why it was re-vendored\n//\n", body=None):
+        rest = lines[2:] if body is None else body
+        return "".join(lines[:2]) + stamp_line + block + "".join(rest)
+
+    if parse_stamp(vendored()) != {"sha": "95a84e6", "spec": "1.4", "tag": "v3.3.0"}:
+        failures.append(f"parse_stamp misread a well-formed stamp: {parse_stamp(vendored())}")
+    if parse_stamp(vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)\n")) != {
+        "sha": "95a84e6",
+        "spec": "1.4",
+        "tag": None,
+    }:
+        failures.append("parse_stamp refused a stamp without the optional release label")
+
+    for local_text, at_sha, tag_sha, want_problem, why in [
+        (vendored(), up_text, full_sha, False, "a faithful copy with its provenance block"),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)\n"),
+            up_text,
+            None,
+            False,
+            "no release label, nothing to cross-check",
+        ),
+        (up_text, up_text, None, True, "stamp missing"),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: main (SPEC_VERSION 1.4)\n"),
+            up_text,
+            None,
+            True,
+            "stamp malformed (not a sha)",
+        ),
+        (
+            vendored(stamp_line="// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.3)  [duck_block_utils v3.3.0]\n"),
+            up_text,
+            full_sha,
+            True,
+            "stamp claims a different SPEC_VERSION than the file",
+        ),
+        (vendored(), None, full_sha, True, "the header at the stamped sha could not be read"),
+        (
+            vendored(body=[l.replace('"a"', '"b"') for l in lines[2:]]),
+            up_text,
+            full_sha,
+            True,
+            "a code line differs from the header at the stamped sha",
+        ),
+        (
+            vendored(block='// block\nstatic constexpr const char *EXTRA_X = "x";\n'),
+            up_text,
+            full_sha,
+            False,
+            "above the title line is the copy's own; a constant there is EXTRA's job, not provenance's",
+        ),
+        (
+            vendored(body=[lines[2], "// a second, separate insertion\n"] + lines[3:]),
+            up_text,
+            full_sha,
+            True,
+            "an insertion below the title line is a local edit",
+        ),
+        (vendored(body=lines[3:]), up_text, full_sha, True, "the title line is gone, so nothing anchors the copy"),
+        (vendored().replace("\n", "\r\n"), up_text, full_sha, True, "CRLF line endings are not the header"),
+        (vendored().rstrip("\n"), up_text, full_sha, True, "a missing trailing newline is not the header"),
+        (
+            vendored(stamp_line="".join(f"// preamble {i}\n" for i in range(20)) + stamp),
+            up_text,
+            full_sha,
+            False,
+            "a long preamble with the stamp deep in it (webbed's is 23 lines)",
+        ),
+        (vendored(), up_text, "079123d0000000000000000000000000000000000", True, "the release label points elsewhere"),
+    ]:
+        got = provenance_problems(local_text, at_sha, tag_sha)
+        if bool(got) != want_problem:
+            failures.append(f"provenance_problems: {why} -- want {'a problem' if want_problem else 'none'}, got {got}")
+
+    # The release to compare against, from a local clone's tags: the highest plain vX.Y.Z,
+    # compared numerically (v3.10.0 > v3.9.0), never a pre-release.
+    tags = ["v3.3.0", "v3.10.0", "v3.9.0", "v4.0.0-rc1", "nightly", "v2.0.0"]
+    if pick_release_tag(tags) != "v3.10.0":
+        failures.append(f"pick_release_tag({tags}) -- want v3.10.0, got {pick_release_tag(tags)}")
+    if pick_release_tag(["nightly"]) is not None:
+        failures.append("pick_release_tag invented a release from no release tags")
+
+    return failures
 
 
 def main():
@@ -574,10 +898,11 @@ def main():
     )
     ap.add_argument(
         "--ref",
-        default="origin/main",
-        help="upstream ref, only with --upstream (default: origin/main)",
+        default=None,
+        help="compare against this ref (tag, branch or sha) instead of the latest release",
     )
-    ap.add_argument("--fetch", action="store_true", help="git fetch first, only with --upstream")
+    ap.add_argument("--local", default=None, help="the vendored copy to check (default: panduck's)")
+    ap.add_argument("--fetch", action="store_true", help="git fetch (with tags) first, only with --upstream")
     ap.add_argument(
         "--timeout",
         type=float,
@@ -600,27 +925,51 @@ def main():
         return test_count_blindness()
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    local_path = find_local(root)
-    if not local_path:
-        sys.exit("error: no duck_block_vocabulary.hpp found in " + " or ".join(LOCAL_CANDIDATES))
-    local = parse_constants(open(local_path, encoding="utf-8").read())
+    local_path = args.local or find_local(root)
+    if not local_path or not os.path.exists(local_path):
+        sys.exit("error: no duck_block_vocabulary.hpp found at " + (args.local or " or ".join(LOCAL_CANDIDATES)))
+    # newline="" keeps line endings as they are on disk. The default translates CRLF to LF,
+    # which made a CRLF copy pass the byte-exact provenance comparison end to end while the
+    # self-test (fed strings, not files) correctly failed it.
+    local_text = open(local_path, encoding="utf-8", newline="").read()
+    local = parse_constants(local_text)
+    stamp = parse_stamp(local_text)
+    kind = "upstream" if args.ref else "release"
 
     if args.upstream:
-        if not os.path.exists(os.path.join(args.upstream, ".git")):
-            sys.exit(f"error: {args.upstream} is not a git clone")
+        repo = args.upstream
+        if not os.path.exists(os.path.join(repo, ".git")):
+            sys.exit(f"error: {repo} is not a git clone")
         if args.fetch:
-            subprocess.run(["git", "-C", args.upstream, "fetch", "--quiet", "origin"], check=False)
-        text = read_upstream_git(args.upstream, args.ref)
-        source = f"{args.upstream}@{args.ref}"
-        verified = True
+            subprocess.run(["git", "-C", repo, "fetch", "--quiet", "--tags", "origin"], check=False)
+
+        def resolve(ref):
+            out = git_out(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+            return out.strip() if out else None
+
+        label = args.ref or pick_release_tag((git_out(repo, "tag", "--list") or "").split())
+        if not label:
+            sys.exit(f"error: no release tag (vX.Y.Z) in {repo} -- run with --fetch, or pass --ref")
+        sha = resolve(label)
+        text = read_upstream_git(repo, sha) if sha else None
+        if text is None:
+            sys.exit(f"error: cannot read {HEADER_REL} at {label} in {repo}")
+        at_stamp = read_upstream_git(repo, stamp["sha"]) if stamp else None
+        label_sha = resolve(stamp["tag"]) if stamp and stamp["tag"] else None
+        source = f"{repo} {label} @ {sha[:7]}"
     else:
-        text, ref_label, verified = read_upstream_https(args.timeout)
-        source = f"{UPSTREAM_REPO} {ref_label}"
+        if args.ref:
+            sha = resolve_commit(args.ref, args.timeout)
+            target = (args.ref, sha) if sha else None
+        else:
+            target = resolve_release(args.timeout)
+        text = fetch_header(target[1], args.timeout) if target else None
         if text is None:
             # Skipping loudly beats failing a build over a flaky network, but
             # --strict exists so CI can refuse to skip.
+            what = f"ref {args.ref}" if args.ref else "latest release"
             msg = (
-                f"SKIPPED: cannot reach upstream ({ref_label}).\n"
+                f"SKIPPED: cannot reach upstream's {what}.\n"
                 f"         The vendored copy was NOT verified against anything."
             )
             if args.strict:
@@ -629,18 +978,29 @@ def main():
             print(msg)
             print("         Re-run with network, or --upstream <clone>, to check it.")
             return 0
+        label, sha = target
+        stamp_full = resolve_commit(stamp["sha"], args.timeout) if stamp else None
+        at_stamp = fetch_header(stamp_full, args.timeout) if stamp_full else None
+        label_sha = resolve_commit(stamp["tag"], args.timeout) if stamp and stamp["tag"] else None
+        source = f"{UPSTREAM_REPO} {label} @ {sha[:7]}"
 
     upstream = parse_constants(text)
     if not upstream:
         sys.exit("error: parsed no constants from upstream -- has the header's " "shape changed?")
+    problems = provenance_problems(local_text, at_stamp, label_sha)
+    if stamp and stamp["tag"] and label_sha is None:
+        problems.append(f"stamp labels {stamp['tag']}, which does not resolve upstream")
 
     print(f"local    {os.path.relpath(local_path, root)}  ({len(local)} constants)")
-    print(f"upstream {source}  ({len(upstream)} constants)")
-    print(f"spec     local {local.get('SPEC_VERSION', '?')}  " f"upstream {upstream.get('SPEC_VERSION', '?')}")
+    print(f"{kind:<8} {source}  ({len(upstream)} constants)")
+    print(f"spec     local {local.get('SPEC_VERSION', '?')}  {kind} {upstream.get('SPEC_VERSION', '?')}")
+    if stamp:
+        label_note = f"  [{stamp['tag']}]" if stamp["tag"] else ""
+        print(f"stamp    {stamp['sha']} (SPEC_VERSION {stamp['spec']}){label_note}")
     print("         (counts are context, not the assertion -- a rename leaves them equal)")
     print()
 
-    code, _ = report(local, upstream, root, verified=verified, strict=args.strict)
+    code, _ = report(local, upstream, root, verified=True, strict=args.strict, provenance=problems)
     return code
 
 

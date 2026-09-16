@@ -34,6 +34,10 @@ TARGETS = [
     ("read_docx_blocks", "docx", "constructs.docx"),
     ("read_odt_blocks", "odt", "constructs.odt"),
     ("read_rst_blocks", "rst", "constructs.rst"),
+    # constructs.rst has only the NEXT-LINE footnote form, so a one-line footnote's text could
+    # go missing without this guard seeing it -- which is how #67 survived. This fixture carries
+    # every form docutils accepts.
+    ("read_rst_blocks", "rst", "footnotes.rst"),
     ("read_textile_blocks", "textile", "constructs.textile"),
 ]
 

@@ -134,7 +134,7 @@ SELECT (panduck_blocks_to_pandoc_ast(NULL))['blocks'];
 # one-rule shape: the divergence is invisible in review because each body reads correctly
 # on its own, and nothing compares them.
 statement ok
-SELECT panduck_write_pandoc_ast('__TEST_DIR__/written_ast.json', list(struct_pack(
+SELECT panduck_write_pandoc_ast('{TEST_DIR}/written_ast.json', list(struct_pack(
     kind := kind, element_type := element_type, content := content, level := level,
     encoding := encoding, attributes := attributes, element_order := element_order)
   ORDER BY element_order))
@@ -142,7 +142,7 @@ FROM read_org_blocks_string(E'#+TITLE: A Title\n#+AUTHOR: A. Writer\n\nBody.');
 
 query I
 SELECT content LIKE '%A Title%' AND content LIKE '%A. Writer%'
-FROM read_text('__TEST_DIR__/written_ast.json');
+FROM read_text('{TEST_DIR}/written_ast.json');
 ----
 true
 
@@ -150,7 +150,7 @@ true
 # dropping content would satisfy the assertion above.
 query I
 SELECT content LIKE '%Body.%'
-FROM read_text('__TEST_DIR__/written_ast.json');
+FROM read_text('{TEST_DIR}/written_ast.json');
 ----
 true
 
@@ -284,7 +284,7 @@ true
 # This passes on the pinned v1.5.5 either way, which has no such check at all -- that is
 # why the missing declaration was invisible until something built against main.
 statement error
-SELECT panduck_write_pandoc_ast('__TEST_DIR__/no_such_directory/written.json', list(struct_pack(
+SELECT panduck_write_pandoc_ast('{TEST_DIR}/no_such_directory/written.json', list(struct_pack(
     kind := kind, element_type := element_type, content := content, level := level,
     encoding := encoding, attributes := attributes, element_order := element_order)
   ORDER BY element_order))

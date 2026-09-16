@@ -250,13 +250,13 @@ true
 # that proves the refusal was policy rather than a missing extension. Writing the fixture
 # here with core CSV keeps both halves meaningful with no optional dependency.
 statement ok
-COPY (SELECT 1 AS a, 'x' AS b) TO '__TEST_DIR__/policy.csv' (FORMAT csv, HEADER);
+COPY (SELECT 1 AS a, 'x' AS b) TO '{TEST_DIR}/policy.csv' (FORMAT csv, HEADER);
 
 statement ok
 SET panduck_disabled_readers = 'data';
 
 statement error
-SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
+SELECT count(*) FROM read_panduck_table('{TEST_DIR}/policy.csv');
 ----
 reader for format 'data' is disabled
 
@@ -264,7 +264,7 @@ statement ok
 RESET panduck_disabled_readers;
 
 query I
-SELECT count(*) FROM read_panduck_table('__TEST_DIR__/policy.csv');
+SELECT count(*) FROM read_panduck_table('{TEST_DIR}/policy.csv');
 ----
 1
 
@@ -299,13 +299,13 @@ CALL panduck_register_doc_reader('', 'read_parquet', ['.zzpolicy']);
 
 statement ok
 COPY (SELECT * FROM read_panduck_doc('test/fixtures/constructs.odt') ORDER BY element_order)
-  TO '__TEST_DIR__/pol.zzpolicy' (FORMAT parquet);
+  TO '{TEST_DIR}/pol.zzpolicy' (FORMAT parquet);
 
 statement ok
 SET panduck_disabled_readers = 'code';
 
 query I
-SELECT count(*) > 0 FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+SELECT count(*) > 0 FROM read_panduck_doc('{TEST_DIR}/pol.zzpolicy');
 ----
 true
 
@@ -317,7 +317,7 @@ statement ok
 SET panduck_disabled_readers = 'zzpolicy';
 
 statement error
-SELECT count(*) FROM read_panduck_doc('__TEST_DIR__/pol.zzpolicy');
+SELECT count(*) FROM read_panduck_doc('{TEST_DIR}/pol.zzpolicy');
 ----
 reader for format 'zzpolicy' is disabled
 

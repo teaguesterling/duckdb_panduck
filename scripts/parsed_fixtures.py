@@ -49,6 +49,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -77,6 +78,12 @@ FIXTURES = [
 
 BLOCK_COLS = ["kind", "element_type", "content", "level", "encoding", "attributes", "element_order"]
 
+# Where this script resolves the community readers. Under build/ because that is already
+# git-ignored and already the directory holding build products; overridable for a CI runner
+# that would rather cache it elsewhere. NOT ~/.duckdb -- see Duck.sql().
+EXTENSION_DIR = os.environ.get(
+    "PANDUCK_FIXTURE_EXTENSION_DIR", str(ROOT / "build" / "fixture-extensions"))
+
 
 def sha256_of(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
@@ -92,8 +99,26 @@ class Duck:
         self.extension = extension
 
     def sql(self, body, json_out=True):
-        prelude = "INSTALL markdown FROM community; INSTALL webbed FROM community; " \
-                  "INSTALL pdf FROM community; LOAD markdown; LOAD webbed; LOAD pdf;\n"
+        # A DEDICATED extension_directory, NOT the developer's ~/.duckdb (#62). Two reasons,
+        # and they pull in opposite directions from a bare INSTALL:
+        #
+        #   1. `INSTALL x FROM community` DOES NOT UPGRADE an already-installed x. On a
+        #      machine that installed markdown months ago, a regeneration silently used that
+        #      copy and wrote ITS version into the manifest, while the registry served
+        #      another. Measured 2026-09-16: ~/.duckdb had markdown 2ba1321 while a clean
+        #      directory resolved ee544a8. The manifest is an attribution record, so a label
+        #      naming the wrong build is the one defect it exists to prevent.
+        #   2. FORCE INSTALL would fix that by overwriting the developer's own extensions --
+        #      a shared profile every other session on the machine reads. Re-resolving into a
+        #      directory this script owns leaves ~/.duckdb alone and is reproducible.
+        #
+        # duck_block_utils is installed here too, which it never was: the spec probe did a
+        # bare LOAD, so in any clean environment -- including every CI runner -- it failed and
+        # wrote `unavailable` into every manifest row (#62).
+        prelude = f"SET extension_directory = '{EXTENSION_DIR}';\n" \
+                  "INSTALL markdown FROM community; INSTALL webbed FROM community; " \
+                  "INSTALL pdf FROM community; INSTALL duck_block_utils FROM community; " \
+                  "LOAD markdown; LOAD webbed; LOAD pdf;\n"
         if self.extension:
             prelude = f"LOAD '{self.extension}';\n" + prelude
         args = [self.binary, "-unsigned"]
@@ -297,6 +322,16 @@ def main():
                         row.get("panduck_version") != versions["panduck"]:
                     stale_labels.append(
                         f"  {name}: panduck {row.get('panduck_version')} -> {versions['panduck']}")
+                # AND THE SPEC, which was recorded and never read (#62). The probe wrote
+                # `unavailable` in every clean environment -- including every CI runner -- and
+                # no comparison looked at the column, so the manifest sat at spec 1.2 through
+                # 1.3 and 1.4 with nothing saying otherwise. A column no check reads is the
+                # same defect as a column nobody records.
+                if row.get("duck_block_spec_version") is not None and \
+                        row.get("duck_block_spec_version") != versions["duck_block_spec"]:
+                    stale_labels.append(
+                        f"  {name}: duck_block spec {row.get('duck_block_spec_version')} -> "
+                        f"{versions['duck_block_spec']}")
 
         # A VERSION MOVE WITH NO DIFF IS THE GOOD NEWS CASE, and it is reported rather
         # than silent: it is positive evidence that the upgrade did not change output.

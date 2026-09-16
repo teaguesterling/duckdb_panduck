@@ -160,6 +160,23 @@ WHERE reader_version IS NULL OR reader_version IN ('', '?');
 ----
 0
 
+# ...and duck_block_utils' SPEC version, which every row recorded as `unavailable` for as
+# long as the column existed (#62). The probe was a bare LOAD, so wherever duck_block_utils
+# was not already installed -- every CI runner -- it failed and wrote a placeholder. Nothing
+# compared the column either, so the manifest sat at 1.2 through spec 1.3 and 1.4 with no job
+# saying otherwise. A column that is recorded and never read is the same defect as one that
+# was never recorded, which is why this is an assertion and not a convention.
+#
+# CAST, because read_csv sniffs this column as DOUBLE while every row holds a version like
+# 1.4 -- and as VARCHAR the moment one holds `unavailable`. The cast is what makes the
+# assertion able to see the value it exists to catch, in both shapes.
+query I
+SELECT count(*) FROM read_csv('test/fixtures/parsed/manifest.csv')
+WHERE duck_block_spec_version IS NULL
+   OR CAST(duck_block_spec_version AS VARCHAR) IN ('', '?', 'unavailable');
+----
+0
+
 # ...and the source sha256, so a fixture is provably OF its input. Without it, editing a
 # source document leaves a stale fixture that still passes every assertion above.
 query I

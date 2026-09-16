@@ -336,7 +336,28 @@ private:
 			case LineKind::BLANK:
 				flush();
 				continue;
-			case LineKind::COMMENT:
+			case LineKind::COMMENT: {
+				// A ONE-LINE FOOTNOTE OR CITATION carries its body on the LABEL LINE: `.. [1] text`.
+				// The scanner files that whole line under COMMENT with `[1] text` as its text, and the
+				// body rule below only ever looked at the NEXT line -- so this text went nowhere (#67).
+				// Measured on main before this: `.. [1] The footnote body.` emitted NOTHING, and the
+				// wrapped form emitted only its continuation line, losing the label line's words.
+				//
+				// SEEDING `para` RATHER THAN EMITTING is what joins the label line with an indented
+				// continuation into ONE paragraph, as pandoc does. The quote rule and the
+				// definition-list branch both require an empty `para`, so the following indented line
+				// falls through to TEXT and appends here. The run is deliberately NOT consumed.
+				if (!line.text.empty() && line.text[0] == '[') {
+					size_t close = line.text.find(']');
+					if (close != std::string::npos) {
+						size_t b = line.text.find_first_not_of(" \t", close + 1);
+						if (b != std::string::npos) {
+							// The scanner already trimmed this line, so the remainder needs no trim.
+							para.push_back(line.text.substr(b));
+							continue;
+						}
+					}
+				}
 				// A COMMENT'S BODY is the indented run that starts on the VERY NEXT line. A blank line
 				// straight after the comment means it has none, and the run after the blank is a quote
 				// -- the `..` + blank idiom. Measured against pandoc; before #64 the body leaked into
@@ -355,6 +376,7 @@ private:
 					i = end - 1;
 				}
 				continue; // produces nothing, and must not fall through as prose
+			}
 			case LineKind::ADORNMENT: {
 				// A LONE `::` IS A LITERAL-BLOCK MARKER, not a transition. `::` is a legal two-character
 				// adornment, so the scanner cannot tell; nothing preceding it can. flush() already turns

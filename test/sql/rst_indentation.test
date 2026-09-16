@@ -364,3 +364,49 @@ SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
   E'A link_.\n\n.. _link:\n   https://example.com\n') ORDER BY element_order;
 ----
 1	paragraph	A link_.
+
+# ---------------------------------------------------------------------------------------
+# THE BODY CAN SIT ON THE LABEL LINE (#67). Every assertion above puts it on the NEXT line,
+# and that is exactly why nothing caught this: `.. [1] The body.` emitted NOTHING, and the
+# wrapped form emitted only its continuation. The label line's text is document text, so it
+# now seeds the paragraph -- which also joins a continuation into ONE paragraph, as pandoc
+# reads it.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Text with a footnote. [1]_\n\n.. [1] The footnote body.\n') ORDER BY element_order;
+----
+1	paragraph	Text with a footnote. [1]_
+1	paragraph	The footnote body.
+
+# ONE paragraph, not the label line and its continuation as two.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'.. [2] The footnote body\n   continues here.\n') ORDER BY element_order;
+----
+1	paragraph	The footnote body continues here.
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'See [CIT2002]_.\n\n.. [CIT2002] A citation body.\n') ORDER BY element_order;
+----
+1	paragraph	See [CIT2002]_.
+1	paragraph	A citation body.
+
+# THE CONTROL that keeps the fix honest: an ordinary comment still produces nothing, whether
+# its text is on the label line or indented below it. Only a `[` label makes it document text.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'Before.\n\n.. A comment with text on its own line.\n\n.. A comment\n   with an indented body.\n\nAfter.\n') ORDER BY element_order;
+----
+1	paragraph	Before.
+1	paragraph	After.
+
+# The fixture check_word_loss.py now reads: every footnote and citation form in one file, so a
+# form that goes missing is caught by the guard as well as by the assertions above.
+query III
+SELECT count(*), count(*) FILTER (WHERE element_type = 'paragraph'), count(*) FILTER (WHERE element_type = 'heading')
+FROM read_rst_blocks('test/fixtures/footnotes.rst');
+----
+9	8	1

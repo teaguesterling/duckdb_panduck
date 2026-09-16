@@ -263,6 +263,25 @@ jobs:
   #
   # It runs independently of the build: the check reads the C++ table as text, so it
   # needs no compiled extension and gives a fast, standalone signal.
+  # WHICH TEST FILES ARE BEING SKIPPED (#34, #59). sqllogictest reports skips as a count by
+  # reason and never names the files: on a clean extension directory -- which is what this
+  # runner has -- that is 5 whole files and 238 assertions gone under a summary that reads
+  # "All tests passed".
+  #
+  # This job runs the STATIC mode, which predicts a skip from its cause in the test file (a
+  # bare INSTALL of a community extension 404s here; a require-env gates the file) and fails
+  # on one nothing declares. It needs no build and no DuckDB, which is why it can run here at
+  # all -- the runtime mode drives the unittest binary and lives in `make check`. Measured:
+  # the two modes name the SAME 9 files on a clean extension directory.
+  test-skips:
+    name: Every skipped test file is declared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which test files will be skipped, and is each one declared?
+        run: python3 scripts/check_test_skips.py --static
+
   pandoc-alignment:
     name: Pandoc AST alignment
     runs-on: ubuntu-latest

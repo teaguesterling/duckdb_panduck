@@ -21,13 +21,33 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax check-test-skips test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \
 	printf '\n'; \
 	if [ $$rc -ne 0 ]; then echo "FAILED: one or more checks above"; else echo "All checks passed."; fi; \
 	exit $$rc
+
+# WHICH TEST FILES ARE BEING SKIPPED, and why. sqllogictest reports skips as a count by
+# reason -- "skip on error_message matching 'HTTP': 5" -- and never says which files. On a
+# clean extension directory, which is what every CI runner has, that is 5 whole files and
+# 238 assertions gone under a summary reading "All tests passed" (#34, #59).
+#
+# A skip is legitimate when it is DECLARED with a reason, in the script's allowlist of
+# (file, reason) pairs. An undeclared skip fails. Pass --list to report without gating.
+#
+# It runs each file separately, so it costs a full suite run; it is in `make check` rather
+# than in `make test` for that reason.
+.PHONY: check-test-skips
+check-test-skips:
+	python3 scripts/check_test_skips.py
+
+# The same question as a CI runner sees it: an empty HOME has no community extensions, so
+# the HTTP-matched skips actually happen. This is the one that catches a file going quiet.
+.PHONY: check-test-skips-clean
+check-test-skips-clean:
+	HOME=$$(mktemp -d) python3 scripts/check_test_skips.py
 
 # Check the vendored duck_block vocabulary against duck_block_utils' latest RELEASE (not
 # main), by NAME AND VALUE, and check the copy's provenance stamp. Since spec 1.4 a copy

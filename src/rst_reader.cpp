@@ -511,8 +511,7 @@ private:
 				// The title is handed to the ADORNMENT case by seeding `para`, rather than
 				// emitted here, so the level rule and inline parsing stay in one place. `::`
 				// cannot reach that test: it is shorter than any title it could underline.
-				if (line.kind == LineKind::ENUM && i + 1 < to &&
-				    lines_[i + 1].kind == LineKind::ADORNMENT) {
+				if (line.kind == LineKind::ENUM && i + 1 < to && lines_[i + 1].kind == LineKind::ADORNMENT) {
 					// raw_text keeps the marker the scanner stripped; pandoc's heading text is
 					// `1. Table of Contents`, number included.
 					const std::string &title = line.raw_text.empty() ? line.text : line.raw_text;

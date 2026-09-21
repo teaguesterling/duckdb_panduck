@@ -48,6 +48,14 @@ struct Line {
 	//! lines indented to this column or deeper; a line indented past the marker
 	//! but short of it ends the list (pandoc, #64).
 	int text_col = 0;
+	//! BULLET/ENUM: the line as written, marker included. `text` has the marker
+	//! stripped, and the marker cannot be rebuilt from `ordered`/`start`: `1.` and
+	//! `1)` are both ENUM with start=1. A SECTION TITLE that happens to open with a
+	//! marker -- `1. Table of Contents` under an underline -- is a title, not a list,
+	//! and pandoc keeps the number in it (#84). Only the reader can tell the two
+	//! apart, and only from the NEXT line, so the scanner carries the text it would
+	//! otherwise discard.
+	std::string raw_text;
 	bool header_sep = false; //!< GRID_SEP written with `=` -- promotes the rows above it
 	std::vector<int> spans;  //!< SIMPLE_SEP: the rule runs' WIDTHS
 	//! SIMPLE_SEP: where each rule run STARTS. Widths alone are not enough to

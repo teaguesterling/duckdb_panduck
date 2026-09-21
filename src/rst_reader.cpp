@@ -492,6 +492,34 @@ private:
 			}
 			case LineKind::BULLET:
 			case LineKind::ENUM: {
+				// AN ENUMERATED SECTION TITLE (#84). `1. Table of Contents` under an underline
+				// is a title, and the scanner cannot know: it classifies a line from its own
+				// text, so `1. ` is ENUM before anything looks ahead. The list then ate the
+				// title, and the underline -- left over with an empty paragraph -- became an
+				// `hr`. Measured on duckeye's fixture: 2 headings where pandoc found 4.
+				//
+				// WHAT THE UNDERLINE HAS TO BE, measured against pandoc rather than assumed
+				// symmetric -- the first cut of this fix was wrong on both counts:
+				//   `1. Title` / `--------` (as long as the title)  -> Header "1. Title"
+				//   `1) Title` / `--------`                         -> Header "1) Title"
+				//   `1. Title` / `----`     (SHORTER than the title) -> Para, NOT a title
+				//   `- Title`  / `--------` (a BULLET, any length)   -> Para, NOT a title
+				// So only ENUM qualifies, and only when the run is at least as long as the
+				// text. A bullet line never becomes a title, and a short underline leaves the
+				// list alone. Anything else here would invent a heading pandoc does not have.
+				//
+				// The title is handed to the ADORNMENT case by seeding `para`, rather than
+				// emitted here, so the level rule and inline parsing stay in one place. `::`
+				// cannot reach that test: it is shorter than any title it could underline.
+				if (line.kind == LineKind::ENUM && i + 1 < to && lines_[i + 1].kind == LineKind::ADORNMENT) {
+					// raw_text keeps the marker the scanner stripped; pandoc's heading text is
+					// `1. Table of Contents`, number included.
+					const std::string &title = line.raw_text.empty() ? line.text : line.raw_text;
+					if (lines_[i + 1].text.size() >= title.size()) {
+						para.push_back(title);
+						continue;
+					}
+				}
 				flush();
 				i = List(i, to, depth) - 1;
 				continue;

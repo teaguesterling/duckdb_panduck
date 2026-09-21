@@ -12,10 +12,11 @@ class ExtensionLoader;
 
 namespace org {
 
-//! An inline run. `level` is absolute: a run directly inside a block sits at that block's
-//! level + 1.
+//! An inline run. `level` is absolute: a run directly inside a block sits at
+//! that block's level + 1.
 struct OrgInline {
-	std::string element_type; //!< text, bold, italic, underline, code, strikethrough, link
+	std::string element_type; //!< text, bold, italic, underline, code,
+	                          //!< strikethrough, link
 	std::string content;
 	std::string href; //!< link only
 	int level = 2;
@@ -32,8 +33,8 @@ struct OrgBlock {
 	std::string language;  //!< code only
 	std::string encoding;  //!< table only: 'json'
 	std::string list_start, number_style, number_delim;
-	//! Free-form attributes -- `format` for a raw block, and whatever a later construct
-	//! needs. The named fields above predate this and are left alone.
+	//! Free-form attributes -- `format` for a raw block, and whatever a later
+	//! construct needs. The named fields above predate this and are left alone.
 	std::map<std::string, std::string> attributes;
 	int heading_level = 0;
 	int level = 1;

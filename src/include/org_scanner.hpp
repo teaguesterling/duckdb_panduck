@@ -8,9 +8,10 @@ namespace org {
 
 //! What a single line of Org source IS, decided by its prefix alone.
 //!
-//! Org's block structure is entirely line-prefixed -- `*`, `-`, `|`, `#+` -- which is why
-//! this reader scans lines where the LaTeX reader tokenizes characters. Only INLINE markup
-//! is character-level, and that is a separate pass over a line's text.
+//! Org's block structure is entirely line-prefixed -- `*`, `-`, `|`, `#+` --
+//! which is why this reader scans lines where the LaTeX reader tokenizes
+//! characters. Only INLINE markup is character-level, and that is a separate
+//! pass over a line's text.
 enum class LineKind {
 	BLANK,        //!< empty or whitespace-only: a paragraph and list separator
 	HEADING,      //!< `* text` .. `****** text`, stars at column 0
@@ -22,13 +23,14 @@ enum class LineKind {
 	TABLE_RULE,   //!< `|---+---|` -- the separator that promotes the row above it
 	HRULE,        //!< five or more dashes alone on a line
 	COMMENT,      //!< `# text` -- a comment, and NOT `#+KEY:`
-	DRAWER_BEGIN, //!< `:PROPERTIES:` -- opens a drawer whose contents are not prose
+	DRAWER_BEGIN, //!< `:PROPERTIES:` -- opens a drawer whose contents are not
+	              //!< prose
 	DRAWER_END,   //!< `:END:`
 	TEXT,         //!< anything else: paragraph content
 };
 
-//! One classified line. `text` is the line's CONTENT with its marker removed, so a
-//! consumer never re-parses the prefix.
+//! One classified line. `text` is the line's CONTENT with its marker removed,
+//! so a consumer never re-parses the prefix.
 struct Line {
 	LineKind kind = LineKind::TEXT;
 	std::string text;        //!< content after the marker
@@ -42,7 +44,8 @@ struct Line {
 	bool definition = false; //!< LIST_ITEM: had a ` :: `, so `term` is populated
 };
 
-//! Classify every line of an Org document. Never fails: an unrecognised line is TEXT.
+//! Classify every line of an Org document. Never fails: an unrecognised line is
+//! TEXT.
 std::vector<Line> ScanOrg(const std::string &src);
 
 } // namespace org

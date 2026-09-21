@@ -27,7 +27,8 @@ bool StartsWith(const std::string &s, const char *p) {
 	return s.compare(0, strlen(p), p) == 0;
 }
 
-//! Split source into lines, dropping a trailing CR so CRLF files scan identically.
+//! Split source into lines, dropping a trailing CR so CRLF files scan
+//! identically.
 std::vector<std::string> SplitLines(const std::string &src) {
 	std::vector<std::string> out;
 	size_t start = 0;
@@ -48,7 +49,8 @@ std::vector<std::string> SplitLines(const std::string &src) {
 	return out;
 }
 
-//! Net change in `{{` nesting across one line. Counts pairs, so `}}}}` closes two.
+//! Net change in `{{` nesting across one line. Counts pairs, so `}}}}` closes
+//! two.
 int BraceDelta(const std::string &s) {
 	int delta = 0;
 	for (size_t i = 0; i + 1 < s.size(); i++) {
@@ -63,7 +65,8 @@ int BraceDelta(const std::string &s) {
 	return delta;
 }
 
-//! A template's name is everything up to the first `|` or the closing braces, trimmed.
+//! A template's name is everything up to the first `|` or the closing braces,
+//! trimmed.
 //! `{{Infobox person\n| name = X}}` names "Infobox person".
 std::string TemplateName(const std::string &raw) {
 	if (raw.size() < 3) {
@@ -87,9 +90,10 @@ Line Make(LineKind kind, std::string text = {}) {
 	return ln;
 }
 
-//! Block-level HTML wikitext allows. Deliberately a CLOSED LIST rather than "anything in
-//! angle brackets": `<` is common in prose, and treating every tag-looking line as a block
-//! would swallow text. Anything not here stays in the paragraph and reaches the inline pass.
+//! Block-level HTML wikitext allows. Deliberately a CLOSED LIST rather than
+//! "anything in angle brackets": `<` is common in prose, and treating every
+//! tag-looking line as a block would swallow text. Anything not here stays in
+//! the paragraph and reaches the inline pass.
 const char *const kHtmlBlocks[] = {"blockquote", "syntaxhighlight", "source", "pre",  "references",
                                    "div",        "center",          "poem",   nullptr};
 
@@ -136,9 +140,10 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			continue;
 		}
 
-		// A TEMPLATE CALL OPENING A LINE is consumed whole, across as many source lines as
-		// its braces need. Doing this here rather than in the reader is what keeps a `|`
-		// inside a template from ever reaching the table branches below.
+		// A TEMPLATE CALL OPENING A LINE is consumed whole, across as many source
+		// lines as its braces need. Doing this here rather than in the reader is
+		// what keeps a `|` inside a template from ever reaching the table branches
+		// below.
 		if (StartsWith(t, "{{")) {
 			std::string acc = raw;
 			int depth = BraceDelta(raw);
@@ -147,9 +152,9 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 				acc += "\n" + lines[i];
 				depth += BraceDelta(lines[i]);
 			}
-			// An UNTERMINATED template runs to end of input and is still emitted. Wikitext
-			// has no error state -- MediaWiki renders what it can -- and dropping the text
-			// would lose content that is plainly in the file.
+			// An UNTERMINATED template runs to end of input and is still emitted.
+			// Wikitext has no error state -- MediaWiki renders what it can -- and
+			// dropping the text would lose content that is plainly in the file.
 			Line ln;
 			ln.kind = LineKind::TEMPLATE;
 			ln.text = TrimRight(acc);
@@ -176,8 +181,8 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 				out.push_back(Make(LineKind::TABLE_CELL, Trim(t.substr(1))));
 				continue;
 			}
-			// A bare line inside a table is a continuation of the cell above it. Emitting it
-			// as TEXT would break it out of the table entirely.
+			// A bare line inside a table is a continuation of the cell above it.
+			// Emitting it as TEXT would break it out of the table entirely.
 			out.push_back(Make(LineKind::TEXT, t));
 			continue;
 		}
@@ -188,8 +193,8 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			continue;
 		}
 
-		// `== Heading ==`. The trailing run need not match the leading one -- MediaWiki
-		// takes the SHORTER of the two, and so does pandoc.
+		// `== Heading ==`. The trailing run need not match the leading one --
+		// MediaWiki takes the SHORTER of the two, and so does pandoc.
 		if (t[0] == '=' && t.size() >= 3 && t.back() == '=') {
 			size_t lead = 0;
 			while (lead < t.size() && t[lead] == '=') {
@@ -224,7 +229,8 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			continue;
 		}
 
-		// FOUR or more dashes, per MediaWiki -- not three. A three-dash line is text.
+		// FOUR or more dashes, per MediaWiki -- not three. A three-dash line is
+		// text.
 		if (StartsWith(t, "----") && t.find_first_not_of('-') == std::string::npos) {
 			out.push_back(Make(LineKind::HRULE));
 			continue;
@@ -242,9 +248,10 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			continue;
 		}
 
-		// BLOCK-LEVEL HTML, consumed whole across as many source lines as its closing tag
-		// needs. Without this the tags leak into a paragraph as literal text -- which is the
-		// "emitting non-content as prose" failure the Org reader already paid for once.
+		// BLOCK-LEVEL HTML, consumed whole across as many source lines as its
+		// closing tag needs. Without this the tags leak into a paragraph as literal
+		// text -- which is the "emitting non-content as prose" failure the Org
+		// reader already paid for once.
 		if (t[0] == '<' && t.size() > 2) {
 			size_t np = 1;
 			while (np < t.size() && (std::isalnum(static_cast<unsigned char>(t[np])) || t[np] == '_')) {
@@ -281,7 +288,8 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 						cpos = acc.find(close);
 					}
 					ln.text = cpos == std::string::npos ? acc : acc.substr(0, cpos);
-					// Leading and trailing newlines are the tag's own layout, not content.
+					// Leading and trailing newlines are the tag's own layout, not
+					// content.
 					while (!ln.text.empty() && (ln.text.front() == '\n' || ln.text.front() == '\r')) {
 						ln.text.erase(0, 1);
 					}
@@ -292,9 +300,10 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			}
 		}
 
-		// A LEADING SPACE IS PREFORMATTED, and MediaWiki's own parser renders it <pre> --
-		// measured 2026-09-02 against maintenance/parse.php, not inferred. Tested on the RAW
-		// line, since trimming is exactly what destroys the signal.
+		// A LEADING SPACE IS PREFORMATTED, and MediaWiki's own parser renders it
+		// <pre> -- measured 2026-09-02 against maintenance/parse.php, not inferred.
+		// Tested on the RAW line, since trimming is exactly what destroys the
+		// signal.
 		if (!raw.empty() && (raw[0] == ' ' || raw[0] == '\t')) {
 			out.push_back(Make(LineKind::PREFORMATTED, TrimRight(raw).substr(1)));
 			continue;
@@ -302,14 +311,17 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 
 		// A LINE THAT IS NOTHING BUT HTML TAGS is raw HTML, not prose.
 		//
-		// The pandoc-generated fixture is what forced this: `pandoc -t mediawiki` writes
-		// `<span id="introduction"></span>` before every heading, and without this the tags
-		// arrived as a paragraph whose text was the literal markup. A hand-written fixture
-		// contains no such line, so only the second witness could have found it.
+		// The pandoc-generated fixture is what forced this: `pandoc -t mediawiki`
+		// writes
+		// `<span id="introduction"></span>` before every heading, and without this
+		// the tags arrived as a paragraph whose text was the literal markup. A
+		// hand-written fixture contains no such line, so only the second witness
+		// could have found it.
 		//
-		// The rule is deliberately about SHAPE rather than a tag list: any line whose only
-		// content is tags. Adding `span` to the block-element list would be wrong -- span is
-		// an inline element, and it is a block here only because it is alone on a line.
+		// The rule is deliberately about SHAPE rather than a tag list: any line
+		// whose only content is tags. Adding `span` to the block-element list would
+		// be wrong -- span is an inline element, and it is a block here only
+		// because it is alone on a line.
 		if (t[0] == '<' && t.back() == '>') {
 			std::string outside;
 			bool in_tag = false;
@@ -332,10 +344,10 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 					tag += static_cast<char>(std::tolower(static_cast<unsigned char>(t[k])));
 				}
 				// TAGS THE INLINE PASS OWNS ARE NOT BLOCKS, even alone on a line. `<ref
-				// name="a"/>` is a self-closing reference reuse and therefore a line of pure
-				// markup by this rule's test -- but it is a footnote, and pandoc keeps it as
-				// an inline Note inside a paragraph. Without this the shape rule silently
-				// converted every bare reference reuse into raw HTML.
+				// name="a"/>` is a self-closing reference reuse and therefore a line of
+				// pure markup by this rule's test -- but it is a footnote, and pandoc
+				// keeps it as an inline Note inside a paragraph. Without this the shape
+				// rule silently converted every bare reference reuse into raw HTML.
 				bool inline_owned = tag == "ref" || tag == "nowiki" || tag == "code" || tag == "math";
 				if (!inline_owned) {
 					Line ln = Make(LineKind::HTML_BLOCK, t);
@@ -347,9 +359,9 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 			}
 		}
 
-		// A line carrying an INLINE template that does not close on this line takes its
-		// continuations with it, so the paragraph stays whole and the inline pass sees a
-		// balanced call.
+		// A line carrying an INLINE template that does not close on this line takes
+		// its continuations with it, so the paragraph stays whole and the inline
+		// pass sees a balanced call.
 		std::string acc = t;
 		int depth = BraceDelta(t);
 		while (depth > 0 && i + 1 < lines.size()) {

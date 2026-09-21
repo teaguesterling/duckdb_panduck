@@ -1,6 +1,6 @@
 #include "mediawiki_reader.hpp"
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -8,6 +8,7 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -20,22 +21,24 @@ namespace {
 
 //! The pandoc RawBlock format name for held-raw wikitext.
 //!
-//! THIS IS AN ATTRIBUTE, NOT AN `encoding`, and the distinction was a real mistake on the
-//! way here. `encoding='mediawiki'` looks obviously right and is NOT CONFORMANT: duck_block
-//! validates `encoding` against a closed set -- text, json, yaml, html, xml, latex,
-//! markdown, toml -- and `mediawiki` is not in it. make check-conformance rejects it, which
-//! is the vocabulary defending a spec-owned enumeration that panduck does not get to extend
-//! from the outside.
+//! THIS IS AN ATTRIBUTE, NOT AN `encoding`, and the distinction was a real
+//! mistake on the way here. `encoding='mediawiki'` looks obviously right and is
+//! NOT CONFORMANT: duck_block validates `encoding` against a closed set --
+//! text, json, yaml, html, xml, latex, markdown, toml -- and `mediawiki` is not
+//! in it. make check-conformance rejects it, which is the vocabulary defending
+//! a spec-owned enumeration that panduck does not get to extend from the
+//! outside.
 //!
-//! `attributes['format']` is where it belongs, and not by invention: the converter in
-//! pandoc_block_convert.cpp ALREADY reads exactly that attribute to build
-//! RawBlock [<format>, ...], defaulting to "html". So the export path was looking for this
-//! all along while the reader was writing it somewhere the exporter never read.
+//! `attributes['format']` is where it belongs, and not by invention: the
+//! converter in pandoc_block_convert.cpp ALREADY reads exactly that attribute
+//! to build RawBlock [<format>, ...], defaulting to "html". So the export path
+//! was looking for this all along while the reader was writing it somewhere the
+//! exporter never read.
 //!
-//! Asking duck_block_utils to add `mediawiki` to the encoding set is still the right
-//! follow-up -- pandoc uses that word, and rst and org have the same gap -- but it is their
-//! ruling to make, and holding the format in an attribute is correct today rather than
-//! blocked on it.
+//! Asking duck_block_utils to add `mediawiki` to the encoding set is still the
+//! right follow-up -- pandoc uses that word, and rst and org have the same gap
+//! -- but it is their ruling to make, and holding the format in an attribute is
+//! correct today rather than blocked on it.
 constexpr const char *RAW_FORMAT_MEDIAWIKI = "mediawiki";
 
 std::string Trim(const std::string &s) {
@@ -47,9 +50,11 @@ std::string Trim(const std::string &s) {
 	return s.substr(b, e - b + 1);
 }
 
-//! MediaWiki's heading anchor: lowercased, spaces to underscores, markup stripped.
-//! Measured against pandoc, which slugifies the RENDERED text -- so `== Heading with
-//! '''bold''' ==` anchors as `heading_with_bold`, with the quotes gone rather than encoded.
+//! MediaWiki's heading anchor: lowercased, spaces to underscores, markup
+//! stripped. Measured against pandoc, which slugifies the RENDERED text -- so
+//! `== Heading with
+//! '''bold''' ==` anchors as `heading_with_bold`, with the quotes gone rather
+//! than encoded.
 std::string Slugify(const std::string &text) {
 	std::string out;
 	bool prev_us = false;
@@ -63,8 +68,9 @@ std::string Slugify(const std::string &text) {
 				prev_us = true;
 			}
 		}
-		// Everything else -- the quote marks of '''bold''', brackets of [[link]] -- is
-		// dropped rather than encoded, which is what makes the anchor match pandoc's.
+		// Everything else -- the quote marks of '''bold''', brackets of [[link]] --
+		// is dropped rather than encoded, which is what makes the anchor match
+		// pandoc's.
 	}
 	while (!out.empty() && out.back() == '_') {
 		out.pop_back();
@@ -72,8 +78,8 @@ std::string Slugify(const std::string &text) {
 	return out;
 }
 
-//! Strip wiki markup down to its text, for slugs and for table cells. Not a parser: it
-//! removes the delimiters that carry no text of their own.
+//! Strip wiki markup down to its text, for slugs and for table cells. Not a
+//! parser: it removes the delimiters that carry no text of their own.
 std::string PlainText(const std::string &s) {
 	std::string out;
 	for (size_t i = 0; i < s.size();) {
@@ -114,8 +120,8 @@ void PushText(std::vector<MwInline> &out, const std::string &text, int level) {
 	out.push_back(in);
 }
 
-//! Net `{{` nesting change across a substring, so an inline template can be balanced the
-//! same way the scanner balances a block one.
+//! Net `{{` nesting change across a substring, so an inline template can be
+//! balanced the same way the scanner balances a block one.
 int BraceDelta(const std::string &s, size_t from, size_t to) {
 	int d = 0;
 	for (size_t i = from; i + 1 < to; i++) {
@@ -143,15 +149,17 @@ std::string TemplateNameOf(const std::string &raw) {
 
 void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out);
 
-//! Emit one delimited run as an element with its own inline children one level deeper.
+//! Emit one delimited run as an element with its own inline children one level
+//! deeper.
 void PushWrapped(std::vector<MwInline> &out, const char *type, const std::string &inner, int level) {
 	MwInline node;
 	node.element_type = type;
 	node.level = level;
 	std::vector<MwInline> children;
 	ParseInlines(inner, level + 1, children);
-	// A run whose only content is plain text collapses into the wrapper's own content, which
-	// is spec 6.0's content rule and what every other panduck reader emits.
+	// A run whose only content is plain text collapses into the wrapper's own
+	// content, which is spec 6.0's content rule and what every other panduck
+	// reader emits.
 	if (children.size() == 1 && children[0].element_type == DuckBlockTypes::INLINE_TEXT &&
 	    children[0].attributes.empty()) {
 		node.content = children[0].content;
@@ -168,7 +176,8 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 	std::string pending;
 	size_t i = 0;
 	while (i < s.size()) {
-		// AN INLINE TEMPLATE, balanced rather than matched -- {{a|{{b|x}}|y}} is one call.
+		// AN INLINE TEMPLATE, balanced rather than matched -- {{a|{{b|x}}|y}} is
+		// one call.
 		if (s.compare(i, 2, "{{") == 0) {
 			size_t j = i + 2;
 			int depth = 1;
@@ -203,8 +212,9 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 			}
 		}
 
-		// `<nowiki>` SUPPRESSES MARKUP, it does not mark content -- measured: pandoc yields a
-		// bare Str. So its body becomes text and never re-enters this parser.
+		// `<nowiki>` SUPPRESSES MARKUP, it does not mark content -- measured:
+		// pandoc yields a bare Str. So its body becomes text and never re-enters
+		// this parser.
 		if (s.compare(i, 8, "<nowiki>") == 0) {
 			size_t close = s.find("</nowiki>", i);
 			if (close != std::string::npos) {
@@ -249,10 +259,11 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 				MwInline node;
 				node.element_type = DuckBlockTypes::INLINE_NOTE;
 				node.level = level;
-				// THE NAME IS KEPT ON BOTH FORMS. pandoc discards it -- a `<ref name="a"/>`
-				// reuse becomes an EMPTY Note -- so a consumer cannot join a reuse back to
-				// its definition. The attribute costs nothing and pandoc's own shape is
-				// unchanged, so this is additive rather than a divergence.
+				// THE NAME IS KEPT ON BOTH FORMS. pandoc discards it -- a `<ref
+				// name="a"/>` reuse becomes an EMPTY Note -- so a consumer cannot join
+				// a reuse back to its definition. The attribute costs nothing and
+				// pandoc's own shape is unchanged, so this is additive rather than a
+				// divergence.
 				if (!name.empty()) {
 					node.attributes["name"] = name;
 				}
@@ -286,8 +297,8 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 				node.level = level;
 				node.attributes["href"] = target;
 				// PANDOC MARKS AN INTERNAL LINK IN THE TITLE FIELD -- Link [..] ["A",
-				// "wikilink"] -- overloading the link title as a type marker. Copying that
-				// field into `title` would produce a document full of links titled
+				// "wikilink"] -- overloading the link title as a type marker. Copying
+				// that field into `title` would produce a document full of links titled
 				// "wikilink", so it is read as what it means.
 				node.attributes["link_type"] = "wikilink";
 				out.push_back(node);
@@ -318,8 +329,9 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 			}
 		}
 
-		// The quote family. FIVE first: `'''''both'''''` nests Strong around Emph, measured,
-		// and testing three-before-five would consume the wrong delimiter.
+		// The quote family. FIVE first: `'''''both'''''` nests Strong around Emph,
+		// measured, and testing three-before-five would consume the wrong
+		// delimiter.
 		if (s.compare(i, 5, "'''''") == 0) {
 			size_t close = s.find("'''''", i + 5);
 			if (close != std::string::npos) {
@@ -361,7 +373,8 @@ void ParseInlines(const std::string &s, int level, std::vector<MwInline> &out) {
 	PushText(out, pending, level);
 }
 
-//! Attach a line's inline runs to a block, collapsing the text-only case into `content`.
+//! Attach a line's inline runs to a block, collapsing the text-only case into
+//! `content`.
 void AttachInlines(MwBlock &block, const std::string &text) {
 	std::vector<MwInline> inl;
 	ParseInlines(text, block.level + 1, inl);
@@ -372,8 +385,9 @@ void AttachInlines(MwBlock &block, const std::string &text) {
 	block.inlines = std::move(inl);
 }
 
-//! `[[File:name|thumb|caption]]` alone on a line. Pandoc makes this a Figure wrapping an
-//! Image, with the caption as the figure's own caption, and duck_block has all three types.
+//! `[[File:name|thumb|caption]]` alone on a line. Pandoc makes this a Figure
+//! wrapping an Image, with the caption as the figure's own caption, and
+//! duck_block has all three types.
 bool FileLink(const std::string &t, std::vector<MwBlock> &out) {
 	if (t.compare(0, 2, "[[") != 0 || t.size() < 4 || t.compare(t.size() - 2, 2, "]]") != 0) {
 		return false;
@@ -395,8 +409,8 @@ bool FileLink(const std::string &t, std::vector<MwBlock> &out) {
 		}
 	}
 	std::string src = parts[0].substr(parts[0].find(':') + 1);
-	// The caption is the LAST parameter that is not a known display option -- MediaWiki's own
-	// rule, and the reason `thumb` does not become the caption.
+	// The caption is the LAST parameter that is not a known display option --
+	// MediaWiki's own rule, and the reason `thumb` does not become the caption.
 	static const char *kOptions[] = {"thumb", "thumbnail", "frame", "frameless", "border",
 	                                 "right", "left",      "none",  "center",    nullptr};
 	std::string caption;
@@ -493,11 +507,12 @@ public:
 				CloseLists();
 				// HELD RAW, NOT DROPPED, and not leaked as prose either.
 				//
-				// Measured against MediaWiki's own parser 2026-09-02: __TOC__ is CONSUMED and
-				// never reaches the reader, so pandoc's `Str "__TOC__"` puts a token in the
-				// document that no reader of the wiki would ever see. But it is a render-time
-				// instruction exactly as a template is -- unresolvable without the wiki, and
-				// really there in the source -- so discarding it would lose something real.
+				// Measured against MediaWiki's own parser 2026-09-02: __TOC__ is
+				// CONSUMED and never reaches the reader, so pandoc's `Str "__TOC__"`
+				// puts a token in the document that no reader of the wiki would ever
+				// see. But it is a render-time instruction exactly as a template is --
+				// unresolvable without the wiki, and really there in the source -- so
+				// discarding it would lose something real.
 				MwBlock b;
 				b.element_type = DuckBlockTypes::TYPE_RAW;
 				b.level = 1;
@@ -542,9 +557,9 @@ public:
 				para_ += ln.text;
 				break;
 			default:
-				// TABLE_* outside a table: the scanner only emits these between START and
-				// END, so reaching here means a stray `|` line. Treat it as prose rather
-				// than dropping it.
+				// TABLE_* outside a table: the scanner only emits these between START
+				// and END, so reaching here means a stray `|` line. Treat it as prose
+				// rather than dropping it.
 				FlushPre();
 				if (!para_.empty()) {
 					para_ += " ";
@@ -575,10 +590,11 @@ private:
 		if (pre_.empty()) {
 			return;
 		}
-		// A `code` BLOCK, where pandoc produces a paragraph of inline Code joined by
-		// LineBreaks with spaces replaced by U+00A0. MediaWiki's own parser renders a leading
-		// space as <pre> -- measured 2026-09-02 -- so the block type is the faithful reading
-		// and pandoc's is an approximation of it inside a paragraph.
+		// A `code` BLOCK, where pandoc produces a paragraph of inline Code joined
+		// by LineBreaks with spaces replaced by U+00A0. MediaWiki's own parser
+		// renders a leading space as <pre> -- measured 2026-09-02 -- so the block
+		// type is the faithful reading and pandoc's is an approximation of it
+		// inside a paragraph.
 		MwBlock b;
 		b.element_type = DuckBlockTypes::TYPE_CODE;
 		b.level = 1;
@@ -592,29 +608,31 @@ private:
 		FlushPre();
 	}
 
-	//! Block-level HTML that wikitext allows. Four of these have a real duck_block type and
-	//! the rest are held raw as HTML -- which is what pandoc does too, and one of the few
-	//! places this reader deliberately MIRRORS pandoc rather than improving on it.
+	//! Block-level HTML that wikitext allows. Four of these have a real
+	//! duck_block type and the rest are held raw as HTML -- which is what pandoc
+	//! does too, and one of the few places this reader deliberately MIRRORS
+	//! pandoc rather than improving on it.
 	//!
-	//! `<references/>` is the case worth naming: it is a placeholder for generated content,
-	//! exactly like `__TOC__`, and it would be consistent to treat it as a behavior switch.
-	//! It is not, because pandoc emits RawBlock ["html", ...] for it DELIBERATELY, and the
-	//! rule this reader follows is to mirror pandoc's considered choices and diverge only
-	//! where pandoc leaked non-prose into prose. This is a choice, not a leak.
+	//! `<references/>` is the case worth naming: it is a placeholder for
+	//! generated content, exactly like `__TOC__`, and it would be consistent to
+	//! treat it as a behavior switch. It is not, because pandoc emits RawBlock
+	//! ["html", ...] for it DELIBERATELY, and the rule this reader follows is to
+	//! mirror pandoc's considered choices and diverge only where pandoc leaked
+	//! non-prose into prose. This is a choice, not a leak.
 	void HtmlBlock(const Line &ln) {
 		if (ln.verbatim) {
-			// A line that is only tags -- `<span id="x"></span>` and the like. Held as raw
-			// HTML, which is what pandoc does with it, rather than allowed to reach a
-			// paragraph as literal text.
+			// A line that is only tags -- `<span id="x"></span>` and the like. Held
+			// as raw HTML, which is what pandoc does with it, rather than allowed to
+			// reach a paragraph as literal text.
 			MwBlock r;
 			r.element_type = DuckBlockTypes::TYPE_RAW;
 			r.level = 1;
-			// THE FORMAT NEVER LIVES IN `encoding`. duck_block_utils measured this across four
-			// formats and made it a FLAT rule at 61da561: a raw block's encoding is `text`
-			// even for html and latex, which ARE declared encodings. Stated as a fallback --
-			// "use the attribute when the encoding set lacks your format" -- it invites
-			// encoding='html' whenever it happens to fit, and produces two shapes for one
-			// element_type.
+			// THE FORMAT NEVER LIVES IN `encoding`. duck_block_utils measured this
+			// across four formats and made it a FLAT rule at 61da561: a raw block's
+			// encoding is `text` even for html and latex, which ARE declared
+			// encodings. Stated as a fallback -- "use the attribute when the encoding
+			// set lacks your format" -- it invites encoding='html' whenever it
+			// happens to fit, and produces two shapes for one element_type.
 			r.attributes["format"] = "html";
 			r.content = ln.text;
 			if (!ln.name.empty()) {
@@ -665,15 +683,17 @@ private:
 		blocks_.push_back(std::move(r));
 	}
 
-	//! `*` bullet, `#` ordered, `;` term, `:` definition. Nesting depth is the LENGTH of the
-	//! marker run, not indentation, so `#*` is a bullet list inside an ordered one.
+	//! `*` bullet, `#` ordered, `;` term, `:` definition. Nesting depth is the
+	//! LENGTH of the marker run, not indentation, so `#*` is a bullet list inside
+	//! an ordered one.
 	void ListItem(const Line &ln) {
 		const std::string &m = ln.markers;
-		// `;` AND `:` ARE ONE LIST, not two. A term line and its definition line carry
-		// different marker characters but belong to the same definition list, so nesting
-		// identity is compared on a NORMALISED marker -- otherwise `; term` / `: definition`
-		// closes a list and opens another, and the pair that defines a definition list ends
-		// up in two sibling lists that share nothing.
+		// `;` AND `:` ARE ONE LIST, not two. A term line and its definition line
+		// carry different marker characters but belong to the same definition list,
+		// so nesting identity is compared on a NORMALISED marker -- otherwise `;
+		// term` / `: definition` closes a list and opens another, and the pair that
+		// defines a definition list ends up in two sibling lists that share
+		// nothing.
 		auto norm = [](char c) {
 			return c == ':' ? ';' : c;
 		};
@@ -719,7 +739,8 @@ private:
 		open_.clear();
 	}
 
-	//! Consume `{| ... |}` into one native table. Returns the index of the closing line.
+	//! Consume `{| ... |}` into one native table. Returns the index of the
+	//! closing line.
 	size_t Table(const std::vector<Line> &lines, size_t start) {
 		std::vector<std::string> headers;
 		std::vector<std::vector<std::string>> rows;
@@ -876,12 +897,35 @@ void MwScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterMediaWikiReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_mediawiki_blocks", {LogicalType::VARCHAR}, MwScan, MwFileBind, MwGlobalState::Init);
-	loader.RegisterFunction(file_fn);
+	{
+		TableFunction file_fn("read_mediawiki_blocks", {LogicalType::VARCHAR}, MwScan, MwFileBind, MwGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(file_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"file_path"};
+		desc.description = "Read a MediaWiki wikitext document and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_mediawiki_blocks('document.wiki')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
-	TableFunction string_fn("read_mediawiki_blocks_string", {LogicalType::VARCHAR}, MwScan, MwStringBind,
-	                        MwGlobalState::Init);
-	loader.RegisterFunction(string_fn);
+	{
+		TableFunction string_fn("read_mediawiki_blocks_string", {LogicalType::VARCHAR}, MwScan, MwStringBind,
+		                        MwGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(string_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"mediawiki_text"};
+		desc.description = "Parse a MediaWiki wikitext string and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_mediawiki_blocks_string('== Section "
+		                 "==\\n\'\'\'Bold\'\'\'')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace mediawiki

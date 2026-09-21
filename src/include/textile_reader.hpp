@@ -12,8 +12,8 @@ class ExtensionLoader;
 
 namespace textile {
 
-//! An inline run. `level` is absolute: a run directly inside a block sits at that block's
-//! level + 1, and one nested inside another deeper again.
+//! An inline run. `level` is absolute: a run directly inside a block sits at
+//! that block's level + 1, and one nested inside another deeper again.
 struct TxInline {
 	std::string element_type;
 	std::string content;

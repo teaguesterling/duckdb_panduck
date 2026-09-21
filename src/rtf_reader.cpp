@@ -1,6 +1,6 @@
 #include "rtf_reader.hpp"
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "block_json.hpp"
 
@@ -8,10 +8,11 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <cctype>
-#include <map>
 #include <cstdlib>
+#include <map>
 
 namespace duckdb {
 namespace rtf {
@@ -40,8 +41,8 @@ void AppendUtf8(std::string &out, int32_t cp) {
 	}
 }
 
-//! \'hh escapes are CP1252 in practice, which differs from Latin-1 only in 0x80-0x9F.
-//! Outside that window the byte value is the code point.
+//! \'hh escapes are CP1252 in practice, which differs from Latin-1 only in
+//! 0x80-0x9F. Outside that window the byte value is the code point.
 int32_t Cp1252ToCodepoint(uint8_t byte) {
 	static const int32_t HIGH[32] = {0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
 	                                 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
@@ -53,9 +54,10 @@ int32_t Cp1252ToCodepoint(uint8_t byte) {
 	return static_cast<int32_t>(byte);
 }
 
-//! Destinations whose contents are document metadata, not body text. Their groups are
-//! skipped wholesale. `\*` ignorable destinations (bookmarks, footnote separators,
-//! generator stamps) are handled generically and need no entry here.
+//! Destinations whose contents are document metadata, not body text. Their
+//! groups are skipped wholesale. `\*` ignorable destinations (bookmarks,
+//! footnote separators, generator stamps) are handled generically and need no
+//! entry here.
 bool IsSkippedDestination(const std::string &word) {
 	return word == "fonttbl" || word == "colortbl" || word == "info" || word == "object" || word == "header" ||
 	       word == "footer" || word == "footnote" || word == "listtable" || word == "listoverridetable" ||
@@ -75,9 +77,9 @@ struct CharFormat {
 	bool operator!=(const CharFormat &o) const {
 		return bold != o.bold || italic != o.italic || underline != o.underline || strike != o.strike;
 	}
-	//! duck_block's inline vocabulary is flat, so a run carrying several attributes is
-	//! reported by its strongest one. Documented limitation of the basic reader; nested
-	//! inline structure is a later refinement.
+	//! duck_block's inline vocabulary is flat, so a run carrying several
+	//! attributes is reported by its strongest one. Documented limitation of the
+	//! basic reader; nested inline structure is a later refinement.
 	std::string ElementType() const {
 		if (bold) {
 			return DuckBlockTypes::INLINE_BOLD;
@@ -144,13 +146,14 @@ public:
 		FlushParagraph();
 		// A document ending inside a table still has one to emit.
 		FlushTable();
-		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract. Sorted, because
-		// std::map iterates sorted and that is also pandoc's Meta serialisation order.
+		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract. Sorted,
+		// because std::map iterates sorted and that is also pandoc's Meta
+		// serialisation order.
 		for (auto &kv : meta_) {
 			auto text = kv.second;
 			// Trimmed here rather than via a helper: this TU has none, and RTF pads a
-			// destination's text with the space that separates a control word from its
-			// argument -- `{\title The Title}` arrives as " The Title".
+			// destination's text with the space that separates a control word from
+			// its argument -- `{\title The Title}` arrives as " The Title".
 			size_t b = text.find_first_not_of(" \t\r\n");
 			size_t e = text.find_last_not_of(" \t\r\n");
 			text = (b == std::string::npos) ? std::string() : text.substr(b, e - b + 1);
@@ -254,11 +257,11 @@ private:
 				return;
 			}
 			if (word == "info") {
-				// {\info} IS SKIPPED BY DEFAULT AND SELECTIVELY OPENED. Most of its children
-				// are timestamps -- \creatim, \revtim, \printim -- which pandoc does not
-				// map to anything, so descending wholesale would put date fragments in the
-				// document. Marking the group instead lets \title, \author and \subject
-				// re-open it for themselves below.
+				// {\info} IS SKIPPED BY DEFAULT AND SELECTIVELY OPENED. Most of its
+				// children are timestamps -- \creatim, \revtim, \printim -- which
+				// pandoc does not map to anything, so descending wholesale would put
+				// date fragments in the document. Marking the group instead lets
+				// \title, \author and \subject re-open it for themselves below.
 				g.skip = true;
 				g.in_info = true;
 				return;
@@ -269,14 +272,16 @@ private:
 			}
 		}
 
-		// METADATA CAPTURE, and it must come before the g.skip early-return below: these
-		// words arrive INSIDE a group already marked skip, and their whole job is to
-		// re-open it.
+		// METADATA CAPTURE, and it must come before the g.skip early-return below:
+		// these words arrive INSIDE a group already marked skip, and their whole
+		// job is to re-open it.
 		//
-		// RTF's `author` is a single MetaInlines, NOT a list -- measured. LaTeX's \author
-		// yields MetaList for the same logical field and Org concatenates repeated
-		// #+AUTHOR: into one MetaInlines. Three formats, three arrangements, all pandoc's,
-		// so no reader here may generalise its author handling from another's.
+		// RTF's `author` is a single MetaInlines, NOT a list -- measured. LaTeX's
+		// \author yields MetaList for the same logical field and Org concatenates
+		// repeated
+		// #+AUTHOR: into one MetaInlines. Three formats, three arrangements, all
+		// pandoc's, so no reader here may generalise its author handling from
+		// another's.
 		if (g.in_info && (word == "title" || word == "author" || word == "subject")) {
 			g.skip = false;
 			g.meta_key = word;
@@ -284,8 +289,8 @@ private:
 		}
 		if (word == "generator") {
 			// NOT inside {\info}: `{\*\generator ...}` is a top-level ignorable
-			// destination. Assuming RTF metadata lives in \info would have missed it, and
-			// it is the only metadata the LibreOffice fixture actually carries.
+			// destination. Assuming RTF metadata lives in \info would have missed it,
+			// and it is the only metadata the LibreOffice fixture actually carries.
 			g.skip = false;
 			g.meta_key = "generator";
 			return;
@@ -303,14 +308,15 @@ private:
 		}
 
 		if (word == "pict") {
-			// AN IMAGE. {\pict ...} holds the picture's BYTES as hex, which this reader does
-			// not decode -- but the picture itself is content, and dropping the group
-			// wholesale (as the ignorable-destination list used to) lost the fact that the
-			// document has an image at all. The bytes are skipped; the element is not.
+			// AN IMAGE. {\pict ...} holds the picture's BYTES as hex, which this
+			// reader does not decode -- but the picture itself is content, and
+			// dropping the group wholesale (as the ignorable-destination list used
+			// to) lost the fact that the document has an image at all. The bytes are
+			// skipped; the element is not.
 			//
-			// No src: RTF embeds rather than references, so there is no path to report. A
-			// consumer learns an image is HERE, which is more than nothing and is honest
-			// about being less than a filename.
+			// No src: RTF embeds rather than references, so there is no path to
+			// report. A consumer learns an image is HERE, which is more than nothing
+			// and is honest about being less than a filename.
 			RtfBlock img;
 			img.element_type = DuckBlockTypes::TYPE_IMAGE;
 			img.level = 1;
@@ -321,8 +327,8 @@ private:
 		}
 
 		if (word == "cell") {
-			// \cell ENDS A CELL, and does the job \par does outside a table -- the cell's
-			// text is in runs_ and nothing else will flush it.
+			// \cell ENDS A CELL, and does the job \par does outside a table -- the
+			// cell's text is in runs_ and nothing else will flush it.
 			row_cells_.push_back(CurrentText());
 			runs_.clear();
 			in_table_ = true;
@@ -342,22 +348,23 @@ private:
 		} else if (word == "trhdr") {
 			row_is_header_ = true;
 		} else if (word == "par") {
-			// A \par INSIDE a table separates paragraphs within one cell, not blocks. Left to
-			// \cell to flush, or the cell's text is emitted as a stray paragraph.
+			// A \par INSIDE a table separates paragraphs within one cell, not blocks.
+			// Left to \cell to flush, or the cell's text is emitted as a stray
+			// paragraph.
 			if (in_table_) {
 				return;
 			}
 			FlushParagraph();
 		} else if (word == "pard") {
-			// \pard resets paragraph properties, INCLUDING \intbl -- and RTF emits one at the
-			// start of EVERY row, so flushing the table here produced one table per row.
-			// The table ends when a paragraph arrives that is not in it, which FlushParagraph
-			// decides.
+			// \pard resets paragraph properties, INCLUDING \intbl -- and RTF emits
+			// one at the start of EVERY row, so flushing the table here produced one
+			// table per row. The table ends when a paragraph arrives that is not in
+			// it, which FlushParagraph decides.
 			in_table_ = false;
 			style_id_ = -1;
 			outline_level_ = -1;
-			// \pard resets paragraph properties, INCLUDING list membership. Without this a
-			// single list turns every following paragraph into a list item.
+			// \pard resets paragraph properties, INCLUDING list membership. Without
+			// this a single list turns every following paragraph into a list item.
 			list_id_ = 0;
 			list_level_ = 0;
 		} else if (word == "plain") {
@@ -377,17 +384,19 @@ private:
 		} else if (word == "outlinelevel" && has_param) {
 			outline_level_ = param;
 		} else if (word == "ls" && has_param) {
-			// \lsN names the list this paragraph belongs to; \ilvlN its depth. Measured
-			// against pandoc, which makes a BulletList from exactly the paragraphs carrying
-			// these, and nothing from the fixture that has neither.
+			// \lsN names the list this paragraph belongs to; \ilvlN its depth.
+			// Measured against pandoc, which makes a BulletList from exactly the
+			// paragraphs carrying these, and nothing from the fixture that has
+			// neither.
 			list_id_ = param;
 		} else if (word == "ilvl" && has_param) {
 			list_level_ = param;
 		} else if (word == "listtext") {
-			// {\listtext ...} is the RENDERED BULLET -- the glyph and its tab, written into
-			// the file so a non-list-aware renderer still shows something. It is presentation,
-			// not content, and including it puts a literal bullet character at the front of
-			// every list item's text. Suppressed like any other non-content destination.
+			// {\listtext ...} is the RENDERED BULLET -- the glyph and its tab,
+			// written into the file so a non-list-aware renderer still shows
+			// something. It is presentation, not content, and including it puts a
+			// literal bullet character at the front of every list item's text.
+			// Suppressed like any other non-content destination.
 			g.skip = true;
 		} else if (word == "uc" && has_param) {
 			g.uc = param;
@@ -459,8 +468,9 @@ private:
 		style_entry_name_.clear();
 	}
 
-	//! Heading level, or 0. \outlinelevel wins when present; otherwise the paragraph's
-	//! style is resolved through the stylesheet and matched against "Heading N".
+	//! Heading level, or 0. \outlinelevel wins when present; otherwise the
+	//! paragraph's style is resolved through the stylesheet and matched against
+	//! "Heading N".
 	int HeadingLevel() const {
 		if (outline_level_ >= 0 && outline_level_ <= 8) {
 			return outline_level_ + 1;
@@ -490,22 +500,26 @@ private:
 		return 0;
 	}
 
-	//! Resolve \lsN -> per-level orderedness from {\*\listtable} and {\*\listoverridetable}.
+	//! Resolve \lsN -> per-level orderedness from {\*\listtable} and
+	//! {\*\listoverridetable}.
 	//!
-	//! A SCAN OF THE RAW SOURCE rather than a walk of the group tree, deliberately. Both are
-	//! ignorable destinations that this reader skips wholesale -- correctly, they are not
-	//! content -- and threading list definitions back out of a skipped group would mean
-	//! un-skipping them everywhere. The tables are self-delimiting and appear before the
-	//! body, so a targeted scan reads them without disturbing that.
+	//! A SCAN OF THE RAW SOURCE rather than a walk of the group tree,
+	//! deliberately. Both are ignorable destinations that this reader skips
+	//! wholesale -- correctly, they are not content -- and threading list
+	//! definitions back out of a skipped group would mean un-skipping them
+	//! everywhere. The tables are self-delimiting and appear before the body, so
+	//! a targeted scan reads them without disturbing that.
 	//!
-	//! \levelnfc is the number format: 23 is a bullet, 255 is "no number", anything else is
-	//! a numbering scheme. So the test is against those two rather than for a list of
-	//! ordered spellings that would need extending.
+	//! \levelnfc is the number format: 23 is a bullet, 255 is "no number",
+	//! anything else is a numbering scheme. So the test is against those two
+	//! rather than for a list of ordered spellings that would need extending.
 	void ScanListTable() {
-		// Walk the source once, tracking the levels seen since the last \listid. In RTF a
-		// {\list ...} group states its \levelnfc for each level FIRST and its \listid LAST,
-		// so a level belongs to the next \listid that appears -- which is why this
-		// accumulates forward rather than searching backward from the id.
+		// Walk the source once, tracking the levels seen since the last \listid. In
+		// RTF a
+		// {\list ...} group states its \levelnfc for each level FIRST and its
+		// \listid LAST, so a level belongs to the next \listid that appears --
+		// which is why this accumulates forward rather than searching backward from
+		// the id.
 		std::vector<bool> pending_levels;
 		int pending_ls = -1;
 		bool in_override = false;
@@ -541,7 +555,8 @@ private:
 			if (word == "listoverridetable") {
 				in_override = true;
 			} else if (word == "levelnfc" && has_value && !in_override) {
-				// 23 is a bullet and 255 is "no number"; anything else numbers the items.
+				// 23 is a bullet and 255 is "no number"; anything else numbers the
+				// items.
 				pending_levels.push_back(value != 23 && value != 255);
 			} else if (word == "listid" && has_value) {
 				if (in_override) {
@@ -560,8 +575,9 @@ private:
 		}
 	}
 
-	//! The accumulated runs as flat text, trimmed. Shared by the cell and paragraph paths so
-	//! a cell and a paragraph cannot disagree about what their text is.
+	//! The accumulated runs as flat text, trimmed. Shared by the cell and
+	//! paragraph paths so a cell and a paragraph cannot disagree about what their
+	//! text is.
 	std::string CurrentText() {
 		std::string all;
 		for (auto &r : runs_) {
@@ -572,8 +588,8 @@ private:
 		return b == std::string::npos ? std::string() : all.substr(b, e - b + 1);
 	}
 
-	//! Emit the accumulated table, if any. Idempotent: called on \pard and at end of input,
-	//! and a call with nothing accumulated does nothing.
+	//! Emit the accumulated table, if any. Idempotent: called on \pard and at end
+	//! of input, and a call with nothing accumulated does nothing.
 	void FlushTable() {
 		if (table_headers_.empty() && table_rows_.empty()) {
 			in_table_ = false;
@@ -592,8 +608,9 @@ private:
 	}
 
 	void FlushParagraph() {
-		// A paragraph outside a table ENDS any table being accumulated. This is the only
-		// reliable boundary: RTF has no table-end control word, and \pard fires per row.
+		// A paragraph outside a table ENDS any table being accumulated. This is the
+		// only reliable boundary: RTF has no table-end control word, and \pard
+		// fires per row.
 		if (!in_table_) {
 			FlushTable();
 		}
@@ -605,7 +622,8 @@ private:
 				any_format = true;
 			}
 		}
-		// Trim -- RTF paragraphs routinely carry leading/trailing layout whitespace.
+		// Trim -- RTF paragraphs routinely carry leading/trailing layout
+		// whitespace.
 		size_t b = all.find_first_not_of(" \t\n");
 		size_t e = all.find_last_not_of(" \t\n");
 		if (b == std::string::npos) {
@@ -616,12 +634,14 @@ private:
 
 		RtfBlock block;
 		int level = HeadingLevel();
-		// A heading is never a list item, even when the paragraph carries \ls -- RTF permits
-		// the combination and no consumer expects a heading inside a list.
+		// A heading is never a list item, even when the paragraph carries \ls --
+		// RTF permits the combination and no consumer expects a heading inside a
+		// list.
 		int list_depth = (level > 0 || list_id_ == 0) ? 0 : list_level_ + 1;
 
-		// Open and close `list` containers around the run of items, matching every other
-		// reader's shape -- and closing on a TYPE change, not only a depth change.
+		// Open and close `list` containers around the run of items, matching every
+		// other reader's shape -- and closing on a TYPE change, not only a depth
+		// change.
 		bool want_ordered = false;
 		auto lit = ls_to_listid_.find(list_id_);
 		if (lit != ls_to_listid_.end()) {
@@ -642,9 +662,9 @@ private:
 			RtfBlock l;
 			l.element_type = DuckBlockTypes::TYPE_LIST;
 			l.level = 2 * static_cast<int>(open_ordered_.size()) + 1;
-			// Orderedness comes from the \listtable, resolved through \listoverride. A list
-			// whose definition is absent stays BULLET rather than guessing -- a wrong
-			// `ordered=true` is a claim the document does not support.
+			// Orderedness comes from the \listtable, resolved through \listoverride.
+			// A list whose definition is absent stays BULLET rather than guessing --
+			// a wrong `ordered=true` is a claim the document does not support.
 			l.list_type = want_ordered ? DuckBlockTypes::LIST_TYPE_ORDERED : DuckBlockTypes::LIST_TYPE_BULLET;
 			blocks_.push_back(std::move(l));
 			open_ordered_.push_back(want_ordered);
@@ -660,11 +680,11 @@ private:
 			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
 
-		// Character formatting inside a heading is presentational -- both pandoc and
-		// LibreOffice bold heading text as part of the heading style itself. Emitting the
-		// title as an inline child would leave content NULL, so a consumer building a
-		// table of contents from `content` would see an empty heading. Headings therefore
-		// always flatten.
+		// Character formatting inside a heading is presentational -- both pandoc
+		// and LibreOffice bold heading text as part of the heading style itself.
+		// Emitting the title as an inline child would leave content NULL, so a
+		// consumer building a table of contents from `content` would see an empty
+		// heading. Headings therefore always flatten.
 		if (!any_format || level > 0) {
 			// Text-only run flattens into content, matching the duck_block spec's
 			// normalized simple case (one duck_block per paragraph, no children).
@@ -707,9 +727,10 @@ private:
 
 	int style_id_ = -1;
 	int outline_level_ = -1;
-	//! TABLE STATE. RTF has no table element -- a table is a RUN of paragraphs marked
-	//! \intbl, with \cell ending each cell and \row each row. So the reader accumulates
-	//! rather than descends, and the table is emitted when the run ends.
+	//! TABLE STATE. RTF has no table element -- a table is a RUN of paragraphs
+	//! marked \intbl, with \cell ending each cell and \row each row. So the
+	//! reader accumulates rather than descends, and the table is emitted when the
+	//! run ends.
 	bool in_table_ = false;
 	bool row_is_header_ = false;
 	std::vector<std::string> row_cells_;
@@ -721,8 +742,9 @@ private:
 
 	int list_id_ = 0;    //!< \lsN -- 0 means this paragraph is not in a list
 	int list_level_ = 0; //!< \ilvlN -- depth within that list
-	//! The TYPE of each open list, not just how many. A bullet list after an ordered one
-	//! at the same depth is a different list; comparing depth alone swallows it.
+	//! The TYPE of each open list, not just how many. A bullet list after an
+	//! ordered one at the same depth is a different list; comparing depth alone
+	//! swallows it.
 	std::vector<bool> open_ordered_;
 
 	std::map<int, std::string> styles_;
@@ -768,7 +790,8 @@ struct RtfReaderGlobalState : public GlobalTableFunctionState {
 unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBindInput &input,
                                        vector<LogicalType> &return_types, panduck::BindNames &names) {
 	readers::RequireReaderEnabled(context, "rtf");
-	// Column order mirrors the duck_block struct so a row casts straight to duck_block.
+	// Column order mirrors the duck_block struct so a row casts straight to
+	// duck_block.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::INTEGER,
@@ -810,9 +833,9 @@ unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBind
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 		}
-		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
-		// of its block, so it is one deeper. This reader emits no containers, so every
-		// block sits at 1 and every inline at 2.
+		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a
+		// CHILD of its block, so it is one deeper. This reader emits no containers,
+		// so every block sits at 1 and every inline at 2.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));
@@ -840,8 +863,8 @@ void RtfReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &output
 
 		output.SetValue(0, count, Value(row.kind));
 		output.SetValue(1, count, Value(row.element_type));
-		// Empty content is NULL, per the duck_block convention for containers whose text
-		// lives in structured inline children.
+		// Empty content is NULL, per the duck_block convention for containers whose
+		// text lives in structured inline children.
 		output.SetValue(2, count, row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content));
 		output.SetValue(3, count, Value::INTEGER(row.level));
 		output.SetValue(4, count, Value(row.encoding));
@@ -859,7 +882,15 @@ void RtfReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &output
 void RegisterRtfReaderFunction(ExtensionLoader &loader) {
 	TableFunction fn("read_rtf_blocks", {LogicalType::VARCHAR}, RtfReaderScan, RtfReaderBind,
 	                 RtfReaderGlobalState::Init);
-	loader.RegisterFunction(fn);
+	CreateTableFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"file_path"};
+	desc.description = "Read an RTF file and return structured document blocks.";
+	desc.examples = {"SELECT * FROM read_rtf_blocks('document.rtf')"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

@@ -1,14 +1,15 @@
-#include "doc_metadata.hpp"
-#include "reader_registry.hpp"
-#include "panduck_duckdb_compat.hpp"
 #include "docx_reader.hpp"
+#include "doc_metadata.hpp"
+#include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "block_json.hpp"
 
 #include "duck_block_types.hpp"
-#include "zip_container.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "zip_container.hpp"
 
 #include <cctype>
 #include <functional>
@@ -20,8 +21,9 @@ namespace docx {
 
 namespace {
 
-//! styleId -> style name, from word/styles.xml. Word writes localized names ("Overskrift
-//! 1"), so the id is checked too; between them the common writers are covered.
+//! styleId -> style name, from word/styles.xml. Word writes localized names
+//! ("Overskrift 1"), so the id is checked too; between them the common writers
+//! are covered.
 std::map<std::string, std::string> ParseStyleNames(const std::string &xml) {
 	std::map<std::string, std::string> names;
 	pugi::xml_document doc;
@@ -38,8 +40,9 @@ std::map<std::string, std::string> ParseStyleNames(const std::string &xml) {
 	return names;
 }
 
-//! Heading level from a "Heading 3"-ish string, or 0. Accepts "heading 3", "Heading3"
-//! and "heading_20_3" -- the spellings the common writers actually emit.
+//! Heading level from a "Heading 3"-ish string, or 0. Accepts "heading 3",
+//! "Heading3" and "heading_20_3" -- the spellings the common writers actually
+//! emit.
 int HeadingLevelFromName(const std::string &raw) {
 	std::string s;
 	for (char c : raw) {
@@ -72,12 +75,13 @@ struct RunFormat {
 	bool Plain() const {
 		return !bold && !italic && !underline && !strike && !code && !superscript && !subscript;
 	}
-	//! duck_block's inline vocabulary is flat, so a run carrying several attributes is
-	//! reported by its strongest. Documented limitation, matching the RTF reader.
+	//! duck_block's inline vocabulary is flat, so a run carrying several
+	//! attributes is reported by its strongest. Documented limitation, matching
+	//! the RTF reader.
 	std::string ElementType() const {
-		// Code outranks the toggles: pandoc marks a verbatim run with the VerbatimChar
-		// character style, and the theme behind it may also set a face. The verbatim-ness
-		// is the property that carries meaning.
+		// Code outranks the toggles: pandoc marks a verbatim run with the
+		// VerbatimChar character style, and the theme behind it may also set a
+		// face. The verbatim-ness is the property that carries meaning.
 		if (code) {
 			return DuckBlockTypes::INLINE_CODE;
 		}
@@ -103,9 +107,9 @@ struct RunFormat {
 	}
 };
 
-//! A w:rPr toggle is on unless it explicitly says otherwise: <w:b/> means bold, and
-//! <w:b w:val="0"/> means not. Treating presence alone as true would make every
-//! explicitly-disabled run bold.
+//! A w:rPr toggle is on unless it explicitly says otherwise: <w:b/> means bold,
+//! and <w:b w:val="0"/> means not. Treating presence alone as true would make
+//! every explicitly-disabled run bold.
 bool ToggleOn(const pugi::xml_node &rpr, const char *tag) {
 	auto node = rpr.child(tag);
 	if (!node) {
@@ -119,7 +123,8 @@ int ParagraphHeadingLevel(const pugi::xml_node &ppr, const std::map<std::string,
 	if (!ppr) {
 		return 0;
 	}
-	// Mechanism 1: an explicit outline level. LibreOffice writes this and no pStyle.
+	// Mechanism 1: an explicit outline level. LibreOffice writes this and no
+	// pStyle.
 	auto outline = ppr.child("w:outlineLvl");
 	if (outline) {
 		std::string val = outline.attribute("w:val").value();
@@ -152,18 +157,18 @@ int ParagraphHeadingLevel(const pugi::xml_node &ppr, const std::map<std::string,
 //! docProps/core.xml as `value` elements, appended after the blocks.
 //!
 //! Every field here EXCEEDS pandoc, which extracts nothing from DOCX -- see
-//! doc_metadata.hpp. Each carries attributes['source_type'] with its original spelling so
-//! a consumer can tell format-derived metadata from pandoc-derived, which is the condition
-//! the approval to exceed came with.
+//! doc_metadata.hpp. Each carries attributes['source_type'] with its original
+//! spelling so a consumer can tell format-derived metadata from pandoc-derived,
+//! which is the condition the approval to exceed came with.
 void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &out) {
 	if (core_xml.empty()) {
 		return;
 	}
 	pugi::xml_document doc;
 	if (!doc.load_buffer(core_xml.data(), core_xml.size())) {
-		// A malformed metadata part must not fail the document. The body is what the
-		// caller asked for; metadata is enrichment, and losing it is a smaller harm than
-		// refusing a file whose prose reads perfectly.
+		// A malformed metadata part must not fail the document. The body is what
+		// the caller asked for; metadata is enrichment, and losing it is a smaller
+		// harm than refusing a file whose prose reads perfectly.
 		return;
 	}
 	auto props = doc.child("cp:coreProperties");
@@ -178,43 +183,47 @@ void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &ou
 		}
 		auto text = TrimMetaText(node.child_value());
 		if (text.empty()) {
-			// EMPTY FIELDS ARE SKIPPED HERE, and this is the one place that differs from
-			// the EPUB/LaTeX/RTF readers, deliberately.
+			// EMPTY FIELDS ARE SKIPPED HERE, and this is the one place that differs
+			// from the EPUB/LaTeX/RTF readers, deliberately.
 			//
-			// The ruling is "an empty field is still a field", and its stated ground is
-			// that "emitting nothing would discard a fact PANDOC PRESERVED" -- pandoc emits
-			// the key with an empty value, so a reader mirrors it. That reasoning is about
-			// MIRRORING, and pandoc extracts nothing at all from DOCX and ODT, so there is
-			// no empty field of pandoc's to mirror and nothing is being discarded.
+			// The ruling is "an empty field is still a field", and its stated ground
+			// is that "emitting nothing would discard a fact PANDOC PRESERVED" --
+			// pandoc emits the key with an empty value, so a reader mirrors it. That
+			// reasoning is about MIRRORING, and pandoc extracts nothing at all from
+			// DOCX and ODT, so there is no empty field of pandoc's to mirror and
+			// nothing is being discarded.
 			//
-			// THAT GROUND WAS INCOMPLETE, and the ruling's second one has to be answered
-			// on its own terms: a consumer cannot recover "the author declared a title and
-			// left it blank" from silence. That argument never mentions pandoc, so pandoc's
-			// absence does not dispose of it.
+			// THAT GROUND WAS INCOMPLETE, and the ruling's second one has to be
+			// answered on its own terms: a consumer cannot recover "the author
+			// declared a title and left it blank" from silence. That argument never
+			// mentions pandoc, so pandoc's absence does not dispose of it.
 			//
-			// Answered directly it points the same way and gives a better rule than "docx
-			// and odt are different": PRESENT-AND-EMPTY CARRIES INFORMATION ONLY WHEN
-			// PRESENCE IS A CHOICE. Emit an empty field when its presence is authorial;
-			// skip it when the format's writer emits the element unconditionally. That
-			// yields this behaviour here and the opposite for YAML and Org, from one
-			// principle rather than an exception.
+			// Answered directly it points the same way and gives a better rule than
+			// "docx and odt are different": PRESENT-AND-EMPTY CARRIES INFORMATION
+			// ONLY WHEN PRESENCE IS A CHOICE. Emit an empty field when its presence
+			// is authorial; skip it when the format's writer emits the element
+			// unconditionally. That yields this behaviour here and the opposite for
+			// YAML and Org, from one principle rather than an exception.
 			//
 			// MEASURED ACROSS TWO INDEPENDENT PRODUCERS rather than assumed from one:
 			//
-			//     LibreOffice  dc:title, dc:creator, dc:subject, dc:description  all EMPTY
-			//     Pandoc       dc:title, dc:creator EMPTY; subject/description ABSENT
+			//     LibreOffice  dc:title, dc:creator, dc:subject, dc:description  all
+			//     EMPTY Pandoc       dc:title, dc:creator EMPTY; subject/description
+			//     ABSENT
 			//
-			// Both write an empty title and creator into every file, so presence there is a
-			// constant rather than an authorial act. Emitting them would put four empty
-			// rows in every document and invite exactly the misreading the original rule
-			// protects against -- a deliberate blanking that never happened.
+			// Both write an empty title and creator into every file, so presence
+			// there is a constant rather than an authorial act. Emitting them would
+			// put four empty rows in every document and invite exactly the misreading
+			// the original rule protects against -- a deliberate blanking that never
+			// happened.
 			//
-			// BOUNDED DELIBERATELY: Word and Pages are UNMEASURED. If some producer writes
-			// <dc:title/> only when a title was set and then cleared, the element IS
-			// authorial in those files and this skip is wrong for them. A reader cannot see
-			// which producer wrote a file, so per-format is the implementable
-			// approximation. Recorded as a measurement about named producers rather than a
-			// law, so it can be revisited instead of inherited.
+			// BOUNDED DELIBERATELY: Word and Pages are UNMEASURED. If some producer
+			// writes <dc:title/> only when a title was set and then cleared, the
+			// element IS authorial in those files and this skip is wrong for them. A
+			// reader cannot see which producer wrote a file, so per-format is the
+			// implementable approximation. Recorded as a measurement about named
+			// producers rather than a law, so it can be revisited instead of
+			// inherited.
 			continue;
 		}
 		found[field.key] = {text, field.source};
@@ -238,32 +247,36 @@ void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &ou
 std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	ZipContainer zip(path, "read_docx_blocks");
 	auto document_xml = zip.ReadRequired("word/document.xml");
-	// OPTIONAL. A document with no lists has no numbering part, and -- measured on
-	// test/fixtures/libreoffice_outlinelvl.docx -- a document CAN carry w:numPr and still
-	// have none, because numId 0 means "no numbering" rather than "numbering zero". Pandoc
-	// makes those paragraphs, and so does this reader.
+	// OPTIONAL. A document with no lists has no numbering part, and -- measured
+	// on test/fixtures/libreoffice_outlinelvl.docx -- a document CAN carry
+	// w:numPr and still have none, because numId 0 means "no numbering" rather
+	// than "numbering zero". Pandoc makes those paragraphs, and so does this
+	// reader.
 	std::string numbering_xml;
 	zip.Read("word/numbering.xml", numbering_xml);
-	// An image's <a:blip r:embed="rIdN"> names a RELATIONSHIP, not a file; the target lives
-	// in the rels part. A footnote's body lives in its own part too, keyed by w:id.
+	// An image's <a:blip r:embed="rIdN"> names a RELATIONSHIP, not a file; the
+	// target lives in the rels part. A footnote's body lives in its own part too,
+	// keyed by w:id.
 	std::string rels_xml, footnotes_xml;
 	zip.Read("word/_rels/document.xml.rels", rels_xml);
 	zip.Read("word/footnotes.xml", footnotes_xml);
 	std::string styles_xml;
-	zip.Read("word/styles.xml", styles_xml); // optional: a minimal DOCX may omit it
+	zip.Read("word/styles.xml",
+	         styles_xml); // optional: a minimal DOCX may omit it
 
 	auto styles = ParseStyleNames(styles_xml);
 
-	// OPTIONAL: a DOCX need not carry docProps/core.xml, and a missing part is not an
-	// error -- it is a document that declared no metadata.
+	// OPTIONAL: a DOCX need not carry docProps/core.xml, and a missing part is
+	// not an error -- it is a document that declared no metadata.
 	std::string core_xml;
 	zip.Read("docProps/core.xml", core_xml);
 
 	pugi::xml_document doc;
-	// parse_ws_pcdata is REQUIRED, not a tuning knob. pandoc emits inter-word spacing as
-	// separate runs whose only content is a space: <w:t xml:space="preserve"> </w:t>.
-	// pugixml's default flags discard whitespace-only text nodes, so those runs came back
-	// empty and were skipped, welding "with" and "bold" into "withbold". The document says
+	// parse_ws_pcdata is REQUIRED, not a tuning knob. pandoc emits inter-word
+	// spacing as separate runs whose only content is a space: <w:t
+	// xml:space="preserve"> </w:t>. pugixml's default flags discard
+	// whitespace-only text nodes, so those runs came back empty and were skipped,
+	// welding "with" and "bold" into "withbold". The document says
 	// xml:space="preserve"; honouring that is the reader's job.
 	auto parsed =
 	    doc.load_buffer(document_xml.data(), document_xml.size(), pugi::parse_default | pugi::parse_ws_pcdata);
@@ -272,8 +285,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		                            parsed.description());
 	}
 
-	// numId -> per-ilvl orderedness, resolved through abstractNumId. A numId that does not
-	// resolve here is NOT a list -- see the numbering_xml comment above.
+	// numId -> per-ilvl orderedness, resolved through abstractNumId. A numId that
+	// does not resolve here is NOT a list -- see the numbering_xml comment above.
 	std::map<int, std::map<int, bool>> num_ordered;
 	pugi::xml_document num_doc;
 	if (!numbering_xml.empty() &&
@@ -285,9 +298,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			for (auto lvl : an.children("w:lvl")) {
 				int ilvl = lvl.attribute("w:ilvl").as_int(0);
 				std::string fmt = lvl.child("w:numFmt").attribute("w:val").value();
-				// Everything that is not a bullet is a numbering scheme -- decimal, lowerRoman,
-				// upperLetter and the rest -- so the test is against `bullet` rather than for a
-				// list of ordered spellings that would need extending per format.
+				// Everything that is not a bullet is a numbering scheme -- decimal,
+				// lowerRoman, upperLetter and the rest -- so the test is against
+				// `bullet` rather than for a list of ordered spellings that would need
+				// extending per format.
 				abstract[aid][ilvl] = (fmt != "bullet" && !fmt.empty());
 			}
 		}
@@ -301,10 +315,11 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 	}
 
-	// A w:tbl is a SIBLING of w:p, and this loop used to iterate `body.children("w:p")` --
-	// so a table was not flattened, it was NEVER SEEN. Every cell's text vanished with it,
-	// which is content loss rather than a structure gap. Measured against pandoc, which
-	// reports Table for the same file.
+	// A w:tbl is a SIBLING of w:p, and this loop used to iterate
+	// `body.children("w:p")` -- so a table was not flattened, it was NEVER SEEN.
+	// Every cell's text vanished with it, which is content loss rather than a
+	// structure gap. Measured against pandoc, which reports Table for the same
+	// file.
 	auto para_text = [](const pugi::xml_node &p) {
 		std::string out;
 		for (auto t : p.select_nodes(".//w:t")) {
@@ -313,8 +328,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		return out;
 	};
 
-	// rId -> target path, so an image can report the file it actually points at rather than
-	// an opaque relationship id no consumer can resolve.
+	// rId -> target path, so an image can report the file it actually points at
+	// rather than an opaque relationship id no consumer can resolve.
 	std::map<std::string, std::string> rels;
 	pugi::xml_document rels_doc;
 	if (!rels_xml.empty() && rels_doc.load_buffer(rels_xml.data(), rels_xml.size())) {
@@ -329,9 +344,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	if (!footnotes_xml.empty() &&
 	    fn_doc.load_buffer(footnotes_xml.data(), footnotes_xml.size(), pugi::parse_default | pugi::parse_ws_pcdata)) {
 		for (auto fn : fn_doc.child("w:footnotes").children("w:footnote")) {
-			// SEPARATOR AND CONTINUATION footnotes are not content: Word stores the rule drawn
-			// above a footnote block as footnotes with w:type. Reading them would put a stray
-			// empty note in every document that has any footnote at all.
+			// SEPARATOR AND CONTINUATION footnotes are not content: Word stores the
+			// rule drawn above a footnote block as footnotes with w:type. Reading
+			// them would put a stray empty note in every document that has any
+			// footnote at all.
 			std::string type = fn.attribute("w:type").value();
 			if (!type.empty() && type != "normal") {
 				continue;
@@ -350,22 +366,26 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 
 	std::vector<DocxBlock> blocks;
 	auto body = doc.child("w:document").child("w:body");
-	// The TYPE of each currently-open list, not merely how many are open. A bullet list
-	// following an ordered one at the SAME depth is a different list, and comparing depth
-	// alone silently swallows the second into the first -- measured on a generated fixture,
-	// where `- plain bullet` after `1. 2. 3.` became a fourth ordered item.
+	// The TYPE of each currently-open list, not merely how many are open. A
+	// bullet list following an ordered one at the SAME depth is a different list,
+	// and comparing depth alone silently swallows the second into the first --
+	// measured on a generated fixture, where `- plain bullet` after `1. 2. 3.`
+	// became a fourth ordered item.
 	std::vector<bool> open_ordered;
-	//! Body paragraphs styled as document metadata: {index in `blocks`, its text}.
+	//! Body paragraphs styled as document metadata: {index in `blocks`, its
+	//! text}.
 	std::vector<std::pair<size_t, std::string>> meta_styled;
 
-	// <w:sdt> IS A CONTENT CONTROL, and it WRAPS block content in <w:sdtContent>. Word
-	// emits them for form fields, citations, tables of contents and any structured region,
-	// so they are ordinary in real documents rather than exotic. A paragraph inside one is
-	// not a child of the body, and this loop skipped it outright: the whole paragraph, text
-	// and all, never reached the output.
+	// <w:sdt> IS A CONTENT CONTROL, and it WRAPS block content in <w:sdtContent>.
+	// Word emits them for form fields, citations, tables of contents and any
+	// structured region, so they are ordinary in real documents rather than
+	// exotic. A paragraph inside one is not a child of the body, and this loop
+	// skipped it outright: the whole paragraph, text and all, never reached the
+	// output.
 	//
-	// Same class as the <w:hyperlink> bug -- a wrapper between the container and the thing
-	// being looked for. Flattened here so every later stage sees a plain block sequence.
+	// Same class as the <w:hyperlink> bug -- a wrapper between the container and
+	// the thing being looked for. Flattened here so every later stage sees a
+	// plain block sequence.
 	std::vector<pugi::xml_node> body_nodes;
 	std::function<void(pugi::xml_node)> flatten_blocks = [&](pugi::xml_node parent) {
 		for (auto n : parent.children()) {
@@ -381,8 +401,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 	for (auto node : body_nodes) {
 		std::string node_name = node.name();
 		if (node_name == "w:tbl") {
-			// A table ends any open list -- OOXML permits the nesting and no consumer wants
-			// a table as a list item.
+			// A table ends any open list -- OOXML permits the nesting and no consumer
+			// wants a table as a list item.
 			open_ordered.clear();
 			std::vector<std::string> headers;
 			std::vector<std::vector<std::string>> rows;
@@ -398,9 +418,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 					}
 					cells.push_back(cell);
 				}
-				// THE HEADER ROW is the one marked w:tblHeader, and only that. Treating the
-				// first row as a header unconditionally invents one for every headerless
-				// table -- pandoc reports an empty header for those, and so does this.
+				// THE HEADER ROW is the one marked w:tblHeader, and only that. Treating
+				// the first row as a header unconditionally invents one for every
+				// headerless table -- pandoc reports an empty header for those, and so
+				// does this.
 				bool is_header = tr.child("w:trPr").child("w:tblHeader") || tr.select_node(".//w:tblHeader").node();
 				if (is_header && headers.empty()) {
 					headers = cells;
@@ -423,7 +444,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		auto ppr = para.child("w:pPr");
 		int level = ParagraphHeadingLevel(ppr, styles);
 
-		// LIST MEMBERSHIP. A w:numPr whose numId resolves in numbering.xml; ilvl gives depth.
+		// LIST MEMBERSHIP. A w:numPr whose numId resolves in numbering.xml; ilvl
+		// gives depth.
 		int list_depth = 0;
 		bool list_ordered = false;
 		auto numpr = ppr.child("w:numPr");
@@ -438,9 +460,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			}
 		}
 
-		// BLOCKQUOTE. Either a quote paragraph style, or indentation with no numbering --
-		// which is how LibreOffice marks one, measured: w:ind w:left="720" and pStyle
-		// "Normal". 720 twentieths of a point is half an inch, Word's default quote indent.
+		// BLOCKQUOTE. Either a quote paragraph style, or indentation with no
+		// numbering -- which is how LibreOffice marks one, measured: w:ind
+		// w:left="720" and pStyle "Normal". 720 twentieths of a point is half an
+		// inch, Word's default quote indent.
 		std::string pstyle_name = ppr.child("w:pStyle").attribute("w:val").value();
 		bool quote_style = pstyle_name == "BlockText" || pstyle_name == "Quote" || pstyle_name == "IntenseQuote" ||
 		                   pstyle_name == "BlockQuote";
@@ -451,22 +474,23 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			RunFormat fmt;
 			std::string text;
 			//! Non-empty when this run is NOT a formatted text span -- an image or a
-			//! footnote reference, which carry an element_type of their own rather than one
-			//! derived from character formatting.
+			//! footnote reference, which carry an element_type of their own rather
+			//! than one derived from character formatting.
 			std::string special_type;
 			std::map<std::string, std::string> attrs;
 		};
 		std::vector<Run> runs;
 		bool any_format = false;
 
-		// A RUN IS NOT ALWAYS A DIRECT CHILD OF THE PARAGRAPH. <w:hyperlink> WRAPS its runs,
-		// so iterating children("w:r") never visits them: measured on a pandoc-written DOCX,
-		// "and a [link](https://example.com)." read back as "and a ." -- the anchor text gone
-		// from the output entirely, not merely unmarked. That is DATA LOSS, which is a
-		// different failure from ODT's, where the text survives and only the href is dropped.
-		// pandoc marks a code listing with the SourceCode paragraph style. Captured before
-		// the run walk because <w:br/> inside such a paragraph is a real newline rather
-		// than the space it means in prose -- flattening it would run the listing's lines
+		// A RUN IS NOT ALWAYS A DIRECT CHILD OF THE PARAGRAPH. <w:hyperlink> WRAPS
+		// its runs, so iterating children("w:r") never visits them: measured on a
+		// pandoc-written DOCX, "and a [link](https://example.com)." read back as
+		// "and a ." -- the anchor text gone from the output entirely, not merely
+		// unmarked. That is DATA LOSS, which is a different failure from ODT's,
+		// where the text survives and only the href is dropped. pandoc marks a code
+		// listing with the SourceCode paragraph style. Captured before the run walk
+		// because <w:br/> inside such a paragraph is a real newline rather than the
+		// space it means in prose -- flattening it would run the listing's lines
 		// together.
 		bool is_code_para = pstyle_name == "SourceCode" || pstyle_name == "PreformattedText";
 
@@ -479,12 +503,12 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				fmt.underline = static_cast<bool>(rpr.child("w:u"));
 				fmt.strike = ToggleOn(rpr, "w:strike");
 				// INLINE CODE is a character STYLE, not a toggle: pandoc writes
-				// <w:rStyle w:val="VerbatimChar"/>. Without this a `verbatim` run read back
-				// as ordinary text, indistinguishable from the prose around it.
+				// <w:rStyle w:val="VerbatimChar"/>. Without this a `verbatim` run read
+				// back as ordinary text, indistinguishable from the prose around it.
 				std::string rstyle = rpr.child("w:rStyle").attribute("w:val").value();
 				fmt.code = rstyle == "VerbatimChar" || rstyle == "SourceText" || rstyle == "Code";
-				// SUB/SUPERSCRIPT is a vertical alignment. H~2~O flattened to "H2O", which
-				// is not wrong so much as no longer chemistry.
+				// SUB/SUPERSCRIPT is a vertical alignment. H~2~O flattened to "H2O",
+				// which is not wrong so much as no longer chemistry.
 				std::string valign = rpr.child("w:vertAlign").attribute("w:val").value();
 				fmt.superscript = valign == "superscript";
 				fmt.subscript = valign == "subscript";
@@ -501,9 +525,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				}
 			}
 
-			// AN IMAGE. <w:drawing> ... <a:blip r:embed="rIdN">, and rIdN is a RELATIONSHIP
-			// rather than a path -- resolved through document.xml.rels so the emitted src is
-			// a file a consumer can find, not an id only Word understands.
+			// AN IMAGE. <w:drawing> ... <a:blip r:embed="rIdN">, and rIdN is a
+			// RELATIONSHIP rather than a path -- resolved through document.xml.rels
+			// so the emitted src is a file a consumer can find, not an id only Word
+			// understands.
 			auto blip = run.select_node(".//a:blip").node();
 			if (blip) {
 				std::string rid = blip.attribute("r:embed").value();
@@ -516,14 +541,15 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				if (rit != rels.end()) {
 					img.attrs["src"] = rit->second;
 				}
-				// An image forces the paragraph to emit INLINES rather than flatten, or the
-				// image is dropped in favour of the surrounding text.
+				// An image forces the paragraph to emit INLINES rather than flatten, or
+				// the image is dropped in favour of the surrounding text.
 				any_format = true;
 				runs.push_back(std::move(img));
 			}
 
-			// A FOOTNOTE REFERENCE. The body lives in footnotes.xml, keyed by w:id, so the
-			// note carries its TEXT rather than a number the reader would have to resolve.
+			// A FOOTNOTE REFERENCE. The body lives in footnotes.xml, keyed by w:id,
+			// so the note carries its TEXT rather than a number the reader would have
+			// to resolve.
 			auto fnref = run.child("w:footnoteReference");
 			if (fnref) {
 				std::string id = fnref.attribute("w:id").value();
@@ -541,8 +567,9 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				return;
 			}
 
-			// A LINK carries its own element_type and href rather than being folded into the
-			// surrounding text, so the URL survives into attributes where a consumer can use it.
+			// A LINK carries its own element_type and href rather than being folded
+			// into the surrounding text, so the URL survives into attributes where a
+			// consumer can use it.
 			if (!link_href.empty()) {
 				Run link;
 				link.special_type = DuckBlockTypes::INLINE_LINK;
@@ -563,16 +590,16 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			}
 		};
 
-		// A RUN IS REACHED THROUGH ANY NUMBER OF WRAPPERS, so this descends rather than
-		// listing direct children. Probed against a hand-built document: <w:ins> lost the
-		// inserted words ("before INSERTED after" read back as "before  after"),
-		// <w:smartTag> and <w:fldSimple> lost theirs entirely. Tracked changes and fields
-		// are not edge cases -- a reviewed document is full of the first and any
-		// cross-reference or page number is the second.
+		// A RUN IS REACHED THROUGH ANY NUMBER OF WRAPPERS, so this descends rather
+		// than listing direct children. Probed against a hand-built document:
+		// <w:ins> lost the inserted words ("before INSERTED after" read back as
+		// "before  after"), <w:smartTag> and <w:fldSimple> lost theirs entirely.
+		// Tracked changes and fields are not edge cases -- a reviewed document is
+		// full of the first and any cross-reference or page number is the second.
 		//
-		// <w:del> is deliberately NOT transparent: it holds <w:delText>, text the author
-		// REMOVED. Descending into it would resurrect deleted content into the document,
-		// which is a worse failure than dropping it.
+		// <w:del> is deliberately NOT transparent: it holds <w:delText>, text the
+		// author REMOVED. Descending into it would resurrect deleted content into
+		// the document, which is a worse failure than dropping it.
 		std::function<void(pugi::xml_node, const std::string &)> walk_inline = [&](pugi::xml_node parent,
 		                                                                           const std::string &href) {
 			for (auto child : parent.children()) {
@@ -580,7 +607,8 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 				if (ctag == "w:r") {
 					process_run(child, href);
 				} else if (ctag == "w:hyperlink") {
-					// r:id resolves through document.xml.rels, as an image's r:embed does.
+					// r:id resolves through document.xml.rels, as an image's r:embed
+					// does.
 					std::string link;
 					auto hit = rels.find(child.attribute("r:id").value());
 					if (hit != rels.end()) {
@@ -610,8 +638,9 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 		}
 		auto begin = all.find_first_not_of(" \t\n");
 		if (begin == std::string::npos) {
-			// A paragraph whose ONLY content is an image has no text at all, and skipping
-			// whitespace-only paragraphs used to drop it. An image is content.
+			// A paragraph whose ONLY content is an image has no text at all, and
+			// skipping whitespace-only paragraphs used to drop it. An image is
+			// content.
 			bool has_special = false;
 			for (auto &r : runs) {
 				if (!r.special_type.empty()) {
@@ -629,9 +658,9 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			trimmed = all.substr(begin, end - begin + 1);
 		}
 
-		// Open and close lists around the run of items, so `list` wraps its `list_item`s the
-		// way every other panduck reader emits them.
-		// A type change at the innermost depth closes that list so a new one opens.
+		// Open and close lists around the run of items, so `list` wraps its
+		// `list_item`s the way every other panduck reader emits them. A type change
+		// at the innermost depth closes that list so a new one opens.
 		if (list_depth > 0 && open_ordered.size() == static_cast<size_t>(list_depth) &&
 		    open_ordered.back() != list_ordered) {
 			open_ordered.pop_back();
@@ -648,28 +677,32 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			open_ordered.push_back(list_ordered);
 		}
 
-		// TITLE / AUTHOR / DATE ARE DOCUMENT METADATA, NOT PROSE. Both writers style them
-		// as ordinary paragraphs at the top of the body, and this reader emitted them
-		// TWICE: once as body text and again as `value` metadata read from the properties
-		// part. pandoc's body for the same file starts at the first real heading.
+		// TITLE / AUTHOR / DATE ARE DOCUMENT METADATA, NOT PROSE. Both writers
+		// style them as ordinary paragraphs at the top of the body, and this reader
+		// emitted them TWICE: once as body text and again as `value` metadata read
+		// from the properties part. pandoc's body for the same file starts at the
+		// first real heading.
 		//
-		// Duplication is invisible to every check here -- the conformance and write-back
-		// checks see a valid paragraph, and the word-loss check only looks for ABSENCE.
-		// It took comparing one logical document across nine readers to see it.
+		// Duplication is invisible to every check here -- the conformance and
+		// write-back checks see a valid paragraph, and the word-loss check only
+		// looks for ABSENCE. It took comparing one logical document across nine
+		// readers to see it.
 		//
-		// The index is recorded rather than the block dropped outright: a Title-styled
-		// paragraph in a document whose properties part carries no title is the only copy
-		// of that text, and dropping it unconditionally would trade a duplicate for a
-		// deletion. The match is confirmed against the metadata below.
+		// The index is recorded rather than the block dropped outright: a
+		// Title-styled paragraph in a document whose properties part carries no
+		// title is the only copy of that text, and dropping it unconditionally
+		// would trade a duplicate for a deletion. The match is confirmed against
+		// the metadata below.
 		if ((pstyle_name == "Title" || pstyle_name == "Author" || pstyle_name == "Subtitle" || pstyle_name == "Date") &&
 		    list_depth == 0 && level == 0 && !trimmed.empty()) {
 			meta_styled.push_back({blocks.size(), trimmed});
 		}
 
-		// A CODE BLOCK. Consecutive SourceCode paragraphs are one listing: pandoc's DOCX
-		// writer splits a fenced block across paragraphs, so emitting one block each would
-		// report several listings where the document has one. `all` rather than `trimmed`,
-		// because the leading spaces are the indentation.
+		// A CODE BLOCK. Consecutive SourceCode paragraphs are one listing: pandoc's
+		// DOCX writer splits a fenced block across paragraphs, so emitting one
+		// block each would report several listings where the document has one.
+		// `all` rather than `trimmed`, because the leading spaces are the
+		// indentation.
 		if (is_code_para && list_depth == 0) {
 			if (!blocks.empty() && blocks.back().element_type == DuckBlockTypes::TYPE_CODE) {
 				blocks.back().content += "\n" + all;
@@ -682,9 +715,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			continue;
 		}
 
-		// A DEFINITION LIST. pandoc writes DefinitionTerm / Definition paragraph styles,
-		// which read back as two unrelated paragraphs -- the words survived, the pairing
-		// did not. Emitted in the list/list_item + `role` shape the other readers use.
+		// A DEFINITION LIST. pandoc writes DefinitionTerm / Definition paragraph
+		// styles, which read back as two unrelated paragraphs -- the words
+		// survived, the pairing did not. Emitted in the list/list_item + `role`
+		// shape the other readers use.
 		bool is_def_term = pstyle_name == "DefinitionTerm";
 		bool is_def_body = pstyle_name == "Definition";
 		if ((is_def_term || is_def_body) && list_depth == 0 && level == 0) {
@@ -723,9 +757,10 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path) {
 			block.element_type = DuckBlockTypes::TYPE_PARAGRAPH;
 		}
 
-		// Character formatting inside a heading is presentational -- writers bold heading
-		// text as part of the heading style -- so headings always flatten. Leaving content
-		// NULL would make a table of contents built from `content` come back empty.
+		// Character formatting inside a heading is presentational -- writers bold
+		// heading text as part of the heading style -- so headings always flatten.
+		// Leaving content NULL would make a table of contents built from `content`
+		// come back empty.
 		if (!any_format || level > 0) {
 			block.content = trimmed;
 		} else {
@@ -768,8 +803,8 @@ struct DocxGlobalState : public GlobalTableFunctionState {
 unique_ptr<FunctionData> DocxBind(ClientContext &context, TableFunctionBindInput &input,
                                   vector<LogicalType> &return_types, panduck::BindNames &names) {
 	readers::RequireReaderEnabled(context, "docx");
-	// Column order mirrors the duck_block struct, so a row casts straight to duck_block
-	// and read_panduck_doc's flat branch can SELECT * it through.
+	// Column order mirrors the duck_block struct, so a row casts straight to
+	// duck_block and read_panduck_doc's flat branch can SELECT * it through.
 	names = {"kind", "element_type", "content", "level", "encoding", "attributes", "element_order"};
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::INTEGER,
@@ -802,14 +837,14 @@ unique_ptr<FunctionData> DocxBind(ClientContext &context, TableFunctionBindInput
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 		}
-		// Reader-specific keys LAST, and only where absent, so one cannot displace a
-		// derived entry.
+		// Reader-specific keys LAST, and only where absent, so one cannot displace
+		// a derived entry.
 		for (auto &kv : block.attributes) {
 			row.attributes.emplace(kv.first, kv.second);
 		}
-		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a CHILD
-		// of its block, so it is one deeper. This reader emits no containers, so every
-		// block sits at 1 and every inline at 2.
+		// EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1; an inline is a
+		// CHILD of its block, so it is one deeper. This reader emits no containers,
+		// so every block sits at 1 and every inline at 2.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.level = block_level;
 		result->rows.push_back(std::move(row));
@@ -851,7 +886,15 @@ void DocxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 
 void RegisterDocxReaderFunction(ExtensionLoader &loader) {
 	TableFunction fn("read_docx_blocks", {LogicalType::VARCHAR}, DocxScan, DocxBind, DocxGlobalState::Init);
-	loader.RegisterFunction(fn);
+	CreateTableFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"file_path"};
+	desc.description = "Read a DOCX document and return structured document blocks.";
+	desc.examples = {"SELECT * FROM read_docx_blocks('document.docx')"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

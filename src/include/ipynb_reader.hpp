@@ -30,8 +30,8 @@ struct IpynbBlock {
 	std::vector<IpynbInline> inlines;
 };
 
-//! Parse a Jupyter notebook into blocks. Never throws on malformed JSON: a notebook that
-//! does not parse yields no blocks rather than failing the query.
+//! Parse a Jupyter notebook into blocks. Never throws on malformed JSON: a
+//! notebook that does not parse yields no blocks rather than failing the query.
 std::vector<IpynbBlock> ParseIpynbString(const std::string &src);
 
 void RegisterIpynbReader(ExtensionLoader &loader);

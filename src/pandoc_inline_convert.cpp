@@ -717,8 +717,8 @@ static string RenderInlinesToTextVal(yyjson_val *inlines_val, const string &mode
 		} else if (c_val && yyjson_is_arr(c_val)) {
 			// Unrecognised constructor (Underline, or anything a future pandoc adds):
 			// recurse into its children so the words survive instead of vanishing.
-			// A `c` that is not an inline list simply yields nothing, so this degrades
-			// gracefully rather than emitting structural noise.
+			// A `c` that is not an inline list simply yields nothing, so this
+			// degrades gracefully rather than emitting structural noise.
 			out << RenderInlinesToTextVal(c_val, mode, depth + 1);
 		}
 	};
@@ -826,22 +826,25 @@ static void DbInlinesToPandocNestedFun(DataChunk &args, ExpressionState &state, 
 void PandocInlineConvert::Register(ExtensionLoader &loader) {
 	// DELIBERATELY REGISTERS NOTHING IN PANDUCK.
 	//
-	// Every name this body registered upstream -- pandoc_ast_to_blocks, read_pandoc_ast,
-	// duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is still registered by
-	// duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY.
+	// Every name this body registered upstream -- pandoc_ast_to_blocks,
+	// read_pandoc_ast, duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is
+	// still registered by duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE
+	// EXTENSION IN THIS FAMILY.
 	//
-	// Measured, not assumed: when two loaded extensions register the same name, BOTH
-	// registrations survive as ambiguous overloads and every call then fails at BIND TIME
-	// with "Could not choose a best candidate function" -- naming a construct the caller
-	// never wrote. It does not degrade, it breaks, and it would break duckeye's thirteen
-	// formats for anyone with both extensions loaded.
+	// Measured, not assumed: when two loaded extensions register the same name,
+	// BOTH registrations survive as ambiguous overloads and every call then fails
+	// at BIND TIME with "Could not choose a best candidate function" -- naming a
+	// construct the caller never wrote. It does not degrade, it breaks, and it
+	// would break duckeye's thirteen formats for anyone with both extensions
+	// loaded.
 	//
-	// panduck's surface is read_pandoc_blocks / read_pandoc_blocks_string, registered in
-	// pandoc_reader.cpp under names nobody else owns. The conversion functions above are
-	// reached through ConvertPandocAstToBlocks() rather than through SQL names.
+	// panduck's surface is read_pandoc_blocks / read_pandoc_blocks_string,
+	// registered in pandoc_reader.cpp under names nobody else owns. The
+	// conversion functions above are reached through ConvertPandocAstToBlocks()
+	// rather than through SQL names.
 	//
-	// Kept as an empty body rather than deleted so that wiring it up by mistake does
-	// nothing, instead of reintroducing the collision.
+	// Kept as an empty body rather than deleted so that wiring it up by mistake
+	// does nothing, instead of reintroducing the collision.
 	(void)loader;
 }
 

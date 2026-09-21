@@ -40,11 +40,14 @@ std::vector<std::string> SplitLines(const std::string &src) {
 
 //! Parse a block marker head: a name, optional attribute groups, then a `.`.
 //!
-//! `p.`, `h2.`, `bq.`, `bc.`, `notextile.` -- and each may carry `{style}`, `(class)` or
-//! `[lang]` between the name and the dot, in any order. This is the one place textile is
-//! not a fixed-prefix format, which is why the marker is parsed rather than matched.
+//! `p.`, `h2.`, `bq.`, `bc.`, `notextile.` -- and each may carry `{style}`,
+//! `(class)` or
+//! `[lang]` between the name and the dot, in any order. This is the one place
+//! textile is not a fixed-prefix format, which is why the marker is parsed
+//! rather than matched.
 //!
-//! Returns false when the line does not open with a marker. `body_start` is then untouched.
+//! Returns false when the line does not open with a marker. `body_start` is
+//! then untouched.
 bool ParseMarker(const std::string &t, std::string &name, std::string &style, std::string &css_class, std::string &id,
                  size_t &body_start) {
 	size_t i = 0;
@@ -68,11 +71,12 @@ bool ParseMarker(const std::string &t, std::string &name, std::string &style, st
 		} else if (t[i] == '(') {
 			// `(...)` HOLDS A CLASS, AN #ID, OR BOTH -- `(cls)`, `(#id)`, `(cls#id)`.
 			//
-			// Found by the pandoc-generated fixture, which writes `h1(#guide-title).` for
-			// every heading. Treating the whole group as a class put the string "#guide-title"
-			// into attributes['class'] -- and the id survived only because the slugifier
-			// happened to derive the same value from the heading text. An author's explicit
-			// id, differing from its slug, was silently lost.
+			// Found by the pandoc-generated fixture, which writes `h1(#guide-title).`
+			// for every heading. Treating the whole group as a class put the string
+			// "#guide-title" into attributes['class'] -- and the id survived only
+			// because the slugifier happened to derive the same value from the
+			// heading text. An author's explicit id, differing from its slug, was
+			// silently lost.
 			size_t hash = value.find('#');
 			if (hash == std::string::npos) {
 				css_class = value;
@@ -83,8 +87,9 @@ bool ParseMarker(const std::string &t, std::string &name, std::string &style, st
 		}
 		i = end + 1;
 	}
-	// Alignment modifiers sit here in real textile (`p<.`, `p>.`, `p=.`, `p<>.`). Consumed
-	// so they do not defeat the marker; they are out of scope rather than dropped silently.
+	// Alignment modifiers sit here in real textile (`p<.`, `p>.`, `p=.`, `p<>.`).
+	// Consumed so they do not defeat the marker; they are out of scope rather
+	// than dropped silently.
 	while (i < t.size() && (t[i] == '<' || t[i] == '>' || t[i] == '=')) {
 		i++;
 	}
@@ -92,14 +97,15 @@ bool ParseMarker(const std::string &t, std::string &name, std::string &style, st
 		return false;
 	}
 	i++;
-	// `bc..` and friends are EXTENDED blocks, running until the next marker rather than the
-	// next blank line. Consuming the second dot keeps the body correct; the extended
-	// semantics are out of scope and recorded as such.
+	// `bc..` and friends are EXTENDED blocks, running until the next marker
+	// rather than the next blank line. Consuming the second dot keeps the body
+	// correct; the extended semantics are out of scope and recorded as such.
 	if (i < t.size() && t[i] == '.') {
 		i++;
 	}
 	if (i < t.size() && t[i] != ' ') {
-		return false; // `p.x` is not a marker -- a marker's dot is followed by space or EOL
+		return false; // `p.x` is not a marker -- a marker's dot is followed by
+		              // space or EOL
 	}
 	body_start = i < t.size() ? i + 1 : i;
 	return true;
@@ -141,8 +147,9 @@ std::vector<Line> ScanTextile(const std::string &src) {
 			continue;
 		}
 
-		// A TABLE ROW is checked before the marker parse: `|` is not alphanumeric, so
-		// ParseMarker would reject it anyway, but stating the order keeps the intent clear.
+		// A TABLE ROW is checked before the marker parse: `|` is not alphanumeric,
+		// so ParseMarker would reject it anyway, but stating the order keeps the
+		// intent clear.
 		if (t.front() == '|') {
 			ln.kind = LineKind::TABLE_ROW;
 			ln.text = t;
@@ -150,9 +157,9 @@ std::vector<Line> ScanTextile(const std::string &src) {
 			continue;
 		}
 
-		// `###.` is a comment. Checked before the marker parse because `#` also opens an
-		// ordered list item, and a comment marker is not alphanumeric so ParseMarker cannot
-		// see it.
+		// `###.` is a comment. Checked before the marker parse because `#` also
+		// opens an ordered list item, and a comment marker is not alphanumeric so
+		// ParseMarker cannot see it.
 		if (t.rfind("###.", 0) == 0) {
 			ln.kind = LineKind::COMMENT;
 			out.push_back(ln);
@@ -164,9 +171,11 @@ std::vector<Line> ScanTextile(const std::string &src) {
 			while (n < t.size() && (t[n] == '*' || t[n] == '#')) {
 				n++;
 			}
-			// A run must be followed by a space to be a list. `*strong*` at line start is
-			// emphasis, and this is the same column-versus-content distinction Org's leading
-			// `*` forced -- one character, two meanings, told apart by what follows it.
+			// A run must be followed by a space to be a list. `*strong*` at line
+			// start is emphasis, and this is the same column-versus-content
+			// distinction Org's leading
+			// `*` forced -- one character, two meanings, told apart by what follows
+			// it.
 			if (n < t.size() && t[n] == ' ') {
 				ln.kind = LineKind::LIST_ITEM;
 				ln.markers = t.substr(0, n);
@@ -192,11 +201,12 @@ std::vector<Line> ScanTextile(const std::string &src) {
 			}
 		}
 
-		// BLOCK-LEVEL HTML. pandoc's textile WRITER emits `<dl>` for a definition list,
-		// because textile's `- term := def` is not in its writer -- so a pandoc-generated
-		// document contains raw HTML that a hand-written one never does. Without this the
-		// tags arrive as a paragraph whose text is the literal markup, which is the
-		// leaked-as-prose failure three earlier readers each paid for.
+		// BLOCK-LEVEL HTML. pandoc's textile WRITER emits `<dl>` for a definition
+		// list, because textile's `- term := def` is not in its writer -- so a
+		// pandoc-generated document contains raw HTML that a hand-written one never
+		// does. Without this the tags arrive as a paragraph whose text is the
+		// literal markup, which is the leaked-as-prose failure three earlier
+		// readers each paid for.
 		if (t.front() == '<' && t.size() > 2) {
 			size_t np = 1;
 			while (np < t.size() && std::isalnum(static_cast<unsigned char>(t[np]))) {
@@ -212,11 +222,11 @@ std::vector<Line> ScanTextile(const std::string &src) {
 				known = (tag == *b);
 			}
 			if (known) {
-				// CONSUMED WHOLE, to the matching closing tag. Matching only the OPENING line
-				// left `<dt>term</dt>` and `</dl>` behind as ordinary text -- so the element's
-				// first line became raw HTML and its body still leaked into a paragraph, which
-				// is worse than not handling it at all: half the markup hidden and half of it
-				// on show.
+				// CONSUMED WHOLE, to the matching closing tag. Matching only the
+				// OPENING line left `<dt>term</dt>` and `</dl>` behind as ordinary text
+				// -- so the element's first line became raw HTML and its body still
+				// leaked into a paragraph, which is worse than not handling it at all:
+				// half the markup hidden and half of it on show.
 				std::string acc = t;
 				const std::string close = "</" + tag + ">";
 				while (acc.find(close) == std::string::npos && li + 1 < lines.size()) {
@@ -265,8 +275,8 @@ std::vector<Line> ScanTextile(const std::string &src) {
 				continue;
 			}
 			// A marker-shaped head that names no block -- `foo.` -- is prose. Falling
-			// through rather than inventing a block type is what keeps an unknown marker
-			// from becoming a silent container.
+			// through rather than inventing a block type is what keeps an unknown
+			// marker from becoming a silent container.
 		}
 
 		ln.kind = LineKind::TEXT;

@@ -1,6 +1,6 @@
 #include "textile_reader.hpp"
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -8,6 +8,7 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -27,10 +28,11 @@ std::string Trim(const std::string &s) {
 	return s.substr(b, e - b + 1);
 }
 
-//! Heading anchors, matching pandoc's: lowercase, spaces to hyphens, punctuation dropped.
-//! Measured -- `h1. Top Heading` anchors as `top-heading`. NOTE THE SEPARATOR: MediaWiki
-//! slugs use underscores and these use hyphens, which is a difference between the two
-//! formats' conventions rather than a choice either reader made.
+//! Heading anchors, matching pandoc's: lowercase, spaces to hyphens,
+//! punctuation dropped. Measured -- `h1. Top Heading` anchors as `top-heading`.
+//! NOTE THE SEPARATOR: MediaWiki slugs use underscores and these use hyphens,
+//! which is a difference between the two formats' conventions rather than a
+//! choice either reader made.
 std::string Slugify(const std::string &text) {
 	std::string out;
 	bool prev_sep = false;
@@ -51,20 +53,23 @@ std::string Slugify(const std::string &text) {
 	return out;
 }
 
-//! Strip a leading textile CELL MODIFIER, and report whether it marked a header cell.
+//! Strip a leading textile CELL MODIFIER, and report whether it marked a header
+//! cell.
 //!
 //! Textile writes alignment and cell role as a prefix ending in `.`:
-//!     <. left   >. right   =. centre   <>. justify   ^. top   ~. bottom   _. header
+//!     <. left   >. right   =. centre   <>. justify   ^. top   ~. bottom   _.
+//!     header
 //!
-//! Only `_.` was handled, so the others SURVIVED INTO THE CELL VALUE -- `|<. a|` read as the
-//! four characters `<. a` where the cell contains `a`. pandoc reads the same table as `a`,
-//! and panduck's own webbed reads `<td><b>a</b></td>` as `"a"`, so the fleet already had the
-//! answer. Reported for .rst by duckeye (#38); this reader had the same defect, unreported,
-//! plus a second one below.
+//! Only `_.` was handled, so the others SURVIVED INTO THE CELL VALUE -- `|<.
+//! a|` read as the four characters `<. a` where the cell contains `a`. pandoc
+//! reads the same table as `a`, and panduck's own webbed reads
+//! `<td><b>a</b></td>` as `"a"`, so the fleet already had the answer. Reported
+//! for .rst by duckeye (#38); this reader had the same defect, unreported, plus
+//! a second one below.
 //!
-//! THE `.` IS REQUIRED before anything is stripped. Without it a cell legitimately beginning
-//! with `<` or `~` would lose its first characters, and a modifier without its terminator is
-//! not a modifier.
+//! THE `.` IS REQUIRED before anything is stripped. Without it a cell
+//! legitimately beginning with `<` or `~` would lose its first characters, and
+//! a modifier without its terminator is not a modifier.
 bool StripCellModifier(std::string &v) {
 	size_t i = 0;
 	bool header = false;
@@ -82,8 +87,8 @@ bool StripCellModifier(std::string &v) {
 	return false;
 }
 
-//! Strip inline markup down to text, for table cells which are flattened into the native
-//! {headers, rows} schema.
+//! Strip inline markup down to text, for table cells which are flattened into
+//! the native {headers, rows} schema.
 std::string PlainText(const std::string &s) {
 	std::string out;
 	for (size_t i = 0; i < s.size(); i++) {
@@ -119,8 +124,8 @@ void PushWrapped(std::vector<TxInline> &out, const char *type, const std::string
 	node.level = level;
 	std::vector<TxInline> children;
 	ParseInlines(inner, level + 1, children);
-	// Spec 6.0's content rule: a wrapper whose only child is plain text carries the text
-	// itself rather than a lone `text` child.
+	// Spec 6.0's content rule: a wrapper whose only child is plain text carries
+	// the text itself rather than a lone `text` child.
 	if (children.size() == 1 && children[0].element_type == DuckBlockTypes::INLINE_TEXT &&
 	    children[0].attributes.empty()) {
 		node.content = children[0].content;
@@ -133,8 +138,8 @@ void PushWrapped(std::vector<TxInline> &out, const char *type, const std::string
 	}
 }
 
-//! One delimiter pair, e.g. `-del-` or `^sup^`. Returns false when unterminated, which
-//! leaves the character to be emitted as ordinary text.
+//! One delimiter pair, e.g. `-del-` or `^sup^`. Returns false when
+//! unterminated, which leaves the character to be emitted as ordinary text.
 bool TryDelim(const std::string &s, size_t &i, const char *open, const char *type, int level,
               std::vector<TxInline> &out, std::string &pending) {
 	size_t n = strlen(open);
@@ -155,8 +160,8 @@ bool TryDelim(const std::string &s, size_t &i, const char *open, const char *typ
 void ParseInlines(const std::string &s, int level, std::vector<TxInline> &out) {
 	std::string pending;
 	for (size_t i = 0; i < s.size(); i++) {
-		// `"text":url` -- the link form, checked first because a bare `"` is common in prose
-		// and only the `":` sequence makes it a link.
+		// `"text":url` -- the link form, checked first because a bare `"` is common
+		// in prose and only the `":` sequence makes it a link.
 		if (s[i] == '"') {
 			size_t close = s.find("\":", i + 1);
 			if (close != std::string::npos) {
@@ -164,8 +169,9 @@ void ParseInlines(const std::string &s, int level, std::vector<TxInline> &out) {
 				if (url_end == std::string::npos) {
 					url_end = s.size();
 				}
-				// Trailing sentence punctuation is not part of the URL. Textile's own rule,
-				// and without it every link at the end of a sentence keeps the full stop.
+				// Trailing sentence punctuation is not part of the URL. Textile's own
+				// rule, and without it every link at the end of a sentence keeps the
+				// full stop.
 				while (url_end > close + 2 && strchr(".,;:!?", s[url_end - 1])) {
 					url_end--;
 				}
@@ -182,8 +188,8 @@ void ParseInlines(const std::string &s, int level, std::vector<TxInline> &out) {
 			}
 		}
 
-		// `!image.png!` -- and `!` is also ordinary punctuation, so an unterminated one
-		// falls through to text.
+		// `!image.png!` -- and `!` is also ordinary punctuation, so an unterminated
+		// one falls through to text.
 		if (s[i] == '!') {
 			size_t close = s.find('!', i + 1);
 			if (close != std::string::npos && close > i + 1) {
@@ -202,10 +208,11 @@ void ParseInlines(const std::string &s, int level, std::vector<TxInline> &out) {
 			}
 		}
 
-		// DOUBLE MARKERS FIRST. `**bold**` and `*strong*` both become `bold`, `__italic__`
-		// and `_em_` both become `italic` -- textile's distinction is <b> versus <strong>,
-		// which duck_block does not carry. Testing the single form first would consume one
-		// character of the double form and leave a stray marker in the text.
+		// DOUBLE MARKERS FIRST. `**bold**` and `*strong*` both become `bold`,
+		// `__italic__` and `_em_` both become `italic` -- textile's distinction is
+		// <b> versus <strong>, which duck_block does not carry. Testing the single
+		// form first would consume one character of the double form and leave a
+		// stray marker in the text.
 		if (TryDelim(s, i, "**", DuckBlockTypes::INLINE_BOLD, level, out, pending) ||
 		    TryDelim(s, i, "__", DuckBlockTypes::INLINE_ITALIC, level, out, pending) ||
 		    TryDelim(s, i, "??", DuckBlockTypes::INLINE_CITE, level, out, pending) ||
@@ -256,9 +263,9 @@ public:
 				b.element_type = DuckBlockTypes::TYPE_HEADING;
 				b.level = 1;
 				b.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(ln.level);
-				// AN EXPLICIT ID WINS over the derived slug. `h1(#guide-title).` states its
-				// anchor; the slugifier only guesses one from the heading text, and the two
-				// agree by luck rather than by rule.
+				// AN EXPLICIT ID WINS over the derived slug. `h1(#guide-title).` states
+				// its anchor; the slugifier only guesses one from the heading text, and
+				// the two agree by luck rather than by rule.
 				auto id = ln.id.empty() ? Slugify(ln.text) : ln.id;
 				if (!id.empty()) {
 					b.attributes["id"] = id;
@@ -290,9 +297,9 @@ public:
 				c.element_type = DuckBlockTypes::TYPE_CODE;
 				c.level = 1;
 				c.content = ln.text;
-				// A `bc.` BLOCK RUNS TO THE NEXT BLANK LINE. Taking only the marker's own
-				// line truncated every multi-line listing and let the rest leak out as
-				// PROSE -- `bc(python). def hello():` gave a code block holding the
+				// A `bc.` BLOCK RUNS TO THE NEXT BLANK LINE. Taking only the marker's
+				// own line truncated every multi-line listing and let the rest leak out
+				// as PROSE -- `bc(python). def hello():` gave a code block holding the
 				// signature and a paragraph holding "return 1".
 				//
 				// python-textile 4.0.2 settles it:
@@ -302,7 +309,8 @@ public:
 				//    return 1</code></pre>
 				//
 				// `raw` rather than `text`, because the continuation's INDENTATION is
-				// content: "    return 1" read back as "return 1" is a different program.
+				// content: "    return 1" read back as "return 1" is a different
+				// program.
 				while (i + 1 < lines.size() && lines[i + 1].kind != LineKind::BLANK) {
 					c.content += "\n" + lines[i + 1].raw;
 					i++;
@@ -310,8 +318,8 @@ public:
 				AddBlockAttrs(c, ln);
 				// On a code block the class IS the language -- it is what the reference
 				// emits as <code class="python"> and what pandoc reads as a CodeBlock's
-				// first class. Recorded under the name a consumer looks for, rather than
-				// left as a generic class it would have to know to interpret.
+				// first class. Recorded under the name a consumer looks for, rather
+				// than left as a generic class it would have to know to interpret.
 				auto cls = c.attributes.find("class");
 				if (cls != c.attributes.end()) {
 					c.attributes["language"] = cls->second;
@@ -325,20 +333,21 @@ public:
 				CloseLists();
 				// THE MARKER IS CONSUMED AND THE BODY HELD RAW.
 				//
-				// pandoc keeps `notextile.` as the paragraph's first word AND parses the body
-				// as textile regardless -- so it both advertises the marker to the reader and
-				// does the one thing the construct exists to prevent. Measured against
-				// python-textile 4.0.2, which strips the marker and passes the body through.
+				// pandoc keeps `notextile.` as the paragraph's first word AND parses
+				// the body as textile regardless -- so it both advertises the marker to
+				// the reader and does the one thing the construct exists to prevent.
+				// Measured against python-textile 4.0.2, which strips the marker and
+				// passes the body through.
 				//
-				// `html` because that is what a notextile body is for: markup the author wants
-				// delivered verbatim.
+				// `html` because that is what a notextile body is for: markup the
+				// author wants delivered verbatim.
 				TxBlock r;
 				r.element_type = DuckBlockTypes::TYPE_RAW;
 				r.level = 1;
 				r.content = ln.text;
-				// The format never lives in `encoding`: duck_block_utils measured that a raw
-				// block's encoding is `text` even for html and latex, which ARE declared
-				// encodings, and made it a flat rule rather than a fallback.
+				// The format never lives in `encoding`: duck_block_utils measured that
+				// a raw block's encoding is `text` even for html and latex, which ARE
+				// declared encodings, and made it a flat rule rather than a fallback.
 				r.attributes["format"] = "html";
 				r.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = "notextile";
 				blocks_.push_back(std::move(r));
@@ -355,9 +364,9 @@ public:
 				r.element_type = DuckBlockTypes::TYPE_RAW;
 				r.level = 1;
 				r.content = ln.text;
-				// The format never lives in `encoding`: duck_block_utils measured that a raw
-				// block's encoding is `text` even for html and latex, which ARE declared
-				// encodings, and made it a flat rule rather than a fallback.
+				// The format never lives in `encoding`: duck_block_utils measured that
+				// a raw block's encoding is `text` even for html and latex, which ARE
+				// declared encodings, and made it a flat rule rather than a fallback.
 				r.attributes["format"] = "html";
 				r.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = ln.markers;
 				blocks_.push_back(std::move(r));
@@ -395,9 +404,10 @@ public:
 
 private:
 	void AddBlockAttrs(TxBlock &b, const Line &ln) {
-		// pandoc wraps an attributed block in a Div and puts the style there. panduck keeps
-		// the block's OWN type and carries the attribute on it -- a styled paragraph is still
-		// a paragraph, and wrapping it changes the document's shape to record a colour.
+		// pandoc wraps an attributed block in a Div and puts the style there.
+		// panduck keeps the block's OWN type and carries the attribute on it -- a
+		// styled paragraph is still a paragraph, and wrapping it changes the
+		// document's shape to record a colour.
 		if (!ln.style.empty()) {
 			b.attributes["style"] = ln.style;
 		}
@@ -437,12 +447,13 @@ private:
 		while (common < m.size() && common < open_.size() && m[common] == open_[common]) {
 			common++;
 		}
-		// A CHANGE OF LIST TYPE AT THE SAME DEPTH STARTS A NEW LIST, which is the divergence
-		// this reader carries. pandoc turns `* bullet` followed by `# ordered` into a
-		// PARAGRAPH containing a literal asterisk -- the list is lost and its marker becomes
-		// prose. python-textile keeps a list. Sibling lists lose nothing and describe what
-		// the author wrote; the reference nests them, but its own output there places an
-		// <ol> directly inside a <ul>, which is invalid HTML and so not authoritative.
+		// A CHANGE OF LIST TYPE AT THE SAME DEPTH STARTS A NEW LIST, which is the
+		// divergence this reader carries. pandoc turns `* bullet` followed by `#
+		// ordered` into a PARAGRAPH containing a literal asterisk -- the list is
+		// lost and its marker becomes prose. python-textile keeps a list. Sibling
+		// lists lose nothing and describe what the author wrote; the reference
+		// nests them, but its own output there places an <ol> directly inside a
+		// <ul>, which is invalid HTML and so not authoritative.
 		while (open_.size() > common) {
 			open_.pop_back();
 		}
@@ -493,7 +504,8 @@ private:
 		open_.clear();
 	}
 
-	//! Consume a run of `| ... |` rows into one native table. `_.` marks a header cell.
+	//! Consume a run of `| ... |` rows into one native table. `_.` marks a header
+	//! cell.
 	size_t Table(const std::vector<Line> &lines, size_t start) {
 		std::vector<std::string> headers;
 		std::vector<std::vector<std::string>> rows;
@@ -640,12 +652,32 @@ void TxScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterTextileReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_textile_blocks", {LogicalType::VARCHAR}, TxScan, TxFileBind, TxGlobalState::Init);
-	loader.RegisterFunction(file_fn);
+	{
+		TableFunction file_fn("read_textile_blocks", {LogicalType::VARCHAR}, TxScan, TxFileBind, TxGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(file_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"file_path"};
+		desc.description = "Read a Textile document and return structured document blocks.";
+		desc.examples = {"SELECT * FROM read_textile_blocks('document.textile')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
-	TableFunction string_fn("read_textile_blocks_string", {LogicalType::VARCHAR}, TxScan, TxStringBind,
-	                        TxGlobalState::Init);
-	loader.RegisterFunction(string_fn);
+	{
+		TableFunction string_fn("read_textile_blocks_string", {LogicalType::VARCHAR}, TxScan, TxStringBind,
+		                        TxGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(string_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"textile_text"};
+		desc.description = "Parse a Textile string and return structured document blocks.";
+		desc.examples = {"SELECT * FROM read_textile_blocks_string('h1. Header\\n\\n*bold*')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace textile

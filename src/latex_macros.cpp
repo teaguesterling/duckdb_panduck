@@ -1,10 +1,10 @@
 #include "latex_macros.hpp"
 
-// element_type comes from the VENDORED VOCABULARY, never from a literal here. A rename
-// upstream is then a compile error at every row; a literal would compile clean and
-// silently stop matching what consumers look for -- the exact trade
-// src/include/duck_block_types.hpp:19-20 spells out. The constants are constexpr, so the
-// table below is still statically initialised.
+// element_type comes from the VENDORED VOCABULARY, never from a literal here. A
+// rename upstream is then a compile error at every row; a literal would compile
+// clean and silently stop matching what consumers look for -- the exact trade
+// src/include/duck_block_types.hpp:19-20 spells out. The constants are
+// constexpr, so the table below is still statically initialised.
 #include "duck_block_types.hpp"
 
 #include <cstddef>
@@ -16,12 +16,18 @@ namespace {
 
 const MacroEntry MACROS[] = {
     // SEMANTIC -- inline
-    // \bf and \it are DELIBERATELY ABSENT. They are font SWITCHES -- `{\bf hello world}`
-    // makes the whole group bold and takes no argument at all -- so declaring them as
-    // one-argument macros made the reader eat a single character and emit `bold "h"`
-    // followed by `text "ello world"`. Their modern spellings, \textbf and \textit, DO
-    // take an argument and are right below. Unclaimed, a switch drops its name and keeps
-    // every character around it: the formatting is lost, the prose is not, which is the
+    // \bf and \it are DELIBERATELY ABSENT. They are font SWITCHES -- `{\bf
+    // hello world}`
+    // makes the whole group bold and takes no argument at all -- so declaring
+    // them as
+    // one-argument macros made the reader eat a single character and emit `bold
+    // "h"`
+    // followed by `text "ello world"`. Their modern spellings, \textbf and
+    // \textit, DO
+    // take an argument and are right below. Unclaimed, a switch drops its name
+    // and keeps
+    // every character around it: the formatting is lost, the prose is not,
+    // which is the
     // same trade every other unclaimed presentational macro already makes.
     {"textbf", Disposition::SEMANTIC, DuckBlockTypes::INLINE_BOLD, 1, 0, nullptr},
     {"emph", Disposition::SEMANTIC, DuckBlockTypes::INLINE_ITALIC, 1, 0, nullptr},
@@ -37,9 +43,12 @@ const MacroEntry MACROS[] = {
     {"href", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 2, 1, nullptr},
     {"url", Disposition::SEMANTIC, DuckBlockTypes::INLINE_LINK, 1, 0, nullptr},
     {"includegraphics", Disposition::SEMANTIC, DuckBlockTypes::INLINE_IMAGE, 1, 0, nullptr},
-    // `\caption` inside a figure is the figure's CAPTION, and duck_block has the type.
-    // Unmapped, its text still survived -- as an ordinary paragraph inside the figure -- so
-    // this is a shape gap rather than content loss, and the fix is cheap enough that leaving
+    // `\caption` inside a figure is the figure's CAPTION, and duck_block has
+    // the type.
+    // Unmapped, its text still survived -- as an ordinary paragraph inside the
+    // figure -- so
+    // this is a shape gap rather than content loss, and the fix is cheap enough
+    // that leaving
     // it would just be a caption a consumer cannot find by name.
     {"caption", Disposition::SEMANTIC, DuckBlockTypes::TYPE_CAPTION, 1, 0, nullptr},
     {"footnote", Disposition::SEMANTIC, DuckBlockTypes::INLINE_NOTE, 1, 0, nullptr},
@@ -65,12 +74,18 @@ const MacroEntry MACROS[] = {
     {"protect", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
 
     // DROPPED -- macro AND arguments. Presentational or metadata.
-    // documentclass, usepackage and PassOptionsToPackage are PREAMBLE macros: Parse()
-    // already special-cases \documentclass to read the class name and find where the
-    // preamble ends, but a FRAGMENT with no \begin{document} never reaches that logic for
-    // anything past it, and an unclaimed macro's brace group is TRANSPARENT, not dropped --
-    // so \usepackage{ulem} in a bare preamble leaked "ulem" into the output as a paragraph.
-    // Claiming all three here closes that for the fragment path the same way the preamble
+    // documentclass, usepackage and PassOptionsToPackage are PREAMBLE macros:
+    // Parse()
+    // already special-cases \documentclass to read the class name and find
+    // where the
+    // preamble ends, but a FRAGMENT with no \begin{document} never reaches that
+    // logic for
+    // anything past it, and an unclaimed macro's brace group is TRANSPARENT,
+    // not dropped --
+    // so \usepackage{ulem} in a bare preamble leaked "ulem" into the output as
+    // a paragraph.
+    // Claiming all three here closes that for the fragment path the same way
+    // the preamble
     // scan already closes it for a full document.
     {"documentclass", Disposition::DROPPED, nullptr, 1, -1, nullptr},
     {"usepackage", Disposition::DROPPED, nullptr, 1, -1, nullptr},
@@ -116,48 +131,54 @@ const MacroEntry ENVIRONMENTS[] = {
     {"center", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"abstract", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
     {"document", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
-    // `description` WAS HELD on the transparent path: duck_block had no settled list_type
-    // for a definition list, and inventing one would have produced a value no consumer
-    // could read. Spec 5.0 settled it -- a definition list is a LIST KIND, `deflist` is
-    // deprecated -- so the deferral is discharged on its own stated condition.
+    // `description` WAS HELD on the transparent path: duck_block had no settled
+    // list_type for a definition list, and inventing one would have produced a
+    // value no consumer could read. Spec 5.0 settled it -- a definition list is
+    // a LIST KIND, `deflist` is deprecated -- so the deferral is discharged on
+    // its own stated condition.
     {"description", Disposition::SEMANTIC, DuckBlockTypes::TYPE_LIST, 0, -1, DuckBlockTypes::LIST_TYPE_DEFINITION},
-    // `tabular` WAS DROPPED WHOLE -- descending yielded mangled cell text as prose, so the
-    // reader discarded the environment entirely. That lost the TEXT, not merely the shape,
-    // which by this reader's own rule is the worse of the two. It was the right trade only
-    // while duck_block had no table to map onto; spec 5.0's native {headers, rows} schema
-    // is that map, and EmitTabular walks the cells rather than descending into them.
+    // `tabular` WAS DROPPED WHOLE -- descending yielded mangled cell text as
+    // prose, so the reader discarded the environment entirely. That lost the
+    // TEXT, not merely the shape, which by this reader's own rule is the worse
+    // of the two. It was the right trade only while duck_block had no table to
+    // map onto; spec 5.0's native {headers, rows} schema is that map, and
+    // EmitTabular walks the cells rather than descending into them.
     {"tabular", Disposition::SEMANTIC, DuckBlockTypes::TYPE_TABLE, 0, -1, nullptr},
-    // `longtable` IS WHAT PANDOC'S LATEX WRITER EMITS. tabular was mapped and longtable was
-    // not, so every table in a pandoc-generated .tex was dropped while every table in a
-    // hand-written one was read -- and NEITHER latex fixture had a table, so nothing caught
-    // it. Same shape as the tabular gap it sits beside: the environment was simply absent
-    // from this list, and an absent environment falls through to being discarded.
+    // `longtable` IS WHAT PANDOC'S LATEX WRITER EMITS. tabular was mapped and
+    // longtable was not, so every table in a pandoc-generated .tex was dropped
+    // while every table in a hand-written one was read -- and NEITHER latex
+    // fixture had a table, so nothing caught it. Same shape as the tabular gap
+    // it sits beside: the environment was simply absent from this list, and an
+    // absent environment falls through to being discarded.
     {"longtable", Disposition::SEMANTIC, DuckBlockTypes::TYPE_TABLE, 0, -1, nullptr},
-    // tikzpicture stays dropped: its body is coordinates, not prose, and there is no
-    // element_type whose meaning it would carry.
+    // tikzpicture stays dropped: its body is coordinates, not prose, and there
+    // is no element_type whose meaning it would carry.
     {"tikzpicture", Disposition::DROPPED, nullptr, 0, -1, nullptr},
-    // DISPLAY MATH ENVIRONMENTS ARE DROPPED, AND `\[..\]` IS NOT. The asymmetry is
-    // intended, not pending: `\[..\]` has one formula with a body the tokenizer can cut
-    // out whole, so it becomes an inline `math` run. These environments hold a numbered,
-    // aligned, multi-row LAYOUT -- `&` columns, `\\` rows, \intertext between them -- and
-    // there is no duck_block shape for that, so emitting their source as one formula would
-    // claim something the document does not say. The starred spellings -- align*, gather*
+    // DISPLAY MATH ENVIRONMENTS ARE DROPPED, AND `\[..\]` IS NOT. The asymmetry
+    // is intended, not pending: `\[..\]` has one formula with a body the
+    // tokenizer can cut out whole, so it becomes an inline `math` run. These
+    // environments hold a numbered, aligned, multi-row LAYOUT -- `&` columns,
+    // `\\` rows, \intertext between them -- and there is no duck_block shape
+    // for that, so emitting their source as one formula would claim something
+    // the document does not say. The starred spellings -- align*, gather*
     // -- reach these through LookupEnvironment, which strips the star.
     {"equation", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"align", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"gather", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"multline", Disposition::DROPPED, nullptr, 0, -1, nullptr},
     {"displaymath", Disposition::DROPPED, nullptr, 0, -1, nullptr},
-    // `figure` AND `table` WERE DROPPED WHOLE, which discarded their CONTENTS -- the
-    // \includegraphics inside a figure and the tabular inside a table environment, both of
-    // which this reader maps and neither of which was ever reached. Losing the wrapper is a
-    // gap; losing the image and the table it wraps is content loss, which this reader's own
-    // tabular comment calls "the worse of the two".
+    // `figure` AND `table` WERE DROPPED WHOLE, which discarded their CONTENTS
+    // -- the \includegraphics inside a figure and the tabular inside a table
+    // environment, both of which this reader maps and neither of which was ever
+    // reached. Losing the wrapper is a gap; losing the image and the table it
+    // wraps is content loss, which this reader's own tabular comment calls "the
+    // worse of the two".
     //
-    // SEMANTIC rather than TRANSPARENT: duck_block has `figure`, and pandoc emits Figure for
-    // exactly this environment, so the wrapper is expressible rather than something to
-    // flatten away. `table` is LaTeX's float wrapper around a tabular and has no duck_block
-    // counterpart of its own, so it is TRANSPARENT -- its child table stands alone.
+    // SEMANTIC rather than TRANSPARENT: duck_block has `figure`, and pandoc
+    // emits Figure for exactly this environment, so the wrapper is expressible
+    // rather than something to flatten away. `table` is LaTeX's float wrapper
+    // around a tabular and has no duck_block counterpart of its own, so it is
+    // TRANSPARENT -- its child table stands alone.
     {"figure", Disposition::SEMANTIC, DuckBlockTypes::TYPE_FIGURE, 0, -1, nullptr},
     {"table", Disposition::TRANSPARENT, nullptr, 0, -1, nullptr},
 };
@@ -176,12 +197,13 @@ const MacroEntry *LookupMacro(const std::string &name) {
 }
 
 const MacroEntry *LookupEnvironment(const std::string &name) {
-	// A STARRED ENVIRONMENT IS THE UNNUMBERED VARIANT OF THE SAME CONSTRUCT, never a
-	// different one, so `align*` gets `align`'s disposition and figure* gets figure's. The
-	// tokenizer strips the star from a control WORD, but an environment name arrives from a
-	// brace group and keeps it -- so without this, \begin{align*} (the most common display
-	// math there is) missed the DROPPED list entirely and its source came out as prose,
-	// which is the exact outcome that list exists to prevent.
+	// A STARRED ENVIRONMENT IS THE UNNUMBERED VARIANT OF THE SAME CONSTRUCT,
+	// never a different one, so `align*` gets `align`'s disposition and figure*
+	// gets figure's. The tokenizer strips the star from a control WORD, but an
+	// environment name arrives from a brace group and keeps it -- so without
+	// this, \begin{align*} (the most common display math there is) missed the
+	// DROPPED list entirely and its source came out as prose, which is the exact
+	// outcome that list exists to prevent.
 	const std::string base = !name.empty() && name.back() == '*' ? name.substr(0, name.size() - 1) : name;
 	for (size_t i = 0; i < ENVIRONMENT_COUNT; i++) {
 		if (base == ENVIRONMENTS[i].name) {

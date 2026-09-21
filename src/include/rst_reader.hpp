@@ -33,8 +33,9 @@ struct RstBlock {
 };
 
 //! Parse reStructuredText into blocks. Never throws: malformed input degrades.
-//! RST HAS NO DOCUMENT METADATA -- a field list is a definition list, measured against
-//! pandoc -- so this reader emits no kind='value' rows and the struct carries no key.
+//! RST HAS NO DOCUMENT METADATA -- a field list is a definition list, measured
+//! against pandoc -- so this reader emits no kind='value' rows and the struct
+//! carries no key.
 std::vector<RstBlock> ParseRstString(const std::string &src);
 
 void RegisterRstReader(ExtensionLoader &loader);

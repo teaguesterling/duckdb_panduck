@@ -7,8 +7,9 @@ namespace duckdb {
 namespace rst {
 namespace {
 
-//! The characters docutils accepts as section adornment. Any ASCII punctuation, in
-//! practice -- the set is open, so this tests the CLASS rather than enumerating members.
+//! The characters docutils accepts as section adornment. Any ASCII punctuation,
+//! in practice -- the set is open, so this tests the CLASS rather than
+//! enumerating members.
 bool IsAdornmentChar(char c) {
 	return std::ispunct(static_cast<unsigned char>(c)) && c != ',' && c != ';';
 }
@@ -35,8 +36,8 @@ int Indent(const std::string &s) {
 	return n;
 }
 
-//! A run of ONE punctuation character, two or more long. Two is docutils' minimum for an
-//! underline, and `--` is a legal (if unusual) one.
+//! A run of ONE punctuation character, two or more long. Two is docutils'
+//! minimum for an underline, and `--` is a legal (if unusual) one.
 bool IsAdornment(const std::string &t, char &c) {
 	if (t.size() < 2 || !IsAdornmentChar(t[0])) {
 		return false;
@@ -50,7 +51,8 @@ bool IsAdornment(const std::string &t, char &c) {
 	return true;
 }
 
-//! `+-----+-----+` or `+=====+=====+`. The `=` spelling marks the header boundary.
+//! `+-----+-----+` or `+=====+=====+`. The `=` spelling marks the header
+//! boundary.
 bool IsGridSep(const std::string &t, bool &header) {
 	if (t.size() < 3 || t[0] != '+' || t.back() != '+') {
 		return false;
@@ -66,9 +68,9 @@ bool IsGridSep(const std::string &t, bool &header) {
 	return true;
 }
 
-//! `=====  =====` -- runs of `=` separated by spaces. The run LENGTHS are the column
-//! widths, which is the only place RST cell extraction is positional rather than
-//! delimited.
+//! `=====  =====` -- runs of `=` separated by spaces. The run LENGTHS are the
+//! column widths, which is the only place RST cell extraction is positional
+//! rather than delimited.
 bool IsSimpleSep(const std::string &t, std::vector<int> &spans, std::vector<int> &starts) {
 	if (t.size() < 2 || t[0] != '=') {
 		return false;
@@ -91,10 +93,11 @@ bool IsSimpleSep(const std::string &t, std::vector<int> &spans, std::vector<int>
 			return false;
 		}
 	}
-	// TWO RUNS MINIMUM. `=====` alone is a HEADING ADORNMENT, not a one-column table, and
-	// testing simple-tables first without this turned every `Title\n=====` in the corpus
-	// into a paragraph -- the most conventional heading spelling there is. A simple table
-	// needs at least two columns to be a table at all.
+	// TWO RUNS MINIMUM. `=====` alone is a HEADING ADORNMENT, not a one-column
+	// table, and testing simple-tables first without this turned every
+	// `Title\n=====` in the corpus into a paragraph -- the most conventional
+	// heading spelling there is. A simple table needs at least two columns to be
+	// a table at all.
 	return spans.size() >= 2;
 }
 
@@ -117,8 +120,8 @@ std::vector<Line> ScanRst(const std::string &src) {
 			continue;
 		}
 
-		// `..` BEFORE ADORNMENT: `..` is itself two punctuation characters and would
-		// otherwise read as a two-character adornment run.
+		// `..` BEFORE ADORNMENT: `..` is itself two punctuation characters and
+		// would otherwise read as a two-character adornment run.
 		if (t.rfind("..", 0) == 0) {
 			auto rest = TrimBoth(t.substr(2));
 			auto colons = rest.find("::");
@@ -127,8 +130,8 @@ std::vector<Line> ScanRst(const std::string &src) {
 				line.name = TrimBoth(rest.substr(0, colons));
 				line.text = TrimBoth(rest.substr(colons + 2));
 			} else {
-				// A COMMENT, and it produces nothing. Not dropping it silently would put
-				// docutils bookkeeping into the document as prose.
+				// A COMMENT, and it produces nothing. Not dropping it silently would
+				// put docutils bookkeeping into the document as prose.
 				line.kind = LineKind::COMMENT;
 				line.text = rest;
 			}
@@ -155,21 +158,22 @@ std::vector<Line> ScanRst(const std::string &src) {
 			continue;
 		}
 		if (IsAdornment(t, line.adornment)) {
-			// AMBIGUOUS BY DESIGN. Heading underline or transition -- only the previous
-			// line can say, and the reader has it.
+			// AMBIGUOUS BY DESIGN. Heading underline or transition -- only the
+			// previous line can say, and the reader has it.
 			line.kind = LineKind::ADORNMENT;
-			// The run itself, so the reader can tell a lone `::` -- a literal-block marker -- from a
-			// transition. Both are a run of one punctuation character to this scanner (#64).
+			// The run itself, so the reader can tell a lone `::` -- a literal-block
+			// marker -- from a transition. Both are a run of one punctuation
+			// character to this scanner (#64).
 			line.text = t;
 			out.push_back(std::move(line));
 			continue;
 		}
-		// `:Name: value` -- a FIELD, and NOT metadata. Pandoc emits a DefinitionList for a
-		// field list and an EMPTY meta, measured. The syntax exists to record document
-		// fields and docutils itself promotes them, which is exactly why a reader written
-		// on the obvious assumption emits `kind='value'` rows pandoc does not have -- and
-		// nothing in the vocabulary would object, because the shape is valid and the keys
-		// are plausible.
+		// `:Name: value` -- a FIELD, and NOT metadata. Pandoc emits a
+		// DefinitionList for a field list and an EMPTY meta, measured. The syntax
+		// exists to record document fields and docutils itself promotes them, which
+		// is exactly why a reader written on the obvious assumption emits
+		// `kind='value'` rows pandoc does not have -- and nothing in the vocabulary
+		// would object, because the shape is valid and the keys are plausible.
 		if (t[0] == ':') {
 			auto close = t.find(':', 1);
 			if (close != std::string::npos && close > 1) {

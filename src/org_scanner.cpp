@@ -44,9 +44,9 @@ bool IsHorizontalRule(const std::string &t) {
 	return true;
 }
 
-//! `|---+---|` and friends: a row whose cells contain only dashes and pluses. This is what
-//! promotes the row ABOVE it to a header, so it must not be confused with a data row whose
-//! first cell happens to be a dash.
+//! `|---+---|` and friends: a row whose cells contain only dashes and pluses.
+//! This is what promotes the row ABOVE it to a header, so it must not be
+//! confused with a data row whose first cell happens to be a dash.
 bool IsTableRule(const std::string &t) {
 	if (t.size() < 2 || t[0] != '|') {
 		return false;
@@ -62,10 +62,11 @@ bool IsTableRule(const std::string &t) {
 	return any_dash;
 }
 
-//! A LEADING `*` IS A HEADING ONLY AT COLUMN 0, and only when followed by a space. All
-//! three of `* text`, `  * text` and `*bold*` begin with the same character, and column
-//! position plus the trailing space is what separates them. This is the reader's one real
-//! parsing hazard, so it is decided in one place rather than at each use.
+//! A LEADING `*` IS A HEADING ONLY AT COLUMN 0, and only when followed by a
+//! space. All three of `* text`, `  * text` and `*bold*` begin with the same
+//! character, and column position plus the trailing space is what separates
+//! them. This is the reader's one real parsing hazard, so it is decided in one
+//! place rather than at each use.
 bool ParseHeading(const std::string &line, int &level, std::string &text) {
 	size_t stars = 0;
 	while (stars < line.size() && line[stars] == '*') {
@@ -74,15 +75,16 @@ bool ParseHeading(const std::string &line, int &level, std::string &text) {
 	if (stars == 0 || stars >= line.size() || !IsSpace(line[stars])) {
 		return false;
 	}
-	// Capped at 6, as everywhere else in panduck: duck_block's heading_level is 1..6 and a
-	// seventh star is still a heading, just not a deeper one.
+	// Capped at 6, as everywhere else in panduck: duck_block's heading_level
+	// is 1..6 and a seventh star is still a heading, just not a deeper one.
 	level = static_cast<int>(stars > 6 ? 6 : stars);
 	text = TrimBoth(line.substr(stars));
 	return true;
 }
 
-//! `- x`, `+ x`, `1. x`, `1) x`. Returns the indent, or -1 when the line is not an item.
-//! A bullet `*` is accepted only when INDENTED -- at column 0 it is a heading.
+//! `- x`, `+ x`, `1. x`, `1) x`. Returns the indent, or -1 when the line is not
+//! an item. A bullet `*` is accepted only when INDENTED -- at column 0 it is a
+//! heading.
 int ParseListItem(const std::string &line, bool &ordered, int &start, std::string &rest) {
 	size_t i = 0;
 	while (i < line.size() && IsSpace(line[i])) {
@@ -134,8 +136,8 @@ std::vector<Line> ScanOrg(const std::string &src) {
 			continue;
 		}
 
-		// `#+` BEFORE `#`: a keyword and a comment share a first character, and testing the
-		// comment first would swallow every `#+TITLE:` in the document.
+		// `#+` BEFORE `#`: a keyword and a comment share a first character, and
+		// testing the comment first would swallow every `#+TITLE:` in the document.
 		if (trimmed.rfind("#+", 0) == 0) {
 			auto body = trimmed.substr(2);
 			auto up = Upper(body);
@@ -159,14 +161,14 @@ std::vector<Line> ScanOrg(const std::string &src) {
 				line.kind = LineKind::KEYWORD;
 				line.key = Upper(TrimBoth(body.substr(0, colon)));
 				line.text = TrimBoth(body.substr(colon + 1));
-				// The line VERBATIM, because an unrecognised keyword is held as `raw` and raw
-				// content that has been case-folded is not verbatim.
+				// The line VERBATIM, because an unrecognised keyword is held as `raw`
+				// and raw content that has been case-folded is not verbatim.
 				line.raw = TrimRight(raw);
 				out.push_back(std::move(line));
 				continue;
 			}
-			// `#+` with no colon and no BEGIN/END is not a keyword. Falling through to TEXT
-			// keeps its words rather than dropping a line nobody modelled.
+			// `#+` with no colon and no BEGIN/END is not a keyword. Falling through
+			// to TEXT keeps its words rather than dropping a line nobody modelled.
 		} else if (trimmed[0] == '#' && (trimmed.size() == 1 || IsSpace(trimmed[1]))) {
 			line.kind = LineKind::COMMENT;
 			line.text = trimmed.size() > 1 ? TrimBoth(trimmed.substr(1)) : std::string();
@@ -174,15 +176,16 @@ std::vector<Line> ScanOrg(const std::string &src) {
 			continue;
 		}
 
-		// DRAWERS ARE NOT PROSE. `:PROPERTIES:` .. `:END:` carries Org's per-heading
-		// bookkeeping, and pandoc emits nothing for it. Scoping drawers OUT of this reader
-		// has to mean DROPPED, not LEAKED: without this the drawer's lines fall through to
-		// TEXT and join the following paragraph, so pandoc's own Org output -- which writes
-		// a :PROPERTIES: block under every heading by default -- came back reading
+		// DRAWERS ARE NOT PROSE. `:PROPERTIES:` .. `:END:` carries Org's
+		// per-heading bookkeeping, and pandoc emits nothing for it. Scoping drawers
+		// OUT of this reader has to mean DROPPED, not LEAKED: without this the
+		// drawer's lines fall through to TEXT and join the following paragraph, so
+		// pandoc's own Org output -- which writes a :PROPERTIES: block under every
+		// heading by default -- came back reading
 		// ":PROPERTIES: :CUSTOM_ID: heading-one :END: Body text...".
 		//
-		// Losing structure is a gap and emitting non-content as prose is a bug; this reader
-		// says so elsewhere and the rule applies to its own omissions.
+		// Losing structure is a gap and emitting non-content as prose is a bug;
+		// this reader says so elsewhere and the rule applies to its own omissions.
 		if (trimmed.size() >= 2 && trimmed.front() == ':' && trimmed.back() == ':' &&
 		    trimmed.find(' ') == std::string::npos) {
 			auto name = Upper(trimmed.substr(1, trimmed.size() - 2));
@@ -242,8 +245,8 @@ std::vector<Line> ScanOrg(const std::string &src) {
 		line.text = trimmed;
 		out.push_back(std::move(line));
 	}
-	// The loop runs one past the end so a trailing newline yields its final empty line;
-	// drop it so a document does not gain a blank the source never had.
+	// The loop runs one past the end so a trailing newline yields its final empty
+	// line; drop it so a document does not gain a blank the source never had.
 	if (!out.empty() && out.back().kind == LineKind::BLANK) {
 		out.pop_back();
 	}

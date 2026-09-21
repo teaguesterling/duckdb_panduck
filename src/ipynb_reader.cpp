@@ -1,12 +1,13 @@
 #include "ipynb_reader.hpp"
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "duck_block_types.hpp"
 #include "yyjson.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <fstream>
 #include <map>
@@ -17,9 +18,9 @@ namespace duckdb {
 namespace ipynb {
 namespace {
 
-//! `source` is an ARRAY OF LINES in every notebook nbformat 4 writes, and a plain string
-//! in some hand-built ones. Both spellings are legal and a reader that handles one silently
-//! produces nothing for the other.
+//! `source` is an ARRAY OF LINES in every notebook nbformat 4 writes, and a
+//! plain string in some hand-built ones. Both spellings are legal and a reader
+//! that handles one silently produces nothing for the other.
 std::string JoinSource(yyjson_val *val) {
 	if (!val) {
 		return std::string();
@@ -45,8 +46,9 @@ std::string StrField(yyjson_val *obj, const char *key) {
 	return v && yyjson_is_str(v) ? yyjson_get_str(v) : std::string();
 }
 
-//! Trim one trailing newline. A notebook's source and outputs end with "\n" as a line
-//! terminator, not as content, and keeping it puts a blank line at the end of every cell.
+//! Trim one trailing newline. A notebook's source and outputs end with "\n" as
+//! a line terminator, not as content, and keeping it puts a blank line at the
+//! end of every cell.
 std::string TrimTrailingNewline(std::string s) {
 	while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) {
 		s.pop_back();
@@ -59,9 +61,9 @@ public:
 	std::vector<IpynbBlock> Build(const std::string &src) {
 		auto *doc = yyjson_read(src.data(), src.size(), 0);
 		if (!doc) {
-			// MALFORMED JSON YIELDS NOTHING rather than throwing. A reader that fails the
-			// whole query on one bad file is worse than one that reports an empty document,
-			// and every other panduck reader degrades the same way.
+			// MALFORMED JSON YIELDS NOTHING rather than throwing. A reader that fails
+			// the whole query on one bad file is worse than one that reports an empty
+			// document, and every other panduck reader degrades the same way.
 			return {};
 		}
 		auto *root = yyjson_doc_get_root(doc);
@@ -79,8 +81,8 @@ private:
 	std::vector<IpynbBlock> blocks_;
 	std::string language_;
 
-	//! The notebook's kernel language, which is what a code cell is written in. Notebooks
-	//! record it once at the top rather than per cell.
+	//! The notebook's kernel language, which is what a code cell is written in.
+	//! Notebooks record it once at the top rather than per cell.
 	static std::string KernelLanguage(yyjson_val *nb_meta) {
 		auto *ks = nb_meta ? yyjson_obj_get(nb_meta, "kernelspec") : nullptr;
 		auto lang = StrField(ks, "language");
@@ -103,7 +105,8 @@ private:
 		blocks_.push_back(std::move(b));
 	}
 
-	//! A raw block: content verbatim, format in an ATTRIBUTE, encoding left at its default.
+	//! A raw block: content verbatim, format in an ATTRIBUTE, encoding left at
+	//! its default.
 	void PushRaw(const std::string &content, int level, const char *format) {
 		IpynbBlock b;
 		b.element_type = DuckBlockTypes::TYPE_RAW;
@@ -126,38 +129,41 @@ private:
 			auto type = StrField(cell, "cell_type");
 			auto source = TrimTrailingNewline(JoinSource(yyjson_obj_get(cell, "source")));
 
-			// EACH CELL IS A CONTAINER, matching pandoc's Div per cell. A notebook's cell
-			// boundaries are structure a consumer needs -- "which cell produced this" is the
-			// question notebooks exist to answer -- so they are not flattened away.
+			// EACH CELL IS A CONTAINER, matching pandoc's Div per cell. A notebook's
+			// cell boundaries are structure a consumer needs -- "which cell produced
+			// this" is the question notebooks exist to answer -- so they are not
+			// flattened away.
 			Push(DuckBlockTypes::TYPE_DIV, std::string(), 1, {}, {}, type.empty() ? "cell" : type);
 
 			if (type == "markdown") {
 				// HELD RAW, AND THIS IS A DEFERRAL RATHER THAN A RESTING PLACE.
 				//
-				// A markdown cell contains a DOCUMENT, not data -- it would be duck_blocks.
-				// That makes it a different case from the whole-file .toml/.yaml blob, where
-				// verbatim is the correct and final answer because there is nothing it
-				// should become.
+				// A markdown cell contains a DOCUMENT, not data -- it would be
+				// duck_blocks. That makes it a different case from the whole-file
+				// .toml/.yaml blob, where verbatim is the correct and final answer
+				// because there is nothing it should become.
 				//
-				// It is raw here because delegating would make this reader's output depend
-				// on which extensions happen to be installed: panduck's delegation lives in
-				// the SQL dispatch layer, which is where .md routes to duckdb_markdown, and
-				// a C++ reader cannot reach those functions. One consistent behaviour beats
-				// two that vary by environment.
+				// It is raw here because delegating would make this reader's output
+				// depend on which extensions happen to be installed: panduck's
+				// delegation lives in the SQL dispatch layer, which is where .md routes
+				// to duckdb_markdown, and a C++ reader cannot reach those functions.
+				// One consistent behaviour beats two that vary by environment.
 				//
-				// A consumer wanting blocks today calls parse_markdown_to_duck_blocks() --
-				// a SCALAR from the markdown extension -- on this content, and normalises the
-				// result. THIS SENTENCE NAMED md_to_blocks() UNTIL NOW, WHICH DOES NOT EXIST:
-				// the markdown extension has never shipped that name. Anyone following the
-				// advice got a Catalog Error, which is the shape of #25 and l1t1's INSTALL
-				// report -- guidance that names a next step which does not work costs a
-				// reader more than saying nothing. The deferral is discharged by a post-parse
-				// helper for embedded formats -- NOT by markdown parsing landing in panduck,
-				// which would violate the isolation that put it here.
+				// A consumer wanting blocks today calls parse_markdown_to_duck_blocks()
+				// -- a SCALAR from the markdown extension -- on this content, and
+				// normalises the result. THIS SENTENCE NAMED md_to_blocks() UNTIL NOW,
+				// WHICH DOES NOT EXIST: the markdown extension has never shipped that
+				// name. Anyone following the advice got a Catalog Error, which is the
+				// shape of #25 and l1t1's INSTALL report -- guidance that names a next
+				// step which does not work costs a reader more than saying nothing. The
+				// deferral is discharged by a post-parse helper for embedded formats --
+				// NOT by markdown parsing landing in panduck, which would violate the
+				// isolation that put it here.
 				if (!source.empty()) {
-					// FORMAT IN THE ATTRIBUTE, not in `encoding`. This carried encoding='markdown' with
-					// no format at all, so the one field a consumer reads to learn what the markup
-					// IS was empty and the one it does read said something the flat rule forbids.
+					// FORMAT IN THE ATTRIBUTE, not in `encoding`. This carried
+					// encoding='markdown' with no format at all, so the one field a
+					// consumer reads to learn what the markup IS was empty and the one it
+					// does read said something the flat rule forbids.
 					PushRaw(source, 2, "markdown");
 				}
 				continue;
@@ -169,8 +175,8 @@ private:
 				Outputs(yyjson_obj_get(cell, "outputs"));
 				continue;
 			}
-			// A `raw` cell carries its own target format in metadata.format; without one it
-			// is plain text.
+			// A `raw` cell carries its own target format in metadata.format; without
+			// one it is plain text.
 			auto *cm = yyjson_obj_get(cell, "metadata");
 			auto fmt = StrField(cm, "format");
 			if (!source.empty()) {
@@ -179,8 +185,10 @@ private:
 		}
 	}
 
-	//! A CODE CELL'S OUTPUTS ARE CONTENT. What a notebook computed is part of what it says
-	//! -- a notebook read without its outputs is a script -- and pandoc keeps them too.
+	//! A CODE CELL'S OUTPUTS ARE CONTENT. What a notebook computed is part of
+	//! what it says
+	//! -- a notebook read without its outputs is a script -- and pandoc keeps
+	//! them too.
 	void Outputs(yyjson_val *outputs) {
 		if (!outputs || !yyjson_is_arr(outputs)) {
 			return;
@@ -196,9 +204,9 @@ private:
 			if (kind == "stream") {
 				text = JoinSource(yyjson_obj_get(out, "text"));
 			} else {
-				// execute_result and display_data carry a bundle keyed by MIME type. text/plain
-				// is the one every producer writes and the only one that is text rather than an
-				// encoded image, so it is the one taken.
+				// execute_result and display_data carry a bundle keyed by MIME type.
+				// text/plain is the one every producer writes and the only one that is
+				// text rather than an encoded image, so it is the one taken.
 				auto *data = yyjson_obj_get(out, "data");
 				text = JoinSource(data ? yyjson_obj_get(data, "text/plain") : nullptr);
 				if (text.empty() && kind == "error") {
@@ -216,13 +224,16 @@ private:
 
 	//! NOTEBOOK METADATA, and this reader EXCEEDS pandoc here deliberately.
 	//!
-	//! Measured: pandoc puts the entire notebook metadata into ONE opaque `jupyter` MetaMap
-	//! -- title, authors, kernelspec and all -- so a consumer asking "who wrote this" has to
-	//! walk a blob. The fields are plainly in the file, and recovering them is the same
-	//! approved exception the docx and odt readers take.
+	//! Measured: pandoc puts the entire notebook metadata into ONE opaque
+	//! `jupyter` MetaMap
+	//! -- title, authors, kernelspec and all -- so a consumer asking "who wrote
+	//! this" has to walk a blob. The fields are plainly in the file, and
+	//! recovering them is the same approved exception the docx and odt readers
+	//! take.
 	//!
-	//! Every field therefore carries attributes['source_type'] with its original path, so a
-	//! format-derived field stays distinguishable from a pandoc-derived one.
+	//! Every field therefore carries attributes['source_type'] with its original
+	//! path, so a format-derived field stays distinguishable from a
+	//! pandoc-derived one.
 	void Metadata(yyjson_val *nb_meta) {
 		if (!nb_meta || !yyjson_is_obj(nb_meta)) {
 			return;
@@ -320,17 +331,19 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 			row.attributes["format"] = block.raw_format;
 		}
 		if (!block.source_type.empty()) {
-			// A div's cell or output kind, or a metadata field's original path. On metadata
-			// it is what keeps a format-derived field distinguishable from a pandoc-derived
-			// one, which is the condition attached to exceeding the reference.
+			// A div's cell or output kind, or a metadata field's original path. On
+			// metadata it is what keeps a format-derived field distinguishable from a
+			// pandoc-derived one, which is the condition attached to exceeding the
+			// reference.
 			row.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = block.source_type;
 		}
 		if (!block.language.empty()) {
 			row.attributes["language"] = block.language;
 		}
-		// NO heading, role or list branches here, unlike every other reader: a notebook's
-		// block structure is cells, code and raw content. Carrying fields the format cannot
-		// produce would be dead weight that reads as an oversight.
+		// NO heading, role or list branches here, unlike every other reader: a
+		// notebook's block structure is cells, code and raw content. Carrying
+		// fields the format cannot produce would be dead weight that reads as an
+		// oversight.
 		const int32_t block_level = block.level > 0 ? block.level : 1;
 		row.level = block_level;
 		rows.push_back(std::move(row));
@@ -342,13 +355,15 @@ void BuildRows(const std::string &src, std::vector<IpynbRow> &rows) {
 			child.content = inl.content;
 			child.level = inl.level > 0 ? inl.level : block_level + 1;
 			child.element_order = order++;
-			// No href branch: the only inlines this reader emits are the metadata values'
-			// text runs. Markdown cells are held raw, so their links never become inlines
-			// here -- they are still inside the raw content until expand_embedded parses it.
-			// That helper LANDED (#39): read_panduck_doc(src, expand_embedded := true), and the
-			// same parameter on doc_toc/doc_section/doc_search_sections/doc_container. It parses
-			// in the SQL layer where delegation lives, so this reader keeps the independence the
-			// comment above defends -- the default is still one raw block.
+			// No href branch: the only inlines this reader emits are the metadata
+			// values' text runs. Markdown cells are held raw, so their links never
+			// become inlines here -- they are still inside the raw content until
+			// expand_embedded parses it. That helper LANDED (#39):
+			// read_panduck_doc(src, expand_embedded := true), and the same parameter
+			// on doc_toc/doc_section/doc_search_sections/doc_container. It parses in
+			// the SQL layer where delegation lives, so this reader keeps the
+			// independence the comment above defends -- the default is still one raw
+			// block.
 			rows.push_back(std::move(child));
 		}
 	}
@@ -400,15 +415,38 @@ void IpynbScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterIpynbReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_ipynb_blocks", {LogicalType::VARCHAR}, IpynbScan, IpynbFileBind,
-	                      IpynbGlobalState::Init);
-	loader.RegisterFunction(file_fn);
+	{
+		TableFunction file_fn("read_ipynb_blocks", {LogicalType::VARCHAR}, IpynbScan, IpynbFileBind,
+		                      IpynbGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(file_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"file_path"};
+		desc.description = "Read a Jupyter Notebook (.ipynb) file and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_ipynb_blocks('notebook.ipynb')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
-	// The string form, as the LaTeX reader has: asserting a two-line snippet is how the
-	// nesting and inline rules stay readable in the tests.
-	TableFunction string_fn("read_ipynb_blocks_string", {LogicalType::VARCHAR}, IpynbScan, IpynbStringBind,
-	                        IpynbGlobalState::Init);
-	loader.RegisterFunction(string_fn);
+	// The string form, as the LaTeX reader has: asserting a two-line snippet is
+	// how the nesting and inline rules stay readable in the tests.
+	{
+		TableFunction string_fn("read_ipynb_blocks_string", {LogicalType::VARCHAR}, IpynbScan, IpynbStringBind,
+		                        IpynbGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(string_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"ipynb_json"};
+		desc.description = "Parse a Jupyter Notebook JSON string and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_ipynb_blocks_string('{\"cells\": [], \"metadata\": "
+		                 "{}, \"nbformat\": 4, \"nbformat_minor\": 2}')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace ipynb

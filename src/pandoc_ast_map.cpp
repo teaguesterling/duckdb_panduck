@@ -3,17 +3,19 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 namespace duckdb {
 namespace pandoc_ast {
 
-// The complete Block and Inline constructor set of pandoc-types 1.23 (pandoc 3.x),
-// paired with the duck_block element_type each one corresponds to.
+// The complete Block and Inline constructor set of pandoc-types 1.23
+// (pandoc 3.x), paired with the duck_block element_type each one corresponds
+// to.
 //
-// element_type values are NOT invented here -- they are the vocabulary already fixed by
-// duck_block_utils (src/include/block_types.hpp) and documented in its
-// docs/pandoc_ast_spec.md. Panduck's readers must emit these exact strings for the
-// existing round-trip to work.
+// element_type values are NOT invented here -- they are the vocabulary already
+// fixed by duck_block_utils (src/include/block_types.hpp) and documented in its
+// docs/pandoc_ast_spec.md. Panduck's readers must emit these exact strings for
+// the existing round-trip to work.
 const Mapping MAPPINGS[] = {
     // ---- Blocks (15 constructors) ----
     {"Header", "block", "heading", STATUS_MAPPED, "heading_level 1-6 in attributes; id from Attr"},
@@ -28,7 +30,8 @@ const Mapping MAPPINGS[] = {
     {"RawBlock", "block", "raw", STATUS_MAPPED, "source format recorded in attributes"},
     {"Div", "block", "div", STATUS_MAPPED, "Attr preserved, children recursed"},
     {"LineBlock", "block", "pandoc:lineblock", STATUS_PLANNED,
-     "spec'd in duck_block_utils docs but no code path; currently dropped by the else branch"},
+     "spec'd in duck_block_utils docs but no code path; currently dropped by "
+     "the else branch"},
     {"DefinitionList", "block", "pandoc:deflist", STATUS_PLANNED,
      "spec'd in duck_block_utils docs but no code path; currently dropped"},
     {"Figure", "block", "pandoc:figure", STATUS_PLANNED, "pandoc 3.0+; spec'd but no code path; currently dropped"},
@@ -55,7 +58,8 @@ const Mapping MAPPINGS[] = {
     {"Note", "inline", "note", STATUS_MAPPED, "footnote body as nested blocks"},
     {"Span", "inline", "span", STATUS_MAPPED, ""},
     {"Underline", "inline", "underline", STATUS_PLANNED,
-     "block_types.hpp defines INLINE_UNDERLINE but pandoc_inline_convert.cpp never "
+     "block_types.hpp defines INLINE_UNDERLINE but pandoc_inline_convert.cpp "
+     "never "
      "matches it; falls through to text with literal content \"[Underline]\""},
 };
 
@@ -107,7 +111,15 @@ void PandocAstMapScan(ClientContext &, TableFunctionInput &input, DataChunk &out
 
 void RegisterPandocAstMapFunction(ExtensionLoader &loader) {
 	TableFunction fn("panduck_pandoc_ast_map", {}, PandocAstMapScan, PandocAstMapBind, PandocAstMapGlobalState::Init);
-	loader.RegisterFunction(fn);
+	CreateTableFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.description = "Return the complete constructor set of Pandoc AST types "
+	                   "mapped to DuckDB duck_block element types.";
+	desc.examples = {"SELECT * FROM panduck_pandoc_ast_map()"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

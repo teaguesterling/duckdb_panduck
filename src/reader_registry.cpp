@@ -3,11 +3,12 @@
 
 #include "supported_extensions.hpp"
 
-// Catalog::GetEntry below needs the COMPLETE type, not the forward declaration. On
-// DuckDB v1.5.5 this header arrived transitively and omitting it was invisible; on
-// DuckDB-next it does not, and the call fails to compile with "incomplete type
-// 'duckdb::Catalog' used in nested name specifier". Included explicitly rather than
-// left to whichever header happens to pull it in -- that is the property that changed.
+// Catalog::GetEntry below needs the COMPLETE type, not the forward declaration.
+// On DuckDB v1.5.5 this header arrived transitively and omitting it was
+// invisible; on DuckDB-next it does not, and the call fails to compile with
+// "incomplete type 'duckdb::Catalog' used in nested name specifier". Included
+// explicitly rather than left to whichever header happens to pull it in -- that
+// is the property that changed.
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/catalog/default/default_table_functions.hpp"
@@ -16,6 +17,8 @@
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/extension_helper.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -25,8 +28,9 @@ namespace readers {
 
 namespace {
 
-//! Lowercase, dot-prefixed. Accepts "rtf", ".rtf" or ".RTF" so a caller registering a
-//! reader does not have to guess which spelling the registry wants.
+//! Lowercase, dot-prefixed. Accepts "rtf", ".rtf" or ".RTF" so a caller
+//! registering a reader does not have to guess which spelling the registry
+//! wants.
 std::string NormalizeExt(const std::string &raw) {
 	std::string s;
 	for (char c : raw) {
@@ -40,17 +44,19 @@ std::string NormalizeExt(const std::string &raw) {
 
 } // namespace
 
-//! The extension of a path, normalized. Pure string work -- no I/O, so panduck_can_read()
-//! answers for a file that does not exist.
+//! The extension of a path, normalized. Pure string work -- no I/O, so
+//! panduck_can_read() answers for a file that does not exist.
 std::string ExtOfPath(const std::string &path) {
-	// A URL SCHEME IS AN EXTENSION FOR REGISTRY PURPOSES. `zim://wiki.zim/A/Article` names
-	// ONE ARTICLE inside an archive, and its trailing segment usually has no dot at all --
-	// so extension lookup answers NULL and the source falls through to `code`. Keying on
-	// the scheme makes the registry answer honestly for a shape that is a document.
+	// A URL SCHEME IS AN EXTENSION FOR REGISTRY PURPOSES.
+	// `zim://wiki.zim/A/Article` names ONE ARTICLE inside an archive, and its
+	// trailing segment usually has no dot at all -- so extension lookup answers
+	// NULL and the source falls through to `code`. Keying on the scheme makes the
+	// registry answer honestly for a shape that is a document.
 	//
-	// It is a DIFFERENT format from `.zim`: the archive is a corpus with no single-document
-	// reading and is refused, while an article is HTML and reads like any other. One suffix
-	// and one scheme, two answers, which is why this cannot be a single row.
+	// It is a DIFFERENT format from `.zim`: the archive is a corpus with no
+	// single-document reading and is refused, while an article is HTML and reads
+	// like any other. One suffix and one scheme, two answers, which is why this
+	// cannot be a single row.
 	if (path.rfind("zim://", 0) == 0) {
 		return "zim://";
 	}
@@ -65,11 +71,12 @@ std::string ExtOfPath(const std::string &path) {
 
 //! A reader parameter name must be a bare identifier.
 //!
-//! CHECKED AT REGISTRATION, not at render time, so a malformed row cannot be STORED at
-//! all. The difference matters because a registry entry is process-wide and permanent: a
-//! row accepted now would be rendered into every later read_panduck_doc in the process,
-//! and the caller who then hits the error has no way to tell which registration is
-//! responsible. Refusing at the point of registration puts the error where the mistake is.
+//! CHECKED AT REGISTRATION, not at render time, so a malformed row cannot be
+//! STORED at all. The difference matters because a registry entry is
+//! process-wide and permanent: a row accepted now would be rendered into every
+//! later read_panduck_doc in the process, and the caller who then hits the
+//! error has no way to tell which registration is responsible. Refusing at the
+//! point of registration puts the error where the mistake is.
 bool IsIdentifier(const std::string &s) {
 	if (s.empty() || (!std::isalpha(static_cast<unsigned char>(s[0])) && s[0] != '_')) {
 		return false;
@@ -84,20 +91,23 @@ bool IsIdentifier(const std::string &s) {
 
 //! POLICY SETTINGS. Defence in depth, not a privilege boundary.
 //!
-//! `function` is validated at registration and options render from structured data, so a
-//! registration cannot inject SQL. These exist for the deployment that does not want runtime
-//! registration AT ALL, or wants a particular reader off -- an embedder exposing panduck to
-//! untrusted SQL, where "you already need arbitrary SQL to reach it" is not the reassurance
-//! it is for a local session.
+//! `function` is validated at registration and options render from structured
+//! data, so a registration cannot inject SQL. These exist for the deployment
+//! that does not want runtime registration AT ALL, or wants a particular reader
+//! off -- an embedder exposing panduck to untrusted SQL, where "you already
+//! need arbitrary SQL to reach it" is not the reassurance it is for a local
+//! session.
 //!
-//! EVERY DEFAULT PRESERVES TODAY'S BEHAVIOUR: registration allowed, every reader on. A
-//! security control whose default changed what documents read would cost more than it buys.
+//! EVERY DEFAULT PRESERVES TODAY'S BEHAVIOUR: registration allowed, every
+//! reader on. A security control whose default changed what documents read
+//! would cost more than it buys.
 constexpr const char *SETTING_ALLOW_REGISTRATION = "panduck_allow_registration";
 constexpr const char *SETTING_ENABLED_READERS = "panduck_enabled_readers";
 constexpr const char *SETTING_DISABLED_READERS = "panduck_disabled_readers";
 
-//! Lowercase, trim, and split a comma list. ' ODT , rtf ' is what a person types into a SET,
-//! and refusing it would make the setting hostile for no gain.
+//! Lowercase, trim, and split a comma list. ' ODT , rtf ' is what a person
+//! types into a SET, and refusing it would make the setting hostile for no
+//! gain.
 std::vector<std::string> SplitPolicyList(const std::string &raw) {
 	std::vector<std::string> out;
 	std::string cur;
@@ -128,15 +138,17 @@ std::string PolicySetting(ClientContext &context, const char *name) {
 	return v.ToString();
 }
 
-//! Is this FORMAT allowed to read? Allowlist first ('*' means all), denylist after, so a
-//! format named in both is refused -- otherwise a reader could smuggle itself back on.
+//! Is this FORMAT allowed to read? Allowlist first ('*' means all), denylist
+//! after, so a format named in both is refused -- otherwise a reader could
+//! smuggle itself back on.
 //!
-//! THE '*' CASE SKIPS PARSING THE ALLOWLIST AND NOTHING MORE: both settings are still read
-//! and the denylist is still split on every call. Said plainly because an earlier note
-//! claimed this "short-circuits before any list parsing", which is half true -- and a
-//! half-true claim in a comment is what this repo keeps paying for. The cost is per read
-//! (per path in the plural builder), not per row, so it does not matter; the comment should
-//! still describe the code.
+//! THE '*' CASE SKIPS PARSING THE ALLOWLIST AND NOTHING MORE: both settings are
+//! still read and the denylist is still split on every call. Said plainly
+//! because an earlier note claimed this "short-circuits before any list
+//! parsing", which is half true -- and a half-true claim in a comment is what
+//! this repo keeps paying for. The cost is per read (per path in the plural
+//! builder), not per row, so it does not matter; the comment should still
+//! describe the code.
 bool ReaderFormatEnabled(ClientContext &context, const std::string &format) {
 	auto lower = format;
 	for (auto &c : lower) {
@@ -153,22 +165,25 @@ bool ReaderFormatEnabled(ClientContext &context, const std::string &format) {
 	return std::find(denied.begin(), denied.end(), lower) == denied.end();
 }
 
-//! SQL-visible form, so the dispatch macro can refuse BEFORE the code fallback claims the
-//! source. A NULL format is not gated here -- dispatch has its own name for that.
+//! SQL-visible form, so the dispatch macro can refuse BEFORE the code fallback
+//! claims the source. A NULL format is not gated here -- dispatch has its own
+//! name for that.
 inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
-	// WRITTEN WITH Vector::SetValue, for the reason RegistryFieldFun documents below:
-	// UnaryExecutor's null protocol is NOT stable across DuckDB versions. v1.5.5 has
-	// ExecuteWithNulls taking a (value, ValidityMask &, idx) lambda; v2.0 REMOVED it in
-	// favour of a lambda returning optional<T>. This first shipped as ExecuteWithNulls,
-	// which builds against the v1.5.5 pin and would have broken the v2.0 canary -- a break
-	// the canary could not report, because it only runs on push to main and dispatch, and
-	// CI had not started a job in hours. SetValue has one spelling in both versions.
+	// WRITTEN WITH Vector::SetValue, for the reason RegistryFieldFun documents
+	// below: UnaryExecutor's null protocol is NOT stable across DuckDB versions.
+	// v1.5.5 has ExecuteWithNulls taking a (value, ValidityMask &, idx) lambda;
+	// v2.0 REMOVED it in favour of a lambda returning optional<T>. This first
+	// shipped as ExecuteWithNulls, which builds against the v1.5.5 pin and would
+	// have broken the v2.0 canary -- a break the canary could not report, because
+	// it only runs on push to main and dispatch, and CI had not started a job in
+	// hours. SetValue has one spelling in both versions.
 	//
-	// A NULL format stays NULL rather than becoming false: it means "this source has no name
-	// a policy could refuse it by" -- a reader registered with an empty reader_ext -- and the
-	// gates read that as allowed. Turning it into false would refuse every such reader under
-	// every policy, which is the collateral kill panduck_policy_format exists to avoid.
+	// A NULL format stays NULL rather than becoming false: it means "this source
+	// has no name a policy could refuse it by" -- a reader registered with an
+	// empty reader_ext -- and the gates read that as allowed. Turning it into
+	// false would refuse every such reader under every policy, which is the
+	// collateral kill panduck_policy_format exists to avoid.
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);
 	auto formats = UnifiedVectorFormat::GetData<string_t>(input);
@@ -184,27 +199,29 @@ inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &re
 
 //! Is `s` a function name safe to interpolate BARE into generated SQL?
 //!
-//! `function` names a table function to call, so it cannot be quoted the way a VARCHAR
-//! argument is -- it has to be emitted as an identifier. That makes it the one piece of
-//! registration data with no quoting to hide behind, and it was validated nowhere: a
-//! registration could store `read_odt_blocks('x') UNION ALL SELECT ...` and every later
-//! read of that extension would run it, in a process shared with sessions that never
-//! registered anything.
+//! `function` names a table function to call, so it cannot be quoted the way a
+//! VARCHAR argument is -- it has to be emitted as an identifier. That makes it
+//! the one piece of registration data with no quoting to hide behind, and it
+//! was validated nowhere: a registration could store `read_odt_blocks('x')
+//! UNION ALL SELECT ...` and every later read of that extension would run it,
+//! in a process shared with sessions that never registered anything.
 //!
-//! WHAT IS ALLOWED WAS SETTLED BY SURVEY, not by taste. Every `function` in the builtin
-//! registry (12 of them), in every test, and in every documented example is a PLAIN
-//! identifier -- read_odt_blocks, read_csv, st_read. No schema-qualified example exists
-//! anywhere in the repo. One dot is permitted as a deliberate superset, because
-//! my_schema.my_reader is a legitimate thing to register and refusing it would be a new
-//! limitation rather than a fix. Anything else -- parentheses, whitespace, a semicolon, a
-//! quote, an empty string -- is refused.
+//! WHAT IS ALLOWED WAS SETTLED BY SURVEY, not by taste. Every `function` in the
+//! builtin registry (12 of them), in every test, and in every documented
+//! example is a PLAIN identifier -- read_odt_blocks, read_csv, st_read. No
+//! schema-qualified example exists anywhere in the repo. One dot is permitted
+//! as a deliberate superset, because my_schema.my_reader is a legitimate thing
+//! to register and refusing it would be a new limitation rather than a fix.
+//! Anything else -- parentheses, whitespace, a semicolon, a quote, an empty
+//! string -- is refused.
 bool IsQualifiedIdentifier(const std::string &s) {
 	auto dot = s.find('.');
 	if (dot == std::string::npos) {
 		return IsIdentifier(s);
 	}
-	// Exactly one dot: schema.function. A second would be a catalog reference, which no
-	// reader registers and which this deliberately does not try to reason about.
+	// Exactly one dot: schema.function. A second would be a catalog reference,
+	// which no reader registers and which this deliberately does not try to
+	// reason about.
 	if (s.find('.', dot + 1) != std::string::npos) {
 		return false;
 	}
@@ -213,13 +230,15 @@ bool IsQualifiedIdentifier(const std::string &s) {
 
 //! Does `arg` actually hold a value of `arg_type`?
 //!
-//! BOOLEAN AND INTEGER ARE RENDERED BARE -- unquoted -- so an unchecked `arg` under either
-//! type is a direct SQL injection: arg_type 'BOOLEAN' with arg "true) UNION SELECT ..."
-//! would be emitted verbatim into the reader call. Only VARCHAR is quoted, and quoting is
-//! what makes it safe. So the bare types are constrained to values that cannot be anything
-//! but a literal, and this runs BOTH at registration (so the row cannot be stored) and
-//! again in the renderer (so no future path can reach emission unchecked). The redundancy
-//! is deliberate: this is the check the whole no-stored-fragment argument rests on.
+//! BOOLEAN AND INTEGER ARE RENDERED BARE -- unquoted -- so an unchecked `arg`
+//! under either type is a direct SQL injection: arg_type 'BOOLEAN' with arg
+//! "true) UNION SELECT ..." would be emitted verbatim into the reader call.
+//! Only VARCHAR is quoted, and quoting is what makes it safe. So the bare types
+//! are constrained to values that cannot be anything but a literal, and this
+//! runs BOTH at registration (so the row cannot be stored) and again in the
+//! renderer (so no future path can reach emission unchecked). The redundancy is
+//! deliberate: this is the check the whole no-stored-fragment argument rests
+//! on.
 bool ArgMatchesType(const std::string &arg_type, const std::string &arg) {
 	if (arg_type == "VARCHAR") {
 		return true; // rendered quoted and escaped; any content is a literal
@@ -254,47 +273,53 @@ ReaderRegistry::ReaderRegistry() {
 	struct Seed {
 		const char *ext, *format, *reader_ext, *function, *kind;
 	};
-	// Claims for extensions that cannot describe themselves. panduck's OWN formats are
-	// NOT here -- they are derived from panduck_supported_extensions() below, so a reader
-	// landing in this extension needs no edit to this table.
+	// Claims for extensions that cannot describe themselves. panduck's OWN
+	// formats are NOT here -- they are derived from
+	// panduck_supported_extensions() below, so a reader landing in this extension
+	// needs no edit to this table.
 	static const Seed SEEDS[] = {
 	    {".md", "markdown", "markdown", "read_markdown_blocks", KIND_DOC},
 	    {".markdown", "markdown", "markdown", "read_markdown_blocks", KIND_DOC},
-	    // webbed shipped read_html_blocks + parse_html_blocks in v2.8.1 (2026-08-30),
-	    // measured against community build 093856b. Until then it exposed only the SCALAR
-	    // html_to_duck_blocks(html), which returns a LIST and so needed unpacking in a
-	    // special-case branch of READ_DOC_MACRO. That branch is gone and these rows now
-	    // name a function, so html takes the same generic path markdown does.
+	    // webbed shipped read_html_blocks + parse_html_blocks in v2.8.1
+	    // (2026-08-30), measured against community build 093856b. Until then it
+	    // exposed only the SCALAR html_to_duck_blocks(html), which returns a LIST
+	    // and so needed unpacking in a special-case branch of READ_DOC_MACRO.
+	    // That branch is gone and these rows now name a function, so html takes
+	    // the same generic path markdown does.
 	    //
 	    // This row was stale for five days and nothing noticed, which is the same
-	    // two-clocks failure as the db_* -> duck_* rename: the registry is a COMPILE-TIME
-	    // claim about a sibling's RUNTIME surface. check-vocabulary catches drift in the
-	    // vendored constants and nothing catches drift here.
+	    // two-clocks failure as the db_* -> duck_* rename: the registry is a
+	    // COMPILE-TIME claim about a sibling's RUNTIME surface. check-vocabulary
+	    // catches drift in the vendored constants and nothing catches drift here.
 	    {".html", "html", "webbed", "read_html_blocks", KIND_DOC},
 	    {".htm", "html", "webbed", "read_html_blocks", KIND_DOC},
 	    {".pdf", "pdf", "pdf", "", KIND_DOC},
-	    // A .zim is a CORPUS, not a document -- an archive of many articles, closer to a
-	    // .zip than to a .docx. It is declared here so it stops FALLING THROUGH to `code`
-	    // and being handed to sitting_duck as source: a binary archive parsed as a
-	    // programming language is a silently wrong answer, which is worse than an honest
-	    // refusal. Raised by duckeye, who routes .zim to duckdb_zim directly and needs
-	    // panduck to answer honestly rather than plausibly.
+	    // A .zim is a CORPUS, not a document -- an archive of many articles,
+	    // closer to a .zip than to a .docx. It is declared here so it stops
+	    // FALLING THROUGH to `code` and being handed to sitting_duck as source: a
+	    // binary archive parsed as a programming language is a silently wrong
+	    // answer, which is worse than an honest refusal. Raised by duckeye, who
+	    // routes .zim to duckdb_zim directly and needs panduck to answer honestly
+	    // rather than plausibly.
 	    {".zim", "zim", "zim", "", KIND_DOC},
 	    // The SCHEME, not a suffix: one article, which is a document.
 	    {"zim://", "zim_article", "zim", "", KIND_DOC},
 	    {".json", "data", "json", "", KIND_TABLE},
-	    // Config trees: a nested key-value document. Not prose, but not rows either.
+	    // Config trees: a nested key-value document. Not prose, but not rows
+	    // either.
 	    {".toml", "toml", "toml", "", KIND_DOC},
 	    {".yaml", "yaml", "yaml", "", KIND_DOC},
 	    {".yml", "yaml", "yaml", "", KIND_DOC},
-	    // .json is DATA, not a Pandoc AST. panduck used to route it to duck_block_utils'
-	    // pandoc_ast_to_blocks, which made the IO engine depend on the helper layer -- the
-	    // wrong direction. Anyone holding a Pandoc AST calls pandoc_ast_to_blocks(content)
-	    // directly, which is the standalone usefulness duck_block_utils is meant to have.
-	    // Reading Pandoc JSON natively belongs in panduck eventually; borrowing it does not.
+	    // .json is DATA, not a Pandoc AST. panduck used to route it to
+	    // duck_block_utils' pandoc_ast_to_blocks, which made the IO engine depend
+	    // on the helper layer -- the wrong direction. Anyone holding a Pandoc AST
+	    // calls pandoc_ast_to_blocks(content) directly, which is the standalone
+	    // usefulness duck_block_utils is meant to have. Reading Pandoc JSON
+	    // natively belongs in panduck eventually; borrowing it does not.
 	    //
-	    // Genuinely tabular. Claimed so they do not fall through to the code fallback;
-	    // read_panduck_doc refuses them by name and points at read_panduck_table.
+	    // Genuinely tabular. Claimed so they do not fall through to the code
+	    // fallback; read_panduck_doc refuses them by name and points at
+	    // read_panduck_table.
 	    {".csv", "data", "core", "", KIND_TABLE},
 	    {".tsv", "data", "core", "", KIND_TABLE},
 	    {".parquet", "data", "core", "", KIND_TABLE},
@@ -306,9 +331,9 @@ ReaderRegistry::ReaderRegistry() {
 	for (auto &s : SEEDS) {
 		entries.push_back(ReaderEntry {s.ext, s.format, s.reader_ext, s.function, s.kind, SOURCE_BUILTIN});
 	}
-	// panduck's own implemented readers, DERIVED from its self-description rather than
-	// restated. A 'planned' format has reader == nullptr and is skipped, so dispatch can
-	// never route to a function that does not exist.
+	// panduck's own implemented readers, DERIVED from its self-description rather
+	// than restated. A 'planned' format has reader == nullptr and is skipped, so
+	// dispatch can never route to a function that does not exist.
 	for (size_t i = 0; i < FORMAT_COUNT; i++) {
 		const auto &f = FORMATS[i];
 		if (!f.reader || std::string(f.status) != std::string(STATUS_IMPLEMENTED)) {
@@ -319,31 +344,36 @@ ReaderRegistry::ReaderRegistry() {
 			    ReaderEntry {NormalizeExt(f.extensions[j]), f.format, "panduck", f.reader, KIND_DOC, SOURCE_BUILTIN});
 		}
 	}
-	// THE ONE BUILTIN OPTION MAPPING: panduck's `attributes` intent onto webbed's spelling.
+	// THE ONE BUILTIN OPTION MAPPING: panduck's `attributes` intent onto webbed's
+	// spelling.
 	//
-	// Held as DATA on the registry row rather than compiled into dispatch, so a sibling
-	// renaming its parameter is a re-registration rather than a panduck rebuild.
+	// Held as DATA on the registry row rather than compiled into dispatch, so a
+	// sibling renaming its parameter is a re-registration rather than a panduck
+	// rebuild.
 	//
 	// '*' AND NOT 'classes'. webbed's grammar is
-	// 'default' | 'classes' | '*' | true | false | ['id', ...], where 'default' is
-	// ['id','name','href','src'] and 'classes' is default PLUS 'class'. Only '*' means every
-	// source attribute, which is what panduck's intent 'all' says. Mapping 'all' to
-	// 'classes' would hand back five attributes to a caller who asked for all of them --
-	// silently, with no error -- and that is exactly what panduck's own docs example did
-	// until webbed published the grammar and it could be checked.
+	// 'default' | 'classes' | '*' | true | false | ['id', ...], where 'default'
+	// is
+	// ['id','name','href','src'] and 'classes' is default PLUS 'class'. Only '*'
+	// means every source attribute, which is what panduck's intent 'all' says.
+	// Mapping 'all' to 'classes' would hand back five attributes to a caller who
+	// asked for all of them -- silently, with no error -- and that is exactly
+	// what panduck's own docs example did until webbed published the grammar and
+	// it could be checked.
 	//
-	// There is no mapping for `attributes := 'default'`: that value is a sentinel that
-	// renders to nothing without consulting the registry, so an unchanged call generates
-	// byte-identical SQL to what it generated before options existed.
+	// There is no mapping for `attributes := 'default'`: that value is a sentinel
+	// that renders to nothing without consulting the registry, so an unchanged
+	// call generates byte-identical SQL to what it generated before options
+	// existed.
 	for (auto &e : entries) {
 		if (e.format == "html" && e.function == "read_html_blocks") {
 			e.options.push_back(ReaderOption {"attributes", "all", "capture_attributes", "*", "VARCHAR"});
 		}
 	}
 
-	// FROZEN HERE, at the one moment every row is still builtin. Register() runs only
-	// after construction, so nothing a user does can reach this map -- which is the
-	// entire point: see BuiltinFormat's comment for the bypass it closes.
+	// FROZEN HERE, at the one moment every row is still builtin. Register() runs
+	// only after construction, so nothing a user does can reach this map -- which
+	// is the entire point: see BuiltinFormat's comment for the bypass it closes.
 	for (auto &e : entries) {
 		if (!e.format.empty()) {
 			builtin_format[e.ext] = e.format;
@@ -374,8 +404,9 @@ bool ReaderRegistry::Lookup(const std::string &ext, ReaderEntry &out) {
 
 void ReaderRegistry::Register(const ReaderEntry &entry) {
 	std::lock_guard<std::mutex> guard(lock);
-	// Replace, never append. "One reader per extension" holds BY CONSTRUCTION rather than
-	// being asserted after the fact -- a user registration overrides, it does not compete.
+	// Replace, never append. "One reader per extension" holds BY CONSTRUCTION
+	// rather than being asserted after the fact -- a user registration overrides,
+	// it does not compete.
 	for (auto &e : entries) {
 		if (e.ext == entry.ext) {
 			e = entry;
@@ -393,20 +424,23 @@ using readers::ExtOfPath;
 using readers::ReaderEntry;
 using readers::ReaderRegistry;
 
-// ------------------------------------------------------------------ scalar lookups
+// ------------------------------------------------------------------ scalar
+// lookups
 //
-// These are C++ rather than SQL macros for one reason: a macro body that consults the
-// registry is a subquery, and query() rejects subqueries in its argument -- which is
-// exactly the expression dispatch has to build. See reader_registry.hpp.
+// These are C++ rather than SQL macros for one reason: a macro body that
+// consults the registry is a subquery, and query() rejects subqueries in its
+// argument -- which is exactly the expression dispatch has to build. See
+// reader_registry.hpp.
 
 enum class Field { FORMAT, FUNCTION, READER_EXT, KIND, EXT };
 
-//! What panduck NATIVELY calls this source's extension -- from the map frozen at registry
-//! construction, so a registration cannot change the answer. Empty string becomes NULL, as
-//! for every other registry scalar, so callers can coalesce past it.
+//! What panduck NATIVELY calls this source's extension -- from the map frozen
+//! at registry construction, so a registration cannot change the answer. Empty
+//! string becomes NULL, as for every other registry scalar, so callers can
+//! coalesce past it.
 //!
-//! Deliberately NOT a Field of RegistryFieldFun: that reads the LIVE entry, and reading the
-//! live entry is exactly the thing this exists to avoid.
+//! Deliberately NOT a Field of RegistryFieldFun: that reads the LIVE entry, and
+//! reading the live entry is exactly the thing this exists to avoid.
 void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);
@@ -424,15 +458,17 @@ void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 
 template <Field F>
 void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	// WRITTEN WITH Vector::SetValue RATHER THAN UnaryExecutor, because the executor's null
-	// protocol is not stable across DuckDB versions: v1.5.5 offers ExecuteWithNulls with a
-	// (value, ValidityMask &, idx) lambda; v2.0 removed it in favour of a lambda returning
-	// optional<T>. SetValue has the same signature in both, and a default-constructed Value
-	// IS the NULL -- so one spelling covers both the value and the null case with no shim.
+	// WRITTEN WITH Vector::SetValue RATHER THAN UnaryExecutor, because the
+	// executor's null protocol is not stable across DuckDB versions: v1.5.5
+	// offers ExecuteWithNulls with a (value, ValidityMask &, idx) lambda; v2.0
+	// removed it in favour of a lambda returning optional<T>. SetValue has the
+	// same signature in both, and a default-constructed Value IS the NULL -- so
+	// one spelling covers both the value and the null case with no shim.
 	//
-	// This is a registry lookup over a handful of paths, not a hot loop, so the cost of
-	// going through Value rather than the flat array does not matter here. Reaching for the
-	// flat array WOULD need a shim, since v2.0 renamed the mutable accessors.
+	// This is a registry lookup over a handful of paths, not a hot loop, so the
+	// cost of going through Value rather than the flat array does not matter
+	// here. Reaching for the flat array WOULD need a shim, since v2.0 renamed the
+	// mutable accessors.
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);
 	auto paths = UnifiedVectorFormat::GetData<string_t>(input);
@@ -473,30 +509,34 @@ void CanReadFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	});
 }
 
-//! The sentinel meaning "the caller asked for nothing". Dispatch's option-bearing named
-//! parameters default to it, and it renders to the empty string WITHOUT consulting the
-//! registry -- which is what keeps a default read byte-identical to the SQL panduck
-//! generated before options existed, for every format, including the ones that map no
-//! options at all and would otherwise raise.
+//! The sentinel meaning "the caller asked for nothing". Dispatch's
+//! option-bearing named parameters default to it, and it renders to the empty
+//! string WITHOUT consulting the registry -- which is what keeps a default read
+//! byte-identical to the SQL panduck generated before options existed, for
+//! every format, including the ones that map no options at all and would
+//! otherwise raise.
 static constexpr const char *OPTION_DEFAULT = "default";
 
 //! panduck_reader_option_for(path, intent, value) -> "param := literal", or ''.
 //!
-//! THE RENDERING IS BY TYPE, and this is the whole security boundary. `param` is re-checked
-//! as an identifier and `arg` re-checked against `arg_type` even though registration
-//! already refused anything else: this function is the only place registration data becomes
-//! SQL text, so it does not delegate its own safety to a check that ran somewhere else. A
-//! VARCHAR goes through the same doubling panduck_quote uses; BOOLEAN and INTEGER are
-//! emitted bare and are therefore constrained to values that cannot be anything but a
-//! literal. Nothing registrant-supplied reaches the generated SQL as SQL.
+//! THE RENDERING IS BY TYPE, and this is the whole security boundary. `param`
+//! is re-checked as an identifier and `arg` re-checked against `arg_type` even
+//! though registration already refused anything else: this function is the only
+//! place registration data becomes SQL text, so it does not delegate its own
+//! safety to a check that ran somewhere else. A VARCHAR goes through the same
+//! doubling panduck_quote uses; BOOLEAN and INTEGER are emitted bare and are
+//! therefore constrained to values that cannot be anything but a literal.
+//! Nothing registrant-supplied reaches the generated SQL as SQL.
 //!
-//! AN UNMAPPED INTENT RAISES rather than being dropped. `pages` spent the life of this
-//! macro being accepted and silently ignored, which is how it came to read as a working
-//! feature at the call site; a reader that cannot honour `attributes := 'all'` must say so
-//! rather than return a document quietly missing what was asked for.
+//! AN UNMAPPED INTENT RAISES rather than being dropped. `pages` spent the life
+//! of this macro being accepted and silently ignored, which is how it came to
+//! read as a working feature at the call site; a reader that cannot honour
+//! `attributes := 'all'` must say so rather than return a document quietly
+//! missing what was asked for.
 void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	// SetValue rather than a TernaryExecutor, for the same version-neutrality reason
-	// RegistryFieldFun gives: the executors' null protocol moved between v1.5.5 and v2.0.
+	// SetValue rather than a TernaryExecutor, for the same version-neutrality
+	// reason RegistryFieldFun gives: the executors' null protocol moved between
+	// v1.5.5 and v2.0.
 	UnifiedVectorFormat path_fmt, intent_fmt, value_fmt;
 	args.data[0].ToUnifiedFormat(args.size(), path_fmt);
 	args.data[1].ToUnifiedFormat(args.size(), intent_fmt);
@@ -507,12 +547,13 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto v_idx = value_fmt.sel->get_index(i);
-		// A NULL VALUE IS NOT THE SENTINEL, and conflating the two reopens the hole the
-		// IS DISTINCT FROM guards in READ_DOC_MACRO close. Those guards only cover the
-		// formats that map NO option; a format that DOES map one reaches the generic branch
-		// and arrives here, so read_panduck_doc('x.htmltest', attributes := NULL) would have
-		// rendered nothing and read the document without the option -- accepted and ignored,
-		// by passing NULL instead of a value, on exactly the formats where the option works.
+		// A NULL VALUE IS NOT THE SENTINEL, and conflating the two reopens the hole
+		// the IS DISTINCT FROM guards in READ_DOC_MACRO close. Those guards only
+		// cover the formats that map NO option; a format that DOES map one reaches
+		// the generic branch and arrives here, so read_panduck_doc('x.htmltest',
+		// attributes := NULL) would have rendered nothing and read the document
+		// without the option -- accepted and ignored, by passing NULL instead of a
+		// value, on exactly the formats where the option works.
 		if (!value_fmt.validity.RowIsValid(v_idx)) {
 			auto i_idx_err = intent_fmt.sel->get_index(i);
 			auto named = intent_fmt.validity.RowIsValid(i_idx_err) ? intents[i_idx_err].GetString() : "an option";
@@ -565,24 +606,26 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 	}
 }
 
-//! panduck_render_params(MAP(VARCHAR, VARCHAR)) -> ", key := 'value'" per entry, or ''.
+//! panduck_render_params(MAP(VARCHAR, VARCHAR)) -> ", key := 'value'" per
+//! entry, or ''.
 //!
-//! THE ESCAPE HATCH FOR THE VOCABULARY panduck_reader_option_for SERVES. That path exists
-//! so panduck can ask a sibling for something ON ITS OWN BEHALF -- doc_render needs `class`
-//! for a faithful Pandoc Attr, and there is no caller to ask. This is the complement: a
-//! caller who already knows a sibling's exact parameter name (ignore_errors, say) says so
-//! directly, so panduck never grows a vocabulary entry -- and a registry row -- for every
-//! option a sibling happens to expose.
+//! THE ESCAPE HATCH FOR THE VOCABULARY panduck_reader_option_for SERVES. That
+//! path exists so panduck can ask a sibling for something ON ITS OWN BEHALF --
+//! doc_render needs `class` for a faithful Pandoc Attr, and there is no caller
+//! to ask. This is the complement: a caller who already knows a sibling's exact
+//! parameter name (ignore_errors, say) says so directly, so panduck never grows
+//! a vocabulary entry -- and a registry row -- for every option a sibling
+//! happens to expose.
 //!
-//! SAME IDENTIFIER DISCIPLINE, ONE TYPE WIDE. `key` is checked with the same IsIdentifier
-//! used at registration, so there is still no path from caller input to a bare SQL
-//! fragment. `value` is always rendered as a quoted VARCHAR literal, the same doubling
-//! panduck_quote uses -- there is no bare-typed arm here the way
-//! panduck_reader_option_for has for BOOLEAN/INTEGER, because THAT is precisely the arm
-//! measured to be a live injection under an unchecked value ('true) UNION SELECT 1 --').
-//! Restricting this surface to one type removes the trap rather than re-litigating it: a
-//! caller wanting a boolean or a list passes the literal text and the reader's own CAST
-//! does the rest.
+//! SAME IDENTIFIER DISCIPLINE, ONE TYPE WIDE. `key` is checked with the same
+//! IsIdentifier used at registration, so there is still no path from caller
+//! input to a bare SQL fragment. `value` is always rendered as a quoted VARCHAR
+//! literal, the same doubling panduck_quote uses -- there is no bare-typed arm
+//! here the way panduck_reader_option_for has for BOOLEAN/INTEGER, because THAT
+//! is precisely the arm measured to be a live injection under an unchecked
+//! value ('true) UNION SELECT 1 --'). Restricting this surface to one type
+//! removes the trap rather than re-litigating it: a caller wanting a boolean or
+//! a list passes the literal text and the reader's own CAST does the rest.
 void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);
@@ -591,27 +634,29 @@ void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto idx = input.sel->get_index(i);
 		if (!input.validity.RowIsValid(idx)) {
 			// Reachable only if a caller strips the function's own null-propagation
-			// (there is none registered here); READ_DOC_MACRO refuses reader_params IS
-			// NULL before this function is ever reached, exactly as it does for
+			// (there is none registered here); READ_DOC_MACRO refuses reader_params
+			// IS NULL before this function is ever reached, exactly as it does for
 			// `filename` and `format`. Kept explicit rather than assumed unreachable.
 			result.SetValue(i, Value());
 			continue;
 		}
 		std::string rendered;
-		// BOUND TO A NAMED LOCAL, NOT INLINED INTO THE LOOP HEAD. MapValue::GetChildren
-		// returns a reference INTO the Value it is given; GetValue(i) returns that Value
-		// by temporary, and a temporary bound to a function PARAMETER (rather than
-		// directly to the range-for's own reference) is destroyed at the end of the full
-		// expression -- before the loop body ever runs. Inlined, this still compiled and
-		// ran, and MEASURED (10 runs each): the empty map was clean every time, because a
-		// zero-entry range never dereferences the dangling reference at all; a ONE-entry
-		// map crashed every time (INTERNAL Error: Invalid PhysicalType for GetTypeIdSize);
-		// a three-entry map failed every time too, but inconsistently between that same
-		// internal error and a raw segfault depending on what the freed memory had been
-		// overwritten with. So this was never a two-or-more-entries bug -- any non-empty
-		// map was already broken, reliably, and the smallest committed test (one entry)
-		// would have caught it on its own. Keeping the Value alive in `map_val` for the
-		// loop's duration is what the reference actually needs.
+		// BOUND TO A NAMED LOCAL, NOT INLINED INTO THE LOOP HEAD.
+		// MapValue::GetChildren returns a reference INTO the Value it is given;
+		// GetValue(i) returns that Value by temporary, and a temporary bound to a
+		// function PARAMETER (rather than directly to the range-for's own
+		// reference) is destroyed at the end of the full expression -- before the
+		// loop body ever runs. Inlined, this still compiled and ran, and MEASURED
+		// (10 runs each): the empty map was clean every time, because a zero-entry
+		// range never dereferences the dangling reference at all; a ONE-entry map
+		// crashed every time (INTERNAL Error: Invalid PhysicalType for
+		// GetTypeIdSize); a three-entry map failed every time too, but
+		// inconsistently between that same internal error and a raw segfault
+		// depending on what the freed memory had been overwritten with. So this was
+		// never a two-or-more-entries bug -- any non-empty map was already broken,
+		// reliably, and the smallest committed test (one entry) would have caught
+		// it on its own. Keeping the Value alive in `map_val` for the loop's
+		// duration is what the reference actually needs.
 		Value map_val = args.data[0].GetValue(i);
 		for (auto &entry : MapValue::GetChildren(map_val)) {
 			auto &kv = StructValue::GetChildren(entry);
@@ -619,11 +664,12 @@ void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 			if (!readers::IsIdentifier(key)) {
 				throw InvalidInputException("panduck: reader_params key must be an identifier, got '%s'", key);
 			}
-			// A NULL VALUE IS NOT ONE, same ruling ReaderOptionForFun makes for an option
-			// value: silently dropping the entry would be the parameter accepted and
-			// ignored, and rendering the bare word NULL would emit `key := NULL` --
-			// syntactically a value, semantically not what MAP(VARCHAR, VARCHAR) NULL
-			// means to a caller who never asked for that keyword at all.
+			// A NULL VALUE IS NOT ONE, same ruling ReaderOptionForFun makes for an
+			// option value: silently dropping the entry would be the parameter
+			// accepted and ignored, and rendering the bare word NULL would emit `key
+			// := NULL` -- syntactically a value, semantically not what MAP(VARCHAR,
+			// VARCHAR) NULL means to a caller who never asked for that keyword at
+			// all.
 			if (kv[1].IsNull()) {
 				throw InvalidInputException("panduck: reader_params['%s'] must name a value; NULL is not one", key);
 			}
@@ -648,27 +694,31 @@ void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result)
 	});
 }
 
-//! panduck_function_exists(name) -- is a SCALAR function of this name in the catalog now?
+//! panduck_function_exists(name) -- is a SCALAR function of this name in the
+//! catalog now?
 //!
-//! ISSUE #27. doc_toc gated on duck_block_utils being PRESENT, which succeeds for any
-//! installed version, then named duck_blocks_toc_structs -- a function that exists only at
-//! spec 1.2 (6.5 on the retired line). A user on an older build passed the gate and got
+//! ISSUE #27. doc_toc gated on duck_block_utils being PRESENT, which succeeds
+//! for any installed version, then named duck_blocks_toc_structs -- a function
+//! that exists only at spec 1.2 (6.5 on the retired line). A user on an older
+//! build passed the gate and got
 //!
-//!     Catalog Error: Scalar Function with name duck_blocks_toc_structs does not exist!
-//!     Did you mean "duck_blocks_toc"?
+//!     Catalog Error: Scalar Function with name duck_blocks_toc_structs does
+//!     not exist! Did you mean "duck_blocks_toc"?
 //!
 //! which is issue #25's defect again: a function the caller never typed.
 //!
-//! WHY NOT ASK duck_block_spec_version() INSTEAD, which is the obvious spelling. Because a
-//! SQL check written that way REFERENCES the sibling's function, and a reference must BIND
-//! even on a branch that is not taken -- the whole CASE binds before any arm evaluates. So
-//! that version made the ABSENT case throw a catalog error too, turning a narrow failure
-//! into a broad one. Measured, and reverted.
+//! WHY NOT ASK duck_block_spec_version() INSTEAD, which is the obvious
+//! spelling. Because a SQL check written that way REFERENCES the sibling's
+//! function, and a reference must BIND even on a branch that is not taken --
+//! the whole CASE binds before any arm evaluates. So that version made the
+//! ABSENT case throw a catalog error too, turning a narrow failure into a broad
+//! one. Measured, and reverted.
 //!
-//! This asks the CATALOG rather than calling anything, so it binds when duck_block_utils is
-//! absent, present-but-old, and current alike. It also asks the question that actually
-//! matters -- does the function I am about to name exist -- rather than inferring it from a
-//! version number, which is one inference further from the failure.
+//! This asks the CATALOG rather than calling anything, so it binds when
+//! duck_block_utils is absent, present-but-old, and current alike. It also asks
+//! the question that actually matters -- does the function I am about to name
+//! exist -- rather than inferring it from a version number, which is one
+//! inference further from the failure.
 void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	UnifiedVectorFormat input;
@@ -680,35 +730,41 @@ void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) 
 			result.SetValue(i, Value());
 			continue;
 		}
-		// try/catch RATHER THAN OnEntryNotFound::RETURN_NULL. The overload that returns an
-		// optional takes an EntryLookupInfo, and the templated form needs
-		// scalar_function_catalog_entry.hpp -- whose static ScalarFunctionCatalogEntry::Name
-		// is defined in the header and collides at link time with DuckDB's own copy:
+		// try/catch RATHER THAN OnEntryNotFound::RETURN_NULL. The overload that
+		// returns an optional takes an EntryLookupInfo, and the templated form
+		// needs scalar_function_catalog_entry.hpp -- whose static
+		// ScalarFunctionCatalogEntry::Name is defined in the header and collides at
+		// link time with DuckDB's own copy:
 		//   multiple definition of `duckdb::ScalarFunctionCatalogEntry::Name'
-		// Measured. The CatalogType overload needs no entry class and throws instead, which
-		// costs one catch and no header.
-		//! .c_str() IS LOAD-BEARING, NOT A TIDY-UP. It is what lets one spelling compile
-		//! against both DuckDB majors:
+		// Measured. The CatalogType overload needs no entry class and throws
+		// instead, which costs one catch and no header.
+		//! .c_str() IS LOAD-BEARING, NOT A TIDY-UP. It is what lets one spelling
+		//! compile against both DuckDB majors:
 		//!
-		//!   v1.5.5  GetEntry(..., const string &catalog, const string &schema, const string &name)
-		//!   v2.0    GetEntry(..., const Identifier &,     const Identifier &,   const Identifier &)
+		//!   v1.5.5  GetEntry(..., const string &catalog, const string &schema,
+		//!   const string &name) v2.0    GetEntry(..., const Identifier &, const
+		//!   Identifier &,   const Identifier &)
 		//!
-		//! Identifier's `const char *` constructor is IMPLICIT ("implicit conversion from
-		//! literals is intentional"); its `const string &` constructor is EXPLICIT, because
-		//! an Identifier carries case-insensitive semantics a bare string does not. So a
-		//! runtime std::string binds in v1.5.5 and fails to bind in v2.0 --
+		//! Identifier's `const char *` constructor is IMPLICIT ("implicit
+		//! conversion from literals is intentional"); its `const string &`
+		//! constructor is EXPLICIT, because an Identifier carries case-insensitive
+		//! semantics a bare string does not. So a runtime std::string binds in
+		//! v1.5.5 and fails to bind in v2.0 --
 		//!
 		//!   error: no matching function for call to Catalog::GetEntry(
-		//!       ClientContext&, CatalogType, const char [1], const char [5], std::string)
+		//!       ClientContext&, CatalogType, const char [1], const char [5],
+		//!       std::string)
 		//!
-		//! -- while a `const char *` binds in BOTH. INVALID_CATALOG and DEFAULT_SCHEMA are
-		//! already string literals, which is why only the third argument broke.
+		//! -- while a `const char *` binds in BOTH. INVALID_CATALOG and
+		//! DEFAULT_SCHEMA are already string literals, which is why only the third
+		//! argument broke.
 		//!
-		//! Found by the community registry's test_against_latest job, which builds every
-		//! release PR against DuckDB v2.0. It only ran because the descriptor sets ref_next;
-		//! without it that job prints "Skipping prerelease validation" and passes green
-		//! having never looked. Same class as the compat shims in panduck_duckdb_compat.hpp,
-		//! but no shim is needed here -- one spelling satisfies both overload sets.
+		//! Found by the community registry's test_against_latest job, which builds
+		//! every release PR against DuckDB v2.0. It only ran because the descriptor
+		//! sets ref_next; without it that job prints "Skipping prerelease
+		//! validation" and passes green having never looked. Same class as the
+		//! compat shims in panduck_duckdb_compat.hpp, but no shim is needed here --
+		//! one spelling satisfies both overload sets.
 		const auto fn_name = names[idx].GetString();
 		bool exists = true;
 		try {
@@ -721,7 +777,8 @@ void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) 
 	}
 }
 
-// ------------------------------------------------------------------ registry table fn
+// ------------------------------------------------------------------ registry
+// table fn
 
 struct RegistryBindData : public TableFunctionData {
 	std::vector<ReaderEntry> rows;
@@ -762,7 +819,8 @@ void RegistryScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 	output.SetCardinality(count);
 }
 
-// ------------------------------------------------------------------ CALL registration
+// ------------------------------------------------------------------ CALL
+// registration
 
 struct RegisterBindData : public TableFunctionData {
 	std::vector<std::string> exts;
@@ -785,17 +843,18 @@ unique_ptr<FunctionData> RegisterBind(ClientContext &context, TableFunctionBindI
 	auto result = make_uniq<RegisterBindData>();
 	result->reader_ext = input.inputs[0].GetValue<string>();
 	result->function = input.inputs[1].GetValue<string>();
-	// POLICY FIRST, before any validation message: a deployment that has turned registration
-	// off should hear that, not a critique of the name it passed.
+	// POLICY FIRST, before any validation message: a deployment that has turned
+	// registration off should hear that, not a critique of the name it passed.
 	Value allow;
 	if (context.TryGetCurrentSetting(readers::SETTING_ALLOW_REGISTRATION, allow) && !allow.IsNull() &&
 	    !allow.GetValue<bool>()) {
-		throw InvalidInputException(
-		    "panduck: runtime reader registration is disabled (SET panduck_allow_registration = true to allow it)");
+		throw InvalidInputException("panduck: runtime reader registration is disabled (SET "
+		                            "panduck_allow_registration = true to allow it)");
 	}
-	// VALIDATED IN THE BIND, like `options` below and for the same reason: RegisterScan is
-	// the only writer and runs after this returns, so a throw here leaves the registry
-	// untouched rather than storing a row and failing later.
+	// VALIDATED IN THE BIND, like `options` below and for the same reason:
+	// RegisterScan is the only writer and runs after this returns, so a throw
+	// here leaves the registry untouched rather than storing a row and failing
+	// later.
 	if (!readers::IsQualifiedIdentifier(result->function)) {
 		throw InvalidInputException("panduck: '%s' is not a valid function name; a reader function is "
 		                            "interpolated directly into generated SQL, so it must be a plain or "
@@ -810,30 +869,33 @@ unique_ptr<FunctionData> RegisterBind(ClientContext &context, TableFunctionBindI
 		throw InvalidInputException("panduck: register requires at least one file extension");
 	}
 
-	// OPTIONS ARE VALIDATED HERE, IN THE BIND, so an ill-formed row never reaches the
-	// registry. RegisterScan runs after this returns and is the only writer, so a throw
-	// from here leaves the registry untouched -- which is the property the test asserts by
-	// counting rows for the rejected extension afterwards, not merely by catching an error.
-	// See ReaderOption for why the fields are validated rather than trusted.
+	// OPTIONS ARE VALIDATED HERE, IN THE BIND, so an ill-formed row never reaches
+	// the registry. RegisterScan runs after this returns and is the only writer,
+	// so a throw from here leaves the registry untouched -- which is the property
+	// the test asserts by counting rows for the rejected extension afterwards,
+	// not merely by catching an error. See ReaderOption for why the fields are
+	// validated rather than trusted.
 	auto opt_entry = input.named_parameters.find("options");
 	if (opt_entry != input.named_parameters.end() && !opt_entry->second.IsNull()) {
 		for (auto &row : ListValue::GetChildren(opt_entry->second)) {
 			if (row.IsNull()) {
 				throw InvalidInputException("panduck: options contains a NULL entry");
 			}
-			// READ BY NAME rather than by position. The named parameter's declared STRUCT
-			// type fixes the order today, but a by-index read silently mis-assigns every
-			// field if that declaration is ever reordered -- and the field that would land
-			// in `param` decides what gets emitted as an identifier.
+			// READ BY NAME rather than by position. The named parameter's declared
+			// STRUCT type fixes the order today, but a by-index read silently
+			// mis-assigns every field if that declaration is ever reordered -- and
+			// the field that would land in `param` decides what gets emitted as an
+			// identifier.
 			//
-			// EVERY FIELD IS REQUIRED AND NULL IS NOT A VALUE. A field the caller omits
-			// arrives here as NULL (the cast fills it in; it is not a bind error), and
-			// folding NULL to "" made a row with no `arg` at all storable under
-			// arg_type 'VARCHAR' -- it rendered `p := ''`, measured. The design's claim is
-			// that a malformed row cannot be STORED, and a row missing a field is malformed,
-			// so the NULL is refused here rather than absorbed. An explicitly EMPTY `arg` is
-			// still accepted: `p := ''` is a legitimate literal to want, and it is
-			// distinguishable from an absent one.
+			// EVERY FIELD IS REQUIRED AND NULL IS NOT A VALUE. A field the caller
+			// omits arrives here as NULL (the cast fills it in; it is not a bind
+			// error), and folding NULL to "" made a row with no `arg` at all storable
+			// under arg_type 'VARCHAR' -- it rendered `p := ''`, measured. The
+			// design's claim is that a malformed row cannot be STORED, and a row
+			// missing a field is malformed, so the NULL is refused here rather than
+			// absorbed. An explicitly EMPTY `arg` is still accepted: `p := ''` is a
+			// legitimate literal to want, and it is distinguishable from an absent
+			// one.
 			readers::ReaderOption o;
 			auto &fields = StructValue::GetChildren(row);
 			auto &field_types = StructType::GetChildTypes(row.type());
@@ -884,8 +946,9 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 	for (auto &raw : data.exts) {
 		ReaderEntry entry;
 		entry.ext = readers::ExtOfPath("x" + (raw[0] == '.' ? raw : "." + raw));
-		// A user reader's "format" is the extension that provides it, so panduck_format_for
-		// names something a human can act on rather than a generic "custom".
+		// A user reader's "format" is the extension that provides it, so
+		// panduck_format_for names something a human can act on rather than a
+		// generic "custom".
 		entry.format = data.reader_ext;
 		entry.reader_ext = data.reader_ext;
 		entry.function = data.function;
@@ -904,47 +967,54 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 	output.SetCardinality(count);
 }
 
-// ------------------------------------------------------------------ SQL surface
+// ------------------------------------------------------------------ SQL
+// surface
 //
-// Dispatch is a SQL macro over query(), and its CASE is built entirely from C++ scalars,
-// so no subquery ever reaches query()'s argument. The generic branch -- "the registry
-// names a function, so call it" -- covers builtin flat readers and user-registered
-// readers with the same code path; only formats needing a bespoke shape are special-cased.
+// Dispatch is a SQL macro over query(), and its CASE is built entirely from C++
+// scalars, so no subquery ever reaches query()'s argument. The generic branch
+// -- "the registry names a function, so call it" -- covers builtin flat readers
+// and user-registered readers with the same code path; only formats needing a
+// bespoke shape are special-cased.
 
-// ------------------------------------------------------------------ doc_* namespace
+// ------------------------------------------------------------------ doc_*
+// namespace
 //
-// doc_* takes a PATH; db_* takes blocks you already hold. That split is why this
-// namespace belongs to panduck: taking a path is the IO engine's job, and it restores
-// doc_toc('README.md') -- an ergonomic loss duck_block_utils recorded as an accepted
-// cost when dispatch moved out.
+// doc_* takes a PATH; db_* takes blocks you already hold. That split is why
+// this namespace belongs to panduck: taking a path is the IO engine's job, and
+// it restores doc_toc('README.md') -- an ergonomic loss duck_block_utils
+// recorded as an accepted cost when dispatch moved out.
 //
-// These load duck_block_utils on demand, exactly as reading .md loads markdown and .html
-// loads webbed. panduck's CORE never needs it: every reader, the registry and both
-// dispatchers work with duck_block_utils absent. Only this sugar depends on it, and it
-// says so by name when it is missing.
+// These load duck_block_utils on demand, exactly as reading .md loads markdown
+// and .html loads webbed. panduck's CORE never needs it: every reader, the
+// registry and both dispatchers work with duck_block_utils absent. Only this
+// sugar depends on it, and it says so by name when it is missing.
 //
 // LIMITED TO WHAT IS ACTUALLY REACHABLE. duck_block_utils exposes two shapes:
 //
-//   C++ scalars, available at LOAD    duck_blocks_toc, duck_blocks_to_text -> usable here
-//   macros behind PRAGMA duck_block_* duck_block_ansi and friends          -> NOT usable
+//   C++ scalars, available at LOAD    duck_blocks_toc, duck_blocks_to_text ->
+//   usable here macros behind PRAGMA duck_block_* duck_block_ansi and friends
+//   -> NOT usable
 //
-// A macro created by a pragma cannot be reached from a panduck macro: it is invisible to
-// the statement that loads the extension, and panduck cannot invoke a pragma from inside
-// a macro. So doc_section and doc_sections_like are absent, and doc_render has no 'ansi'
-// arm, until the pieces they need are reachable at LOAD.
+// A macro created by a pragma cannot be reached from a panduck macro: it is
+// invisible to the statement that loads the extension, and panduck cannot
+// invoke a pragma from inside a macro. So doc_section and doc_sections_like are
+// absent, and doc_render has no 'ansi' arm, until the pieces they need are
+// reachable at LOAD.
 //
-// THE SPELLING HERE IS duck_*, NOT db_*, AND THAT CHANGED UNDER US. duck_block_utils
-// renamed its whole surface (db_ reads as DATABASE everywhere else in SQL) and published
-// it. Measured in an empty extension_directory, so the shared ~/.duckdb profile could not
-// colour the result: community build 3f2a0f0 exports 0 db_* and 174 duck_*, with no
-// back-compat aliases. These are RUNTIME name lookups against whatever build is
-// installed, so they broke the moment that landed -- see doc_namespace.test, which is the
-// alarm for exactly this and must be flipped in the same commit as these call sites.
+// THE SPELLING HERE IS duck_*, NOT db_*, AND THAT CHANGED UNDER US.
+// duck_block_utils renamed its whole surface (db_ reads as DATABASE everywhere
+// else in SQL) and published it. Measured in an empty extension_directory, so
+// the shared ~/.duckdb profile could not colour the result: community build
+// 3f2a0f0 exports 0 db_* and 174 duck_*, with no back-compat aliases. These are
+// RUNTIME name lookups against whatever build is installed, so they broke the
+// moment that landed -- see doc_namespace.test, which is the alarm for exactly
+// this and must be flipped in the same commit as these call sites.
 //
-// PARTLY UNBLOCKED, recorded as a measurement and not acted on: that same build registers
-// duck_blocks_render_ansi and duck_block_section as C++ SCALARS at LOAD. Wiring doc_render
-// 'ansi' or doc_section to them means checking their signatures against what those macros
-// need, which is a separate change from this rename.
+// PARTLY UNBLOCKED, recorded as a measurement and not acted on: that same build
+// registers duck_blocks_render_ansi and duck_block_section as C++ SCALARS at
+// LOAD. Wiring doc_render 'ansi' or doc_section to them means checking their
+// signatures against what those macros need, which is a separate change from
+// this rename.
 
 const DefaultTableMacro DOC_TOC_MACRO = {DEFAULT_SCHEMA,
                                          "doc_toc",
@@ -1036,8 +1106,8 @@ SELECT * FROM query(
 )SQL"};
 
 // The macro TABLE is version-neutral -- see panduck::PanduckMacro. DuckDB's own
-// DefaultMacro changed shape between v1.5.5 and v2.0, and the SQL below is the part worth
-// keeping in one place; only the conversion is version-aware.
+// DefaultMacro changed shape between v1.5.5 and v2.0, and the SQL below is the
+// part worth keeping in one place; only the conversion is version-aware.
 const panduck::PanduckMacro SCALAR_MACROS[] = {
     {DEFAULT_SCHEMA,
      "panduck_quote",
@@ -1045,31 +1115,35 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{nullptr, nullptr}},
      "'''' || replace(coalesce(s, ''), '''', '''''') || ''''"},
 
-    // Is this source string a PATTERN or a PATH? Only these three characters make a glob in
-    // DuckDB's matcher. A plain path deliberately does NOT go through the filesystem: a
-    // caller naming one file must keep today's behaviour, including the reader's own error
-    // if it is missing, rather than getting a glob-shaped error from panduck.
+    // Is this source string a PATTERN or a PATH? Only these three characters
+    // make a glob in DuckDB's matcher. A plain path deliberately does NOT go
+    // through the filesystem: a caller naming one file must keep today's
+    // behaviour, including the reader's own error if it is missing, rather than
+    // getting a glob-shaped error from panduck.
     {DEFAULT_SCHEMA,
      "panduck_is_glob",
      {"s", nullptr},
      {{nullptr, nullptr}},
      "contains(s, '*') OR contains(s, '?') OR contains(s, '[')"},
 
-    // Every source form becomes one VARCHAR[] here, so nothing downstream has to branch on
-    // which form the caller used. flatten() preserves argument order for a list, which is
-    // what makes read_panduck_doc(['a','b']) deterministic independent of the filesystem.
+    // Every source form becomes one VARCHAR[] here, so nothing downstream has
+    // to branch on which form the caller used. flatten() preserves argument
+    // order for a list, which is what makes read_panduck_doc(['a','b'])
+    // deterministic independent of the filesystem.
     //
-    // NO LONGER NEUTRAL, reversing the original Task 2 ruling. The plan's first cut said
-    // this primitive stays neutral and dispatch alone owns the empty-match raise -- but
-    // dispatch only ever sees the FLATTENED list, and flatten() throws away which element
-    // produced which paths. read_panduck_doc(['a.odt', '*.nomatch']) flattens to just
-    // ['a.odt'], and a length check on THAT tells dispatch "one path resolved", which is
-    // true and useless: it can no longer see that the second element matched nothing.  A
-    // caller silently loses a source that named itself in the call.  So each glob is
-    // checked as it expands, here, before flatten() erases the boundary between elements --
-    // the only place in the pipeline where that boundary still exists.  Dispatch's own
-    // len(...) = 0 check on the whole list stays; it is now redundant for a list but still
-    // the one that catches a BARE glob matching nothing.
+    // NO LONGER NEUTRAL, reversing the original Task 2 ruling. The plan's first
+    // cut said this primitive stays neutral and dispatch alone owns the
+    // empty-match raise -- but dispatch only ever sees the FLATTENED list, and
+    // flatten() throws away which element produced which paths.
+    // read_panduck_doc(['a.odt', '*.nomatch']) flattens to just
+    // ['a.odt'], and a length check on THAT tells dispatch "one path resolved",
+    // which is true and useless: it can no longer see that the second element
+    // matched nothing.  A caller silently loses a source that named itself in
+    // the call.  So each glob is checked as it expands, here, before flatten()
+    // erases the boundary between elements -- the only place in the pipeline
+    // where that boundary still exists.  Dispatch's own len(...) = 0 check on
+    // the whole list stays; it is now redundant for a list but still the one
+    // that catches a BARE glob matching nothing.
     {DEFAULT_SCHEMA,
      "panduck_source_list",
      {"src", nullptr},
@@ -1078,7 +1152,8 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "     THEN flatten(list_transform(src::VARCHAR[], "
      "                  lambda p: CASE WHEN panduck_is_glob(p) "
      "                                 THEN CASE WHEN len(panduck_glob(p)) = 0 "
-     "                                      THEN error('panduck: no files matched ' || p) "
+     "                                      THEN error('panduck: no files "
+     "matched ' || p) "
      "                                      ELSE panduck_glob(p) END "
      "                                 ELSE [p] END)) "
      "     WHEN panduck_is_glob(src::VARCHAR) "
@@ -1087,226 +1162,272 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "               ELSE panduck_glob(src::VARCHAR) END "
      "     ELSE [src::VARCHAR] END"},
 
-    // Build the UNION ALL that dispatch runs. One arm per path, joined in list order.
+    // Build the UNION ALL that dispatch runs. One arm per path, joined in list
+    // order.
     //
-    // PROVENANCE IS PROJECTED, NOT REQUESTED. `SELECT *, '<path>' AS filename` puts the
-    // column AFTER the canonical seven by construction, because SELECT * emits those first.
-    // That matters more than it looks: duck_block spec 6.4 keys 8-field acceptance on the
-    // exact type with filename LAST, every consumer reads the struct by index, and BOTH
-    // shipped sibling producers got this wrong by emitting the column first (webbed
-    // a865d37, markdown 340c0cd) -- refused at the binder rather than misread, but refused.
-    // A projection cannot make that mistake.
+    // PROVENANCE IS PROJECTED, NOT REQUESTED. `SELECT *, '<path>' AS filename`
+    // puts the column AFTER the canonical seven by construction, because SELECT
+    // * emits those first. That matters more than it looks: duck_block spec 6.4
+    // keys 8-field acceptance on the exact type with filename LAST, every
+    // consumer reads the struct by index, and BOTH shipped sibling producers
+    // got this wrong by emitting the column first (webbed a865d37, markdown
+    // 340c0cd) -- refused at the binder rather than misread, but refused. A
+    // projection cannot make that mistake.
     //
-    // It also means panduck needs nothing from a sibling to have provenance: the path is
-    // already in hand at dispatch time.
+    // It also means panduck needs nothing from a sibling to have provenance:
+    // the path is already in hand at dispatch time.
     //
-    // THREE DEFECTS FIXED HERE across two rounds of review, all because this builder assumed
-    // every path behaves like the generic branch's plain flat readers and none of those
-    // assumptions held.
+    // THREE DEFECTS FIXED HERE across two rounds of review, all because this
+    // builder assumed every path behaves like the generic branch's plain flat
+    // readers and none of those assumptions held.
     //
-    // 1. NO EXTENSION GATE. panduck_ensure_extension does not merely produce a nicer error --
-    // it is TryAutoLoadExtension (reader_registry.cpp), so skipping it meant a community
-    // reader (webbed's read_html_blocks, say) that the single-path branch would have loaded
-    // automatically instead surfaced a raw Catalog Error through a plural call. Each arm now
-    // wraps its SELECT in an ensure-or-named-error CASE, so the two paths agree both in
-    // behaviour and in wording.
+    // 1. NO EXTENSION GATE. panduck_ensure_extension does not merely produce a
+    // nicer error -- it is TryAutoLoadExtension (reader_registry.cpp), so
+    // skipping it meant a community reader (webbed's read_html_blocks, say)
+    // that the single-path branch would have loaded automatically instead
+    // surfaced a raw Catalog Error through a plural call. Each arm now wraps
+    // its SELECT in an ensure-or-named-error CASE, so the two paths agree both
+    // in behaviour and in wording.
     //
-    // 2. SILENT DATA LOSS (round 1). panduck_reader_function_for(p) is NULL for every
-    // registry entry whose `function` is deliberately empty -- pdf, toml, yaml, zim, zim://,
-    // and every KIND_TABLE format (csv, json, ...), all served by READ_DOC_MACRO's own
-    // special-cased branches rather than a plain table function. Concatenating a NULL reader
-    // name nulled the whole arm, and array_to_string SKIPS NULL elements -- so
-    // read_panduck_doc(['a.odt', 'x.pdf']) silently returned only a.odt's rows, no error.
-    // Refusing loudly is the correct behaviour for now; teaching this builder the special
+    // 2. SILENT DATA LOSS (round 1). panduck_reader_function_for(p) is NULL for
+    // every registry entry whose `function` is deliberately empty -- pdf, toml,
+    // yaml, zim, zim://, and every KIND_TABLE format (csv, json, ...), all
+    // served by READ_DOC_MACRO's own special-cased branches rather than a plain
+    // table function. Concatenating a NULL reader name nulled the whole arm,
+    // and array_to_string SKIPS NULL elements -- so read_panduck_doc(['a.odt',
+    // 'x.pdf']) silently returned only a.odt's rows, no error. Refusing loudly
+    // is the correct behaviour for now; teaching this builder the special
     // branches is a separate change.
     //
-    // 3. SILENT DATA LOSS AGAIN, THROUGH THE ROUND-1 FIX ITSELF (round 2). `error(NULL) IS
-    // NULL` is true -- error() does not throw on a NULL argument, it silently RETURNS NULL.
-    // The round-1 fix's own named-error arm, `error('...' || panduck_reader_extension_for(p)
-    // || '...')`, concatenates NULL whenever a reader is registered with an empty
-    // reader_ext (panduck_register_doc_reader('', fn, exts) -- meaning "no companion
-    // extension needed"), so panduck_reader_extension_for(p) answers NULL,
-    // panduck_ensure_extension(NULL) answers NULL (not TRUE), and the ELSE below used to
-    // build error(NULL) -- itself NULL, skipped by array_to_string exactly like defect 2.
-    // Reproduced end to end: register such a reader, put it in a list with an ODT, and the
-    // second document silently vanishes with no error. FIXED by hoisting the NULL check into
-    // the WHEN rather than the message: a NULL reader_ext takes the SAME path a real
-    // extension that loaded fine would (nothing to ensure), so the ELSE is only ever reached
-    // when reader_extension_for(p) is proven NON-NULL, and no coalesce is needed there.
+    // 3. SILENT DATA LOSS AGAIN, THROUGH THE ROUND-1 FIX ITSELF (round 2).
+    // `error(NULL) IS NULL` is true -- error() does not throw on a NULL
+    // argument, it silently RETURNS NULL. The round-1 fix's own named-error
+    // arm, `error('...' || panduck_reader_extension_for(p)
+    // || '...')`, concatenates NULL whenever a reader is registered with an
+    // empty reader_ext (panduck_register_doc_reader('', fn, exts) -- meaning
+    // "no companion extension needed"), so panduck_reader_extension_for(p)
+    // answers NULL, panduck_ensure_extension(NULL) answers NULL (not TRUE), and
+    // the ELSE below used to build error(NULL) -- itself NULL, skipped by
+    // array_to_string exactly like defect 2. Reproduced end to end: register
+    // such a reader, put it in a list with an ODT, and the second document
+    // silently vanishes with no error. FIXED by hoisting the NULL check into
+    // the WHEN rather than the message: a NULL reader_ext takes the SAME path a
+    // real extension that loaded fine would (nothing to ensure), so the ELSE is
+    // only ever reached when reader_extension_for(p) is proven NON-NULL, and no
+    // coalesce is needed there.
     //
-    // A NULL PATH ELEMENT gets the same structural treatment, checked FIRST: a caller can
-    // write read_panduck_doc(['a.odt', NULL]), and panduck_reader_function_for(NULL) also
-    // answers NULL (not "no function for this format" but "no input to look up at all"),
-    // which used to fall into defect 2's own arm with p itself NULL -- naming a NULL path in
-    // the message and nulling it right back out through the same error(NULL) trap. Checked
-    // ahead of the function-lookup so every later arm can assume p is non-NULL.
+    // A NULL PATH ELEMENT gets the same structural treatment, checked FIRST: a
+    // caller can write read_panduck_doc(['a.odt', NULL]), and
+    // panduck_reader_function_for(NULL) also answers NULL (not "no function for
+    // this format" but "no input to look up at all"), which used to fall into
+    // defect 2's own arm with p itself NULL -- naming a NULL path in the
+    // message and nulling it right back out through the same error(NULL) trap.
+    // Checked ahead of the function-lookup so every later arm can assume p is
+    // non-NULL.
     //
-    // OPTIONS ARE CARRIED AS AN INTENT, NOT AS A FRAGMENT. `opt_intent`/`opt_value` are
-    // panduck's own vocabulary ('attributes', 'all'); the reader's spelling for it comes
-    // from the registry and is RENDERED by panduck_reader_option_for, which validates
-    // before emitting. Nothing a registrant supplied is interpolated as SQL. See
-    // ReaderOption in reader_registry.hpp for why a stored fragment was rejected.
+    // OPTIONS ARE CARRIED AS AN INTENT, NOT AS A FRAGMENT.
+    // `opt_intent`/`opt_value` are panduck's own vocabulary ('attributes',
+    // 'all'); the reader's spelling for it comes from the registry and is
+    // RENDERED by panduck_reader_option_for, which validates before emitting.
+    // Nothing a registrant supplied is interpolated as SQL. See ReaderOption in
+    // reader_registry.hpp for why a stored fragment was rejected.
     //
-    // THIS IS THE ONE IMPLEMENTATION, and panduck_read_arms below delegates to it with the
-    // 'default' sentinel. Written the other way round -- arms_opt as a copy of arms with an
-    // extra concat -- the three silent-data-loss defects documented above would have to stay
-    // correct in two bodies at once, and the byte-identity property Task 4 asserts would be
-    // a coincidence between two strings rather than a consequence of running one builder.
-    // `reader_params` IS A NAMED PARAMETER, NOT A FIFTH POSITIONAL ONE, deliberately: the
-    // string assertions above and the whole-suite byte-identity property (Task 4) call this
-    // builder positionally with exactly four arguments, and a new required argument would
-    // break every one of them for a feature that is off by default. `MAP {}` as the default
-    // renders through panduck_render_params to '', so an unchanged call is unchanged SQL.
-    // WHAT NAME DOES POLICY KNOW THIS SOURCE BY? One definition, used by every gate, because
-    // four copies of a coalesce is how they drift apart.
+    // THIS IS THE ONE IMPLEMENTATION, and panduck_read_arms below delegates to
+    // it with the 'default' sentinel. Written the other way round -- arms_opt
+    // as a copy of arms with an extra concat -- the three silent-data-loss
+    // defects documented above would have to stay correct in two bodies at
+    // once, and the byte-identity property Task 4 asserts would be a
+    // coincidence between two strings rather than a consequence of running one
+    // builder. `reader_params` IS A NAMED PARAMETER, NOT A FIFTH POSITIONAL
+    // ONE, deliberately: the string assertions above and the whole-suite
+    // byte-identity property (Task 4) call this builder positionally with
+    // exactly four arguments, and a new required argument would break every one
+    // of them for a feature that is off by default. `MAP {}` as the default
+    // renders through panduck_render_params to '', so an unchanged call is
+    // unchanged SQL. WHAT NAME DOES POLICY KNOW THIS SOURCE BY? One definition,
+    // used by every gate, because four copies of a coalesce is how they drift
+    // apart.
     //
-    // The CASE is the interesting half. Coalescing straight to 'code' was wrong: a reader
-    // registered with an EMPTY reader_ext has no format (RegistryFieldFun maps empty to
-    // NULL), so it looked like the code fallback and `SET panduck_disabled_readers='code'`
-    // killed it with the message "reader for format 'code' is disabled" -- naming a
-    // fallback that was never going to run. Measured. Now such a reader answers NULL here,
-    // panduck_reader_enabled(NULL) is NULL, the gate's WHEN is not taken, and it reads.
+    // The CASE is the interesting half. Coalescing straight to 'code' was
+    // wrong: a reader registered with an EMPTY reader_ext has no format
+    // (RegistryFieldFun maps empty to NULL), so it looked like the code
+    // fallback and `SET panduck_disabled_readers='code'` killed it with the
+    // message "reader for format 'code' is disabled" -- naming a fallback that
+    // was never going to run. Measured. Now such a reader answers NULL here,
+    // panduck_reader_enabled(NULL) is NULL, the gate's WHEN is not taken, and
+    // it reads.
     //
-    // That leaves it UNGATEABLE, which is a real limitation and the honest one: it has no
-    // name for a policy to refuse it by. A reader registered WITH a reader_ext is gateable
-    // under that extension's name.
-    // IS THE INSTALLED duck_block_utils AT LEAST THIS SPEC VERSION?
+    // That leaves it UNGATEABLE, which is a real limitation and the honest one:
+    // it has no name for a policy to refuse it by. A reader registered WITH a
+    // reader_ext is gateable under that extension's name. IS THE INSTALLED
+    // duck_block_utils AT LEAST THIS SPEC VERSION?
     //
-    // Asked of duck_block_spec_version(), which is duck_block_utils' own published scalar and
-    // present in every build panduck has ever seen, so the question is answered by the
-    // INSTALLED extension rather than by whatever panduck compiled against. Compared
-    // numerically, not as strings: '6.10' sorts before '6.5' lexically and would silently
-    // pick the wrong branch the first time a minor version reaches double digits.
+    // Asked of duck_block_spec_version(), which is duck_block_utils' own
+    // published scalar and present in every build panduck has ever seen, so the
+    // question is answered by the INSTALLED extension rather than by whatever
+    // panduck compiled against. Compared numerically, not as strings: '6.10'
+    // sorts before '6.5' lexically and would silently pick the wrong branch the
+    // first time a minor version reaches double digits.
     //
-    // NOT a C++ catalog lookup, though "does this function exist" is the more direct
-    // question. DuckDB's Catalog::GetEntry takes an EntryLookupInfo in v1.5.5, and this repo
-    // has already been bitten once this week by an executor API that v2.0 removed -- see
-    // RegistryFieldFun. duck_block_spec_version() is a stable public surface in both.
+    // NOT a C++ catalog lookup, though "does this function exist" is the more
+    // direct question. DuckDB's Catalog::GetEntry takes an EntryLookupInfo in
+    // v1.5.5, and this repo has already been bitten once this week by an
+    // executor API that v2.0 removed -- see RegistryFieldFun.
+    // duck_block_spec_version() is a stable public surface in both.
     {DEFAULT_SCHEMA,
      "panduck_duck_block_spec_at_least",
      {"maj", "min", nullptr},
      {{nullptr, nullptr}},
-     "coalesce(try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) > maj "
-     "  OR (try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) = maj "
-     "      AND try_cast(split_part(duck_block_spec_version(), '.', 2) AS INTEGER) >= min), false)"},
+     "coalesce(try_cast(split_part(duck_block_spec_version(), '.', 1) AS "
+     "INTEGER) > maj "
+     "  OR (try_cast(split_part(duck_block_spec_version(), '.', 1) AS INTEGER) "
+     "= maj "
+     "      AND try_cast(split_part(duck_block_spec_version(), '.', 2) AS "
+     "INTEGER) >= min), false)"},
 
-    // ONE SPELLING FOR doc_render's OUTPUT FORMAT. Accepts what panduck's own resolver
-    // returns ('markdown') alongside the short form ('md'), and 'plain' for 'text', so
-    // doc_render(src, panduck_resolved_format(src, NULL)) composes. Anything else passes
-    // through unchanged so the error names what the caller actually wrote.
-    //! panduck_renumber_blocks -- give a block list contiguous element_order from `base`.
+    // ONE SPELLING FOR doc_render's OUTPUT FORMAT. Accepts what panduck's own
+    // resolver returns ('markdown') alongside the short form ('md'), and
+    // 'plain' for 'text', so doc_render(src, panduck_resolved_format(src,
+    // NULL)) composes. Anything else passes through unchanged so the error
+    // names what the caller actually wrote.
+    //! panduck_renumber_blocks -- give a block list contiguous element_order
+    //! from `base`.
     //!
-    //! SEPARATE FROM THE EXPANDER because a lambda cannot contain a subquery, and computing
-    //! the base needs a second pass over the same list. Referencing `blocks` twice inside one
-    //! macro put a subquery in a lambda and DuckDB refused it:
+    //! SEPARATE FROM THE EXPANDER because a lambda cannot contain a subquery,
+    //! and computing the base needs a second pass over the same list.
+    //! Referencing `blocks` twice inside one macro put a subquery in a lambda
+    //! and DuckDB refused it:
     //!     Binder Error: subqueries in lambda expressions are not supported
     //! Passing the base in as a plain parameter sidesteps that entirely.
     {DEFAULT_SCHEMA,
      "panduck_renumber_blocks",
      {"bs", "base", nullptr},
      {{nullptr, nullptr}},
-     "list_transform(bs, lambda pd_e, pd_i: {kind: pd_e.kind, element_type: pd_e.element_type, "
-     "  content: pd_e.content, level: pd_e.level, encoding: pd_e.encoding, attributes: pd_e.attributes, "
-     // THE CAST IS REQUIRED, not tidiness: a list index is BIGINT, so `i - 1 + base`
-     // widens and duck_blocks_toc_structs rejected the result outright --
+     "list_transform(bs, lambda pd_e, pd_i: {kind: pd_e.kind, element_type: "
+     "pd_e.element_type, "
+     "  content: pd_e.content, level: pd_e.level, encoding: pd_e.encoding, "
+     "attributes: pd_e.attributes, "
+     // THE CAST IS REQUIRED, not tidiness: a list index is BIGINT, so `i - 1 +
+     // base` widens and duck_blocks_toc_structs rejected the result outright --
      //   No function matches ... element_order BIGINT
      //   Candidate functions: ... element_order INTEGER
-     // The vocabulary's seven columns are a TYPE; widening one leaves a list that is
-     // still shaped like duck_blocks and no longer binds where duck_blocks bind.
+     // The vocabulary's seven columns are a TYPE; widening one leaves a list
+     // that is still shaped like duck_blocks and no longer binds where
+     // duck_blocks bind.
      "  element_order: (pd_i - 1 + base)::INTEGER})"},
 
-    //! THE IMPLEMENTATION. panduck_expand_embedded below is a thin gate in front of it.
+    //! THE IMPLEMENTATION. panduck_expand_embedded below is a thin gate in
+    //! front of it.
     //!
-    //! SPLIT FOR THE SAME REASON read_pdf_blocks IS: a macro body binds LAZILY, on invocation.
-    //! This body names parse_markdown_to_duck_blocks, which the `markdown` COMMUNITY
-    //! EXTENSION provides. Without it, binding fails before any guard inside could run and the
-    //! caller gets a Catalog Error naming a function they never typed -- issue #25's exact
-    //! shape. A wrapper that decides NOT to call this one never binds it.
+    //! SPLIT FOR THE SAME REASON read_pdf_blocks IS: a macro body binds LAZILY,
+    //! on invocation. This body names parse_markdown_to_duck_blocks, which the
+    //! `markdown` COMMUNITY EXTENSION provides. Without it, binding fails
+    //! before any guard inside could run and the caller gets a Catalog Error
+    //! naming a function they never typed -- issue #25's exact shape. A wrapper
+    //! that decides NOT to call this one never binds it.
     //!
-    //! WHY THIS EXISTS AT ALL. The ipynb reader holds a markdown cell as one `raw` block, and
-    //! that is deliberate: delegation lives in the SQL layer, so a C++ reader that parsed
-    //! markdown would make its output depend on which extensions are installed. The comment
-    //! there calls it "a deferral rather than a resting place", to be "discharged by a
-    //! post-parse helper for embedded formats". THIS IS THAT HELPER. It parses in the SQL
-    //! layer, where delegation already lives, so the isolation is preserved rather than
-    //! traded away.
+    //! WHY THIS EXISTS AT ALL. The ipynb reader holds a markdown cell as one
+    //! `raw` block, and that is deliberate: delegation lives in the SQL layer,
+    //! so a C++ reader that parsed markdown would make its output depend on
+    //! which extensions are installed. The comment there calls it "a deferral
+    //! rather than a resting place", to be "discharged by a post-parse helper
+    //! for embedded formats". THIS IS THAT HELPER. It parses in the SQL layer,
+    //! where delegation already lives, so the isolation is preserved rather
+    //! than traded away.
     //!
-    //! LEVELS ARE OFFSET, NOT COPIED. The parsed blocks come back at their own depth -- 1 for
-    //! blocks, 2 for inlines -- while the raw block they replace sits at some depth inside the
-    //! host document (2, under the notebook's cell div). Splicing them unshifted would put a
-    //! heading at the same level as the div that contains it, discarding the nesting the host
-    //! reader was careful to record. `e.level + x.level - 1` preserves it.
+    //! LEVELS ARE OFFSET, NOT COPIED. The parsed blocks come back at their own
+    //! depth -- 1 for blocks, 2 for inlines -- while the raw block they replace
+    //! sits at some depth inside the host document (2, under the notebook's
+    //! cell div). Splicing them unshifted would put a heading at the same level
+    //! as the div that contains it, discarding the nesting the host reader was
+    //! careful to record. `e.level + x.level - 1` preserves it.
     //!
-    //! A BLOCK WITH NO EXPANDABLE FORMAT PASSES THROUGH UNTOUCHED, so this is a no-op on any
-    //! document with no embedded fragment -- measured: two_pages.source.md is 51 blocks in and
-    //! 51 out, unchanged.
+    //! A BLOCK WITH NO EXPANDABLE FORMAT PASSES THROUGH UNTOUCHED, so this is a
+    //! no-op on any document with no embedded fragment -- measured:
+    //! two_pages.source.md is 51 blocks in and 51 out, unchanged.
     {DEFAULT_SCHEMA,
      "panduck_expand_embedded_impl",
      {"blocks", nullptr},
      {{nullptr, nullptr}},
-     // LAMBDA VARIABLES ARE NAMED pd_blk / pd_sub / pd_ord, NOT x / e / y, because a macro's
-     // lambda parameter can be shadowed by the CALLER's table alias. Measured:
-     //     SELECT len(panduck_expand_embedded(list(x))) FROM read_panduck_doc(...) x
-     // resolved `x.element_type` inside the lambda to the caller's alias instead of the
-     // lambda's own binding and failed with
-     //     Binder Error: column "element_type" must appear in the GROUP BY clause
-     // -- an error naming a column the caller never grouped, about a lambda they cannot see.
-     // A short generic name in a macro body is a name the caller can collide with.
+     // LAMBDA VARIABLES ARE NAMED pd_blk / pd_sub / pd_ord, NOT x / e / y,
+     // because a macro's lambda parameter can be shadowed by the CALLER's table
+     // alias. Measured:
+     //     SELECT len(panduck_expand_embedded(list(x))) FROM
+     //     read_panduck_doc(...) x
+     // resolved `x.element_type` inside the lambda to the caller's alias
+     // instead of the lambda's own binding and failed with
+     //     Binder Error: column "element_type" must appear in the GROUP BY
+     //     clause
+     // -- an error naming a column the caller never grouped, about a lambda
+     // they cannot see. A short generic name in a macro body is a name the
+     // caller can collide with.
      //
-     // `lambda x: ...`, NEVER `x -> ...` (#65). DuckDB 1.5.5 prints a deprecation WARNING on
-     // stdout for the arrow form -- inside every consumer's output -- and from 2.0 the default
-     // lambda_syntax rejects it at bind time. `make check-lambda-syntax` scans every SQL
-     // string in src/ for it, because without the markdown extension these lambdas are
-     // never bound and a test cannot see them.
+     // `lambda x: ...`, NEVER `x -> ...` (#65). DuckDB 1.5.5 prints a
+     // deprecation WARNING on stdout for the arrow form -- inside every
+     // consumer's output -- and from 2.0 the default lambda_syntax rejects it
+     // at bind time. `make check-lambda-syntax` scans every SQL string in src/
+     // for it, because without the markdown extension these lambdas are never
+     // bound and a test cannot see them.
      "panduck_renumber_blocks("
      "  flatten(list_transform(blocks, lambda pd_blk: "
      "    CASE WHEN pd_blk.element_type = 'raw' "
      "          AND pd_blk.attributes['format'] = 'markdown' "
-     "         THEN list_transform(parse_markdown_to_duck_blocks(pd_blk.content), "
-     "                lambda pd_sub: {kind: pd_sub.kind, element_type: pd_sub.element_type, "
+     "         THEN "
+     "list_transform(parse_markdown_to_duck_blocks(pd_blk.content), "
+     "                lambda pd_sub: {kind: pd_sub.kind, element_type: "
+     "pd_sub.element_type, "
      "                      content: pd_sub.content, "
      "                      level: pd_sub.level + pd_blk.level - 1, "
-     "                      encoding: pd_sub.encoding, attributes: pd_sub.attributes, "
+     "                      encoding: pd_sub.encoding, attributes: "
+     "pd_sub.attributes, "
      "                      element_order: pd_sub.element_order}) "
      "         ELSE [pd_blk] END)), "
-     // THE ORIGIN IS PRESERVED, NOT NORMALISED. Readers disagree about it: every
-     // panduck-native reader starts element_order at 0, while .md starts at 1 because the
-     // markdown extension does and panduck passes it through. Forcing a base here would
-     // silently renumber one of them, so the input's own origin is kept and the disagreement
-     // stays visible where it belongs -- upstream.
-     "  coalesce(list_min(list_transform(blocks, lambda pd_ord: pd_ord.element_order)), 0))"},
+     // THE ORIGIN IS PRESERVED, NOT NORMALISED. Readers disagree about it:
+     // every panduck-native reader starts element_order at 0, while .md starts
+     // at 1 because the markdown extension does and panduck passes it through.
+     // Forcing a base here would silently renumber one of them, so the input's
+     // own origin is kept and the disagreement stays visible where it belongs
+     // -- upstream.
+     "  coalesce(list_min(list_transform(blocks, lambda pd_ord: "
+     "pd_ord.element_order)), 0))"},
 
-    //! panduck_expand_embedded(blocks) -- replace embedded-format `raw` blocks with their
-    //! parsed contents. Gated, so a missing markdown extension is refused in panduck's words
-    //! rather than as a catalog error naming a function the caller never wrote.
+    //! panduck_expand_embedded(blocks) -- replace embedded-format `raw` blocks
+    //! with their parsed contents. Gated, so a missing markdown extension is
+    //! refused in panduck's words rather than as a catalog error naming a
+    //! function the caller never wrote.
     {DEFAULT_SCHEMA,
      "panduck_expand_embedded",
      {"blocks", nullptr},
      {{nullptr, nullptr}},
      "CASE WHEN NOT panduck_ensure_extension('markdown') "
-     "     THEN error('panduck: expanding an embedded markdown fragment needs the markdown '|| "
+     "     THEN error('panduck: expanding an embedded markdown fragment needs "
+     "the markdown '|| "
      "                'extension (INSTALL markdown FROM community)') "
      "     ELSE panduck_expand_embedded_impl(blocks) END"},
 
-    //! Wrap a generated reader query so its rows come back expanded. Exists so READ_DOC_MACRO
-    //! can opt in with ONE call rather than duplicating the SQL-generating CASE, whose
-    //! comments record measured decisions and should not be moved to gain a parameter.
+    //! Wrap a generated reader query so its rows come back expanded. Exists so
+    //! READ_DOC_MACRO can opt in with ONE call rather than duplicating the
+    //! SQL-generating CASE, whose comments record measured decisions and should
+    //! not be moved to gain a parameter.
     {DEFAULT_SCHEMA,
      "panduck_wrap_expand",
      {"sql", "flag", nullptr},
      {{nullptr, nullptr}},
      "CASE WHEN NOT flag THEN sql "
      "     WHEN NOT panduck_ensure_extension('markdown') "
-     "       THEN error('panduck: expand_embedded needs the markdown extension ' || "
+     "       THEN error('panduck: expand_embedded needs the markdown extension "
+     "' || "
      "                  '(INSTALL markdown FROM community)') "
-     "     ELSE 'SELECT u.* FROM (SELECT unnest(panduck_expand_embedded(list(b))) ' || "
+     "     ELSE 'SELECT u.* FROM (SELECT "
+     "unnest(panduck_expand_embedded(list(b))) ' || "
      "          'AS u FROM (' || sql || ') b)' END"},
 
     {DEFAULT_SCHEMA,
      "panduck_render_format",
      {"f", nullptr},
      {{nullptr, nullptr}},
-     "CASE lower(f) WHEN 'markdown' THEN 'md' WHEN 'plain' THEN 'text' ELSE f END"},
+     "CASE lower(f) WHEN 'markdown' THEN 'md' WHEN 'plain' THEN 'text' ELSE f "
+     "END"},
 
     {DEFAULT_SCHEMA,
      "panduck_policy_format",
@@ -1314,113 +1435,139 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      {{nullptr, nullptr}},
      // The fallback chain, and each link is load-bearing:
      //
-     //   1. the resolved format          -- what a builtin, or a user entry with a
+     //   1. the resolved format          -- what a builtin, or a user entry
+     //   with a
      //                                      reader_ext, is known as
-     //   2. the REGISTRY KEY, dot stripped -- what an entry with NO format is known as
-     //   3. 'code'                       -- only when nothing claimed the source at all
+     //   2. the REGISTRY KEY, dot stripped -- what an entry with NO format is
+     //   known as
+     //   3. 'code'                       -- only when nothing claimed the
+     //   source at all
      //
-     // LINK 2 IS THE FROZEN ONE, and it is why this is not merely a coalesce. The chain
-     // started as `resolved_format, then 'code'`, which killed a formatless reader whenever
-     // the fallback was disabled. Replacing 'code' with NULL fixed that and opened a
-     // ONE-STATEMENT BYPASS of the entire control, because Register() REPLACES a row rather
-     // than shadowing it:
+     // LINK 2 IS THE FROZEN ONE, and it is why this is not merely a coalesce.
+     // The chain started as `resolved_format, then 'code'`, which killed a
+     // formatless reader whenever the fallback was disabled. Replacing 'code'
+     // with NULL fixed that and opened a ONE-STATEMENT BYPASS of the entire
+     // control, because Register() REPLACES a row rather than shadowing it:
      //
      //     SET panduck_disabled_readers = 'odt';
      //     CALL panduck_register_doc_reader('', 'read_odt_blocks', ['.odt']);
      //
-     // gave the row an empty format, NULL here, and odt read again -- 54 rows, and 180
-     // through a glob. Naming by the registry KEY closed that for '.odt' and NOT in general:
-     // where key and format differ, re-registering '.md' renamed it from 'markdown' to 'md'
-     // and a denylist naming 'markdown' stopped applying. Also measured.
+     // gave the row an empty format, NULL here, and odt read again -- 54 rows,
+     // and 180 through a glob. Naming by the registry KEY closed that for
+     // '.odt' and NOT in general: where key and format differ, re-registering
+     // '.md' renamed it from 'markdown' to 'md' and a denylist naming
+     // 'markdown' stopped applying. Also measured.
      //
-     // So policy asks what panduck NATIVELY calls the extension, from a map frozen at
-     // registry construction that no registration can reach. A builtin format cannot be
-     // renamed out of a denylist by any statement a user can write.
+     // So policy asks what panduck NATIVELY calls the extension, from a map
+     // frozen at registry construction that no registration can reach. A
+     // builtin format cannot be renamed out of a denylist by any statement a
+     // user can write.
      //
-     // BUILTIN BEATS LIVE, deliberately. Pointing '.md' at some other reader does not
-     // escape a 'markdown' denylist -- the operator disabled reading markdown files, and
-     // that is what they get. A reader for an extension panduck does NOT ship keeps its own
-     // name through links 3 and 4.
+     // BUILTIN BEATS LIVE, deliberately. Pointing '.md' at some other reader
+     // does not escape a 'markdown' denylist -- the operator disabled reading
+     // markdown files, and that is what they get. A reader for an extension
+     // panduck does NOT ship keeps its own name through links 3 and 4.
      "coalesce(nullif(fmt, 'auto'), "
      "         panduck_builtin_format_for(src), "
      "         panduck_format_for(src), "
      "         ltrim(panduck_registry_key_for(src), '.'), "
-     "         CASE WHEN panduck_reader_function_for(src) IS NULL THEN 'code' END)"},
+     "         CASE WHEN panduck_reader_function_for(src) IS NULL THEN 'code' "
+     "END)"},
 
     {DEFAULT_SCHEMA,
      "panduck_read_arms_opt",
      {"paths", "with_filename", "opt_intent", "opt_value", nullptr},
      {{"reader_params", "MAP {}"}, {nullptr, nullptr}},
-     // THE NULL `with_filename` REFUSAL IS REPEATED HERE rather than left to dispatch, and
-     // in dispatch's exact words. This builder is directly callable and directly tested, so
-     // a guard living only in READ_DOC_MACRO would leave the two call sites disagreeing
-     // about the same argument -- which is the defect shape fixed for `pages` one round
-     // earlier, where dispatch coalesced a NULL that read_pdf_blocks refused.
+     // THE NULL `with_filename` REFUSAL IS REPEATED HERE rather than left to
+     // dispatch, and in dispatch's exact words. This builder is directly
+     // callable and directly tested, so a guard living only in READ_DOC_MACRO
+     // would leave the two call sites disagreeing about the same argument --
+     // which is the defect shape fixed for `pages` one round earlier, where
+     // dispatch coalesced a NULL that read_pdf_blocks refused.
      //
-     // `reader_params` GETS THE SAME TREATMENT, for the same reason: READ_DOC_MACRO refuses
-     // reader_params IS NULL before ever reaching this builder, but this builder is called
-     // directly (see the test suite), so a caller going straight to
-     // panduck_read_arms_opt(..., reader_params := NULL) must hit the same refusal rather
-     // than reach panduck_render_params, whose own null handling would otherwise concatenate
-     // a NULL through the whole arm exactly as an unguarded `with_filename` used to.
+     // `reader_params` GETS THE SAME TREATMENT, for the same reason:
+     // READ_DOC_MACRO refuses reader_params IS NULL before ever reaching this
+     // builder, but this builder is called directly (see the test suite), so a
+     // caller going straight to panduck_read_arms_opt(..., reader_params :=
+     // NULL) must hit the same refusal rather than reach panduck_render_params,
+     // whose own null handling would otherwise concatenate a NULL through the
+     // whole arm exactly as an unguarded `with_filename` used to.
      "CASE WHEN with_filename IS NULL "
      "     THEN error('panduck: cannot use NULL as argument for \"filename\"') "
      "     WHEN reader_params IS NULL "
-     "     THEN error('panduck: cannot use NULL as argument for \"reader_params\"') "
-     // POLICY, PER PATH. The dispatcher's gate sits on the single-path branch, and the
-     // PLURAL branch does not pass through it -- it funnels straight here -- so a guard
-     // only there was walked around by spelling the source as a glob: with odt disabled,
-     // '*.odt' returned 180 rows and ['constructs.odt'] returned 54. Every single-path
-     // assertion passed while that was true, which is why the bypass got written at all.
+     "     THEN error('panduck: cannot use NULL as argument for "
+     "\"reader_params\"') "
+     // POLICY, PER PATH. The dispatcher's gate sits on the single-path branch,
+     // and the PLURAL branch does not pass through it -- it funnels straight
+     // here -- so a guard only there was walked around by spelling the source
+     // as a glob: with odt disabled,
+     // '*.odt' returned 180 rows and ['constructs.odt'] returned 54. Every
+     // single-path assertion passed while that was true, which is why the
+     // bypass got written at all.
      //
-     // Per PATH, and a REFUSAL rather than a filter: a mixed list must not become
-     // readable by containing one allowed format, and dropping the disallowed members
-     // would silently return fewer documents than were asked for -- the data-loss shape
-     // this builder already carries three other guards against.
+     // Per PATH, and a REFUSAL rather than a filter: a mixed list must not
+     // become readable by containing one allowed format, and dropping the
+     // disallowed members would silently return fewer documents than were asked
+     // for -- the data-loss shape this builder already carries three other
+     // guards against.
      "     WHEN len(list_filter(paths, lambda p: NOT panduck_reader_enabled("
      "              panduck_policy_format(p, 'auto')))) > 0 "
      "     THEN error('panduck: reader for format ''' || "
      "                (panduck_policy_format(list_filter(paths, lambda p: "
-     "                  NOT panduck_reader_enabled(panduck_policy_format(p, 'auto')))[1], 'auto')) || "
-     "                ''' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') "
+     "                  NOT panduck_reader_enabled(panduck_policy_format(p, "
+     "'auto')))[1], 'auto')) || "
+     "                ''' is disabled (see panduck_enabled_readers and "
+     "panduck_disabled_readers)') "
      "     ELSE "
      "array_to_string(list_transform(paths, lambda p: "
      "  CASE WHEN p IS NULL "
-     "       THEN error('panduck: a multi-document source contains a NULL path') "
+     "       THEN error('panduck: a multi-document source contains a NULL "
+     "path') "
      "       WHEN panduck_reader_function_for(p) IS NULL "
-     "       THEN error('panduck: ' || p || ' (' || coalesce(panduck_format_for(p), 'unknown') || "
+     "       THEN error('panduck: ' || p || ' (' || "
+     "coalesce(panduck_format_for(p), 'unknown') || "
      "                  ') cannot be read in a multi-document call yet') "
      "       ELSE CASE WHEN panduck_reader_extension_for(p) IS NULL "
-     "                 OR panduck_ensure_extension(panduck_reader_extension_for(p)) "
-     "            THEN 'SELECT *' || CASE WHEN with_filename THEN ', ' || panduck_quote(p) || ' AS filename' "
+     "                 OR "
+     "panduck_ensure_extension(panduck_reader_extension_for(p)) "
+     "            THEN 'SELECT *' || CASE WHEN with_filename THEN ', ' || "
+     "panduck_quote(p) || ' AS filename' "
      "                               ELSE '' END || "
-     "                 ' FROM ' || panduck_reader_function_for(p) || '(' || panduck_quote(p) || "
-     "                 CASE WHEN panduck_reader_option_for(p, opt_intent, opt_value) = '' THEN '' "
-     "                      ELSE ', ' || panduck_reader_option_for(p, opt_intent, opt_value) END || "
+     "                 ' FROM ' || panduck_reader_function_for(p) || '(' || "
+     "panduck_quote(p) || "
+     "                 CASE WHEN panduck_reader_option_for(p, opt_intent, "
+     "opt_value) = '' THEN '' "
+     "                      ELSE ', ' || panduck_reader_option_for(p, "
+     "opt_intent, opt_value) END || "
      "                 panduck_render_params(reader_params) || ')' "
-     "            ELSE error('panduck: ' || p || ' needs the ' || panduck_reader_extension_for(p) || "
+     "            ELSE error('panduck: ' || p || ' needs the ' || "
+     "panduck_reader_extension_for(p) || "
      "                       ' extension') END "
      "       END), "
      "  ' UNION ALL ') END"},
 
-    // Arms with no option requested. Kept as its own name because it is what every caller
-    // that has nothing to ask for should read like, and because the suite asserts its
-    // output as a string; 'default' is the sentinel that makes the option render to ''.
+    // Arms with no option requested. Kept as its own name because it is what
+    // every caller that has nothing to ask for should read like, and because
+    // the suite asserts its output as a string; 'default' is the sentinel that
+    // makes the option render to ''.
     {DEFAULT_SCHEMA,
      "panduck_read_arms",
      {"paths", "with_filename", nullptr},
      {{nullptr, nullptr}},
      "panduck_read_arms_opt(paths, with_filename, NULL, 'default')"},
 
-    // The unpack column list, defined once. Only LIST-producing branches use it; flat
-    // branches pass SELECT * through, which has no positional list to transpose.
+    // The unpack column list, defined once. Only LIST-producing branches use
+    // it; flat branches pass SELECT * through, which has no positional list to
+    // transpose.
     {DEFAULT_SCHEMA,
      "panduck_block_cols",
      {nullptr},
      {{nullptr, nullptr}},
-     "'b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order'"},
+     "'b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, "
+     "b.element_order'"},
 
-    // Pure expressions over C++ scalars -- safe to inline into query()'s argument.
+    // Pure expressions over C++ scalars -- safe to inline into query()'s
+    // argument.
     {DEFAULT_SCHEMA,
      "panduck_resolved_format",
      {"src", "fmt", nullptr},
@@ -1437,178 +1584,208 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      "panduck_read_blocks",
      {"src", nullptr},
      {{"format", "'auto'"}, {"pages", "''"}, {nullptr, nullptr}},
-     // No ::duck_block cast: that named type belongs to duck_block_utils, and panduck
-     // must answer without it. The struct is structurally identical, so it still casts
-     // implicitly wherever a duck_block[] is wanted.
-     // ORDER BY element_order is not decoration. doc_section slices this list by
-     // position, so the order has to be GUARANTEED rather than incidental -- a bare
-     // list() over a table function preserves emission order today but nothing in the
-     // contract says it must, and a reordering would surface as a slicing bug far from
-     // its cause.
-     "(SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc(src, format := format, pages := pages) b)"},
+     // No ::duck_block cast: that named type belongs to duck_block_utils, and
+     // panduck must answer without it. The struct is structurally identical, so
+     // it still casts implicitly wherever a duck_block[] is wanted. ORDER BY
+     // element_order is not decoration. doc_section slices this list by
+     // position, so the order has to be GUARANTEED rather than incidental -- a
+     // bare list() over a table function preserves emission order today but
+     // nothing in the contract says it must, and a reordering would surface as
+     // a slicing bug far from its cause.
+     "(SELECT list(b ORDER BY b.element_order) FROM read_panduck_doc(src, "
+     "format := format, pages := pages) b)"},
 
-    // doc_render(src, format) -- render a document to a FORMAT. duck_block_utils deleted
-    // its doc_render when it stopped depending on format extensions; panduck is the right
-    // home because rendering to md/html IS format IO. 'text' delegates to
-    // duck_blocks_to_text, which is a C++ scalar and therefore reachable; 'ansi' is not
-    // wired up -- see the reachability note above the doc_toc macro.
+    // doc_render(src, format) -- render a document to a FORMAT.
+    // duck_block_utils deleted its doc_render when it stopped depending on
+    // format extensions; panduck is the right home because rendering to md/html
+    // IS format IO. 'text' delegates to duck_blocks_to_text, which is a C++
+    // scalar and therefore reachable; 'ansi' is not wired up -- see the
+    // reachability note above the doc_toc macro.
     {DEFAULT_SCHEMA,
      "doc_render",
      {"src", "output_format", nullptr},
      {{"format", "'auto'"}, {nullptr, nullptr}},
      "(SELECT r FROM query("
      "  CASE"
-     // OUTPUT-FORMAT SYNONYMS, so panduck's own two functions compose. The resolver returns
-     // 'markdown' and this took only 'md', so
+     // OUTPUT-FORMAT SYNONYMS, so panduck's own two functions compose. The
+     // resolver returns 'markdown' and this took only 'md', so
      //   doc_render(src, panduck_resolved_format(src, NULL))
-     // -- the obvious composition, and the first thing a consumer reaches for, since
-     // resolved_format is what you would use to fill this argument -- raised "markdown is
-     // not one of them". 'html' spells the same in both vocabularies and worked, which made
-     // the gap read as arbitrary rather than as a real distinction between input and output
-     // format names. Reported by duckeye, measured rather than read from the docs.
+     // -- the obvious composition, and the first thing a consumer reaches for,
+     // since resolved_format is what you would use to fill this argument --
+     // raised "markdown is not one of them". 'html' spells the same in both
+     // vocabularies and worked, which made the gap read as arbitrary rather
+     // than as a real distinction between input and output format names.
+     // Reported by duckeye, measured rather than read from the docs.
      //
-     // Normalised once here rather than by adding arms below, so every later branch and the
-     // error message see one spelling.
-     // Same as doc_toc: `format` is rendered into SQL text through panduck_quote, which
-     // coalesces NULL to '', so a NULL never reaches read_panduck_doc as a NULL and
-     // surfaced as the "This is a panduck bug" arm instead. Measured.
+     // Normalised once here rather than by adding arms below, so every later
+     // branch and the error message see one spelling. Same as doc_toc: `format`
+     // is rendered into SQL text through panduck_quote, which coalesces NULL to
+     // '', so a NULL never reaches read_panduck_doc as a NULL and surfaced as
+     // the "This is a panduck bug" arm instead. Measured.
      "    WHEN format IS NULL"
      "      THEN error('panduck: cannot use NULL as argument for \"format\"')"
-     // Single document only, for the same reason as doc_toc: rendering a glob concatenated
-     // three documents into 344 characters with no separator and no way to tell where one
-     // ended. Resolves rather than shape-tests, so one-match globs and one-element lists
-     // render; a list used to leak replace(VARCHAR[], ...) from panduck_quote.
+     // Single document only, for the same reason as doc_toc: rendering a glob
+     // concatenated three documents into 344 characters with no separator and
+     // no way to tell where one ended. Resolves rather than shape-tests, so
+     // one-match globs and one-element lists render; a list used to leak
+     // replace(VARCHAR[], ...) from panduck_quote.
      "    WHEN len(panduck_source_list(src)) > 1"
-     "      THEN error('panduck: doc_render takes a single document; a glob or list would ' ||"
-     "                 'concatenate them. Use read_panduck_doc(src, filename := true) and ' ||"
+     "      THEN error('panduck: doc_render takes a single document; a glob or "
+     "list would ' ||"
+     "                 'concatenate them. Use read_panduck_doc(src, filename "
+     ":= true) and ' ||"
      "                 'render each document separately')"
-     "    WHEN panduck_render_format(output_format) = 'md' AND panduck_ensure_extension('markdown')"
-     "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
+     "    WHEN panduck_render_format(output_format) = 'md' AND "
+     "panduck_ensure_extension('markdown')"
+     "      THEN 'SELECT duck_blocks_to_md(panduck_read_blocks(' || "
+     "panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
-     "    WHEN panduck_render_format(output_format) = 'html' AND panduck_ensure_extension('webbed')"
-     "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
+     "    WHEN panduck_render_format(output_format) = 'html' AND "
+     "panduck_ensure_extension('webbed')"
+     "      THEN 'SELECT duck_blocks_to_html(panduck_read_blocks(' || "
+     "panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
-     "    WHEN panduck_render_format(output_format) = 'text' AND panduck_ensure_extension('duck_block_utils')"
-     "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || panduck_quote(panduck_source_list(src)[1]) ||"
+     "    WHEN panduck_render_format(output_format) = 'text' AND "
+     "panduck_ensure_extension('duck_block_utils')"
+     "      THEN 'SELECT duck_blocks_to_text(panduck_read_blocks(' || "
+     "panduck_quote(panduck_source_list(src)[1]) ||"
      "           ', format := ' || panduck_quote(format) || ')) AS r'"
      // output_format IS COALESCED (round-2 error() audit): a caller can write
-     // doc_render(src, NULL), which matches none of the WHEN clauses above (each requires
-     // output_format to literally equal a string, and NULL = 'md' is NULL, not TRUE) and
-     // falls to this ELSE with output_format itself NULL. Without the coalesce the
-     // concatenation is NULL and error(NULL) silently returns NULL instead of raising.
-     // TWO DIFFERENT FAILURES, TOLD APART. This said "<x> is unsupported or its extension
-     // is not installed" for both, which makes the caller guess: 'md' IS supported, and a
-     // user without the markdown extension was told their format might be the problem.
-     // Issue #25 is the same shape -- an error that does not name what to do next.
+     // doc_render(src, NULL), which matches none of the WHEN clauses above
+     // (each requires output_format to literally equal a string, and NULL =
+     // 'md' is NULL, not TRUE) and falls to this ELSE with output_format itself
+     // NULL. Without the coalesce the concatenation is NULL and error(NULL)
+     // silently returns NULL instead of raising. TWO DIFFERENT FAILURES, TOLD
+     // APART. This said "<x> is unsupported or its extension is not installed"
+     // for both, which makes the caller guess: 'md' IS supported, and a user
+     // without the markdown extension was told their format might be the
+     // problem. Issue #25 is the same shape -- an error that does not name what
+     // to do next.
      "    WHEN panduck_render_format(output_format) IN ('md', 'html', 'text')"
-     "      THEN error('panduck: doc_render ' || output_format || ' needs the ' ||"
-     "                 CASE panduck_render_format(output_format) WHEN 'md' THEN 'markdown' WHEN 'html' THEN 'webbed'"
+     "      THEN error('panduck: doc_render ' || output_format || ' needs the "
+     "' ||"
+     "                 CASE panduck_render_format(output_format) WHEN 'md' "
+     "THEN 'markdown' WHEN 'html' THEN 'webbed'"
      "                                    ELSE 'duck_block_utils' END ||"
      "                 ' extension; see panduck_dependencies()')"
-     "    ELSE error('panduck: doc_render supports md (markdown), html, and text (plain); ' ||"
-     "               coalesce(output_format, '<NULL>') || ' is not one of them')"
+     "    ELSE error('panduck: doc_render supports md (markdown), html, and "
+     "text (plain); ' ||"
+     "               coalesce(output_format, '<NULL>') || ' is not one of "
+     "them')"
      "  END))"},
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
 
-// read_pdf_blocks(src, pages := '') -- PDF into duck_blocks, with real page selection.
+// read_pdf_blocks(src, pages := '') -- PDF into duck_blocks, with real page
+// selection.
 //
-// WHY THE ELEMENTS ROUTE AND NOT pdf_to_markdown. read_panduck_doc's pdf branch goes
-// through parse_markdown_to_duck_blocks(pdf_to_markdown(src)), and pdf_to_markdown takes
-// a PATH AND NOTHING ELSE -- measured: [col0] VARCHAR. So that route cannot select pages
-// at all. pdf_pages(src, dest, spec) can, but it WRITES A NEW PDF and returns its path,
-// which is a filesystem side effect inside a SELECT and does not belong in a read path.
-// read_pdf_elements takes first_page/last_page natively, so it is the only route where
-// `pages` can mean anything.
+// WHY THE ELEMENTS ROUTE AND NOT pdf_to_markdown. read_panduck_doc's pdf branch
+// goes through parse_markdown_to_duck_blocks(pdf_to_markdown(src)), and
+// pdf_to_markdown takes a PATH AND NOTHING ELSE -- measured: [col0] VARCHAR. So
+// that route cannot select pages at all. pdf_pages(src, dest, spec) can, but it
+// WRITES A NEW PDF and returns its path, which is a filesystem side effect
+// inside a SELECT and does not belong in a read path. read_pdf_elements takes
+// first_page/last_page natively, so it is the only route where `pages` can mean
+// anything.
 //
-// THE TRADE IS REAL AND MEASURED, NOT HIDDEN. Against the same document read as ODT:
-// the elements route KEEPS list structure that pdf_to_markdown flattens (two list_items
-// vs "• bullet one • bullet two" jammed into one paragraph), and LOSES inline emphasis
-// that pdf_to_markdown keeps (**bold** survives markdown, not elements). Neither route
-// dominates. Page selection is the thing a caller asked for by name, so it wins here;
-// the emphasis loss is a divergence, recorded as one.
+// THE TRADE IS REAL AND MEASURED, NOT HIDDEN. Against the same document read as
+// ODT: the elements route KEEPS list structure that pdf_to_markdown flattens
+// (two list_items vs "• bullet one • bullet two" jammed into one paragraph),
+// and LOSES inline emphasis that pdf_to_markdown keeps (**bold** survives
+// markdown, not elements). Neither route dominates. Page selection is the thing
+// a caller asked for by name, so it wins here; the emphasis loss is a
+// divergence, recorded as one.
 //
-// HEADING LEVELS ARE RANKED OVER THE WHOLE DOCUMENT, THEN THE CONTENT IS SLICED, and the
-// order matters. PDF has no heading levels -- only font sizes -- so level is dense_rank
-// over distinct heading font sizes. Rank within the SLICE and a section cut out of the
-// middle of a document comes back with its headings promoted to level 1, because it is
-// the largest thing in its own slice. Measured on a two-page fixture: ranked per-slice,
-// "Page Two Heading" reads heading_level=1 alone and 2 in the full document -- the same
-// heading changing depth depending on what you asked for. Ranked document-wide it stays
-// 2 either way. The cost is that the level scan reads the whole document even when one
-// page is wanted, so `pages` selects CONTENT rather than saving work.
+// HEADING LEVELS ARE RANKED OVER THE WHOLE DOCUMENT, THEN THE CONTENT IS
+// SLICED, and the order matters. PDF has no heading levels -- only font sizes
+// -- so level is dense_rank over distinct heading font sizes. Rank within the
+// SLICE and a section cut out of the middle of a document comes back with its
+// headings promoted to level 1, because it is the largest thing in its own
+// slice. Measured on a two-page fixture: ranked per-slice, "Page Two Heading"
+// reads heading_level=1 alone and 2 in the full document -- the same heading
+// changing depth depending on what you asked for. Ranked document-wide it stays
+// 2 either way. The cost is that the level scan reads the whole document even
+// when one page is wanted, so `pages` selects CONTENT rather than saving work.
 //
-// THIS BODY CARRIES NO GATE BECAUSE THE GATE IS ONE LEVEL UP -- read_pdf_blocks is a
-// wrapper that decides whether to call this at all. See its comment.
+// THIS BODY CARRIES NO GATE BECAUSE THE GATE IS ONE LEVEL UP -- read_pdf_blocks
+// is a wrapper that decides whether to call this at all. See its comment.
 //
-// THIS COMMENT USED TO SAY GATING WAS IMPOSSIBLE, and that was wrong. It claimed a guard
-// "would have to run before the binder resolves read_pdf_elements, which it cannot", so a
-// direct call could only ever give a catalog error. The premise is right -- binding does
-// precede evaluation -- and the conclusion did not follow: A MACRO BODY IS BOUND LAZILY,
-// ON INVOCATION, so a wrapper that declines to call this one never binds read_pdf_elements
-// at all. An external user hit the catalog error (#25) while that reasoning sat here
-// discouraging anyone from retrying.
+// THIS COMMENT USED TO SAY GATING WAS IMPOSSIBLE, and that was wrong. It
+// claimed a guard "would have to run before the binder resolves
+// read_pdf_elements, which it cannot", so a direct call could only ever give a
+// catalog error. The premise is right -- binding does precede evaluation -- and
+// the conclusion did not follow: A MACRO BODY IS BOUND LAZILY, ON INVOCATION,
+// so a wrapper that declines to call this one never binds read_pdf_elements at
+// all. An external user hit the catalog error (#25) while that reasoning sat
+// here discouraging anyone from retrying.
 //
-// A WRONG RECORDED REASON IS WORSE THAN NONE: it stops the next person re-testing. So the
-// measurement is written down rather than the conclusion --
-// test/sql/pdf_missing_extension.test calls read_pdf_blocks with extension_directory
-// pointed at an empty directory and asserts panduck's named error. If DuckDB ever binds
-// macro bodies eagerly, that test fails with a catalog error and says so, instead of this
-// paragraph quietly becoming true again.
-// doc_section(src, section, format := 'auto') -- the blocks under one heading.
+// A WRONG RECORDED REASON IS WORSE THAN NONE: it stops the next person
+// re-testing. So the measurement is written down rather than the conclusion --
+// test/sql/pdf_missing_extension.test calls read_pdf_blocks with
+// extension_directory pointed at an empty directory and asserts panduck's named
+// error. If DuckDB ever binds macro bodies eagerly, that test fails with a
+// catalog error and says so, instead of this paragraph quietly becoming true
+// again. doc_section(src, section, format := 'auto') -- the blocks under one
+// heading.
 //
-// PATH IN, BLOCKS OUT, which is why this does not wrap duck_block_utils' section
-// functions even though they exist and this file's docs said it would. Measured on
-// build 3f2a0f0: duck_blocks_get_section(blocks, pattern, output_format) returns VARCHAR
+// PATH IN, BLOCKS OUT, which is why this does not wrap duck_block_utils'
+// section functions even though they exist and this file's docs said it would.
+// Measured on build 3f2a0f0: duck_blocks_get_section(blocks, pattern,
+// output_format) returns VARCHAR
 // -- a RENDERED string -- for every output_format including 'blocks', and
-// duck_blocks_sections_like returns (section, start_order, content), also rendered. Both
-// are useful and neither gives back duck_blocks, so wrapping either would make doc_section
-// the only doc_* that reads a path and hands back text instead of a queryable table.
-// Slicing panduck's own stream keeps the composition -- the result feeds doc_toc, the
-// pandoc writer, and every duck_block consumer, because it IS duck_blocks. It also drops
-// a dependency: those functions need the json extension loaded, and this needs nothing.
+// duck_blocks_sections_like returns (section, start_order, content), also
+// rendered. Both are useful and neither gives back duck_blocks, so wrapping
+// either would make doc_section the only doc_* that reads a path and hands back
+// text instead of a queryable table. Slicing panduck's own stream keeps the
+// composition -- the result feeds doc_toc, the pandoc writer, and every
+// duck_block consumer, because it IS duck_blocks. It also drops a dependency:
+// those functions need the json extension loaded, and this needs nothing.
 //
-// THE BOUNDARY IS "the next heading at the same level or higher", not "the next heading".
-// A section CONTAINS its subsections, which is what makes doc_section('Chapter 2') mean
-// what a reader expects rather than stopping at the first sub-heading. Verified against a
-// fixture built for exactly this: sections.html is h1/h2/h1/h2 so a slice must actually
-// STOP. The first fixture tried had every section running to end-of-document, which would
-// have let a missing boundary pass -- 41 and 40 rows out of 54, both simply the tail.
+// THE BOUNDARY IS "the next heading at the same level or higher", not "the next
+// heading". A section CONTAINS its subsections, which is what makes
+// doc_section('Chapter 2') mean what a reader expects rather than stopping at
+// the first sub-heading. Verified against a fixture built for exactly this:
+// sections.html is h1/h2/h1/h2 so a slice must actually STOP. The first fixture
+// tried had every section running to end-of-document, which would have let a
+// missing boundary pass -- 41 and 40 rows out of 54, both simply the tail.
 //
-// MATCHES CONTENT OR id, because a heading's TEXT is what a person names and its id is
-// what a link names, and an HTML document has both. try_cast on heading_level rather than
-// a cast: the attribute is absent on non-headings and need not be numeric, and a hard cast
-// would turn a malformed attribute into an error for the whole document.
-// doc_container(src, id, format := 'auto') -- the blocks inside one identified container.
+// MATCHES CONTENT OR id, because a heading's TEXT is what a person names and
+// its id is what a link names, and an HTML document has both. try_cast on
+// heading_level rather than a cast: the attribute is absent on non-headings and
+// need not be numeric, and a hard cast would turn a malformed attribute into an
+// error for the whole document. doc_container(src, id, format := 'auto') -- the
+// blocks inside one identified container.
 //
-// SIBLING OF doc_section, DIFFERENT AXIS. doc_section walks HEADINGS and its boundary is
-// heading_level, so it answers "the prose under this title". doc_container walks the
-// STRUCTURAL nesting in `level` and answers "what is inside this box" -- a div, a section,
-// an article, a list, a blockquote. Those are different questions and a document can
-// disagree about them: a <div> can hold three headings, and a heading's section can run
-// across several divs.
+// SIBLING OF doc_section, DIFFERENT AXIS. doc_section walks HEADINGS and its
+// boundary is heading_level, so it answers "the prose under this title".
+// doc_container walks the STRUCTURAL nesting in `level` and answers "what is
+// inside this box" -- a div, a section, an article, a list, a blockquote. Those
+// are different questions and a document can disagree about them: a <div> can
+// hold three headings, and a heading's section can run across several divs.
 //
-// THE BOUNDARY IS `level`, WHICH READERS ALREADY MAINTAIN. A container at depth N owns the
-// blocks after it while depth > N, ending at the next block whose depth is <= N. Nothing
-// format-specific is involved, so this works for any reader that nests -- it is HTML today
-// only because HTML is where ids come from.
+// THE BOUNDARY IS `level`, WHICH READERS ALREADY MAINTAIN. A container at depth
+// N owns the blocks after it while depth > N, ending at the next block whose
+// depth is <= N. Nothing format-specific is involved, so this works for any
+// reader that nests -- it is HTML today only because HTML is where ids come
+// from.
 //
-// MATCHES ANY BLOCK CARRYING THE id, not only containers, and that is deliberate: a caller
-// naming an id should get what that id labels, whether the emitter called it a div, a
-// section or a figure. A leaf with an id yields just itself, which is the correct answer
-// rather than an empty one.
+// MATCHES ANY BLOCK CARRYING THE id, not only containers, and that is
+// deliberate: a caller naming an id should get what that id labels, whether the
+// emitter called it a div, a section or a figure. A leaf with an id yields just
+// itself, which is the correct answer rather than an empty one.
 //
-// `id` IS NOT CANONICAL VOCABULARY -- measured: the duck_block vocabulary publishes seven
-// ATTR_ constants (role, key, heading_level, list_type, source_type, pandoc_ast, ordered)
-// and identity is not among them, though the spec's per-element attribute table does
-// describe id. A proposal to publish ATTR_ID is with duck_block_utils. Until it lands this
-// reads a key by literal, exactly as webbed writes it by literal, and the two agree by
-// convention rather than by contract. doc_section already carries the same exposure.
+// `id` IS NOT CANONICAL VOCABULARY -- measured: the duck_block vocabulary
+// publishes seven ATTR_ constants (role, key, heading_level, list_type,
+// source_type, pandoc_ast, ordered) and identity is not among them, though the
+// spec's per-element attribute table does describe id. A proposal to publish
+// ATTR_ID is with duck_block_utils. Until it lands this reads a key by literal,
+// exactly as webbed writes it by literal, and the two agree by convention
+// rather than by contract. doc_section already carries the same exposure.
 //
-// WHICH BLOCKS CARRY AN id DEPENDS ON THE INSTALLED webbed, not on panduck. Before
-// webbed#142/#143 only div, section/article and heading kept it, so <ul id="steps"> was
-// unaddressable; after, every block keeps it. This macro is correct either way and simply
-// finds more.
+// WHICH BLOCKS CARRY AN id DEPENDS ON THE INSTALLED webbed, not on panduck.
+// Before webbed#142/#143 only div, section/article and heading kept it, so <ul
+// id="steps"> was unaddressable; after, every block keeps it. This macro is
+// correct either way and simply finds more.
 const DefaultTableMacro DOC_CONTAINER_MACRO = {DEFAULT_SCHEMA,
                                                "doc_container",
                                                {"src", "id", nullptr},
@@ -1659,25 +1836,28 @@ ORDER BY b.element_order
 
 //! doc_section, with `match` selecting how `section` is compared to a heading.
 //!
-//! `match := 'exact'` (THE DEFAULT, unchanged) is `content = section OR id = section`.
-//! `match := 'contains'` is duckeye's -S predicate: `content ILIKE '%section%' ESCAPE '\\'
-//! OR id = section` -- the title as a case-insensitive substring, the id still whole.
+//! `match := 'exact'` (THE DEFAULT, unchanged) is `content = section OR id =
+//! section`. `match := 'contains'` is duckeye's -S predicate: `content ILIKE
+//! '%section%' ESCAPE '\\' OR id = section` -- the title as a case-insensitive
+//! substring, the id still whole.
 //!
-//! SUBSTRING IS OPT-IN RATHER THAN THE DEFAULT. ILIKE can only ever return MORE rows than
-//! the exact predicate, never fewer, so flipping the default would silently widen every
-//! existing verbatim-title lookup. duckeye offered "either a substring mode on doc_section
-//! or a sibling that takes a pattern"; a mode keeps ONE span implementation, which matters
-//! because the span arithmetic is the part both tools independently got right and is the
-//! part worth not duplicating.
+//! SUBSTRING IS OPT-IN RATHER THAN THE DEFAULT. ILIKE can only ever return MORE
+//! rows than the exact predicate, never fewer, so flipping the default would
+//! silently widen every existing verbatim-title lookup. duckeye offered "either
+//! a substring mode on doc_section or a sibling that takes a pattern"; a mode
+//! keeps ONE span implementation, which matters because the span arithmetic is
+//! the part both tools independently got right and is the part worth not
+//! duplicating.
 //!
-//! CONTAINS CHANGES THE CARDINALITY, which is the whole reason this body was rewritten
-//! rather than patched. Exact took the FIRST matching heading (LIMIT 1); a substring can
-//! match several, so there are now several spans, and a span CONTAINED by another must be
-//! dropped -- otherwise searching a word that appears in both a chapter and a subsection
-//! inside it prints the child twice. duckeye: "easy to miss until someone searches for a
-//! word that appears in two nested headings". Spans here are properly nested or disjoint
-//! (that is what bounding on heading level gives you), so dropping the contained ones
-//! leaves a disjoint set and no block can be emitted twice.
+//! CONTAINS CHANGES THE CARDINALITY, which is the whole reason this body was
+//! rewritten rather than patched. Exact took the FIRST matching heading (LIMIT
+//! 1); a substring can match several, so there are now several spans, and a
+//! span CONTAINED by another must be dropped -- otherwise searching a word that
+//! appears in both a chapter and a subsection inside it prints the child twice.
+//! duckeye: "easy to miss until someone searches for a word that appears in two
+//! nested headings". Spans here are properly nested or disjoint (that is what
+//! bounding on heading level gives you), so dropping the contained ones leaves
+//! a disjoint set and no block can be emitted twice.
 const DefaultTableMacro DOC_SECTION_MACRO = {
     DEFAULT_SCHEMA,
     "doc_section",
@@ -1820,19 +2000,24 @@ ORDER BY b.element_order
 
 //! doc_search_sections -- FIND THE SECTION BY ITS CONTENT, not by its heading.
 //!
-//! duckeye's -s. The difference from doc_section is the bound: a span here stops at the next
-//! heading of ANY level, where doc_section stops at the next heading of the same or higher
-//! level. That is what "innermost" means -- a match inside a subsection returns the
-//! subsection, not the chapter that contains it and all its siblings.
+//! duckeye's -s. The difference from doc_section is the bound: a span here
+//! stops at the next heading of ANY level, where doc_section stops at the next
+//! heading of the same or higher level. That is what "innermost" means -- a
+//! match inside a subsection returns the subsection, not the chapter that
+//! contains it and all its siblings.
 //!
-//! THE TWO CASES duckeye NAMED AS "both of which I got wrong before fixing them":
-//!   - content BEFORE the first heading is a section; otherwise a preamble belongs to no
+//! THE TWO CASES duckeye NAMED AS "both of which I got wrong before fixing
+//! them":
+//!   - content BEFORE the first heading is a section; otherwise a preamble
+//!   belongs to no
 //!     heading and is unreachable by any query.
-//!   - a document with NO headings at all is one section covering everything, so a matching
+//!   - a document with NO headings at all is one section covering everything,
+//!   so a matching
 //!     document returns its content rather than nothing.
-//! Both fall out of the running max() below instead of needing their own arms: a block
-//! before the first heading has no preceding heading, so its segment key is NULL, and in a
-//! document without headings every block takes that same NULL key.
+//! Both fall out of the running max() below instead of needing their own arms:
+//! a block before the first heading has no preceding heading, so its segment
+//! key is NULL, and in a document without headings every block takes that same
+//! NULL key.
 const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
     DEFAULT_SCHEMA,
     "doc_search_sections",
@@ -1976,21 +2161,22 @@ ORDER BY t.element_order
 //! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.
 //!
 //! SPLIT BECAUSE A MACRO BODY IS BOUND LAZILY, ON INVOCATION. This body names
-//! read_pdf_elements, which the `pdf` COMMUNITY EXTENSION provides -- not panduck. Without
-//! that extension the binder fails before any guard inside the body could run, and an
-//! external user (#25) following the README got
+//! read_pdf_elements, which the `pdf` COMMUNITY EXTENSION provides -- not
+//! panduck. Without that extension the binder fails before any guard inside the
+//! body could run, and an external user (#25) following the README got
 //!
-//!     Catalog Error: Table Function with name read_pdf_elements does not exist!
-//!     Did you mean "read_pdf_blocks"?
+//!     Catalog Error: Table Function with name read_pdf_elements does not
+//!     exist! Did you mean "read_pdf_blocks"?
 //!
-//! an error naming a function they never typed, suggesting the one they did. No CASE inside
-//! this body can prevent that: binding precedes evaluation.
+//! an error naming a function they never typed, suggesting the one they did. No
+//! CASE inside this body can prevent that: binding precedes evaluation.
 //!
-//! Because a macro is bound only when CALLED, a wrapper that decides NOT to call this one
-//! never binds it -- so the gate lives one level up, and this body is reached only once the
-//! extension is known to be present. That also keeps the pages regexes and the heading
-//! dense_rank exactly as they were rather than re-escaped into a query() string, which is
-//! the fragile way to have done this.
+//! Because a macro is bound only when CALLED, a wrapper that decides NOT to
+//! call this one never binds it -- so the gate lives one level up, and this
+//! body is reached only once the extension is known to be present. That also
+//! keeps the pages regexes and the heading dense_rank exactly as they were
+//! rather than re-escaped into a query() string, which is the fragile way to
+//! have done this.
 const DefaultTableMacro READ_PDF_BLOCKS_IMPL_MACRO = {DEFAULT_SCHEMA,
                                                       "panduck_pdf_blocks_impl",
                                                       {"src", nullptr},
@@ -2081,36 +2267,38 @@ FROM e LEFT JOIN lvl ON e.font_size = lvl.font_size
 ORDER BY e.ord
 )SQL"};
 
-const DefaultTableMacro READ_DOC_MACRO = {
-    DEFAULT_SCHEMA,
-    "read_panduck_doc",
-    {"src", nullptr},
-    // `attributes` IS THE FIRST OPTION INTENT to reach dispatch, and it exists here rather
-    // than only in panduck_read_arms_opt's own test for a reason: an option the dispatcher
-    // cannot be asked for is a feature that exists solely inside its own assertion. Its
-    // default is the 'default' sentinel, which renders to nothing -- so an unchanged call
-    // generates byte-identical SQL to what it generated before options existed, which is
-    // the property the plural and single-path string assertions pin.
-    {{"format", "'auto'"},
-     {"pages", "''"},
-     {"filename", "false"},
-     {"attributes", "'default'"},
-     // The escape hatch (Task 7): a caller who already knows a sibling reader's exact
-     // parameter name says so directly, rather than panduck growing a vocabulary entry --
-     // and a registry row -- per sibling option. `MAP {}` is empty by construction, which is
-     // what keeps an unchanged call byte-identical: panduck_render_params(MAP {}) renders ''
-     // without consulting anything.
-     {"reader_params", "MAP {}"},
-     // EXPANDING EMBEDDED FRAGMENTS IS OPT-IN, and the default is what keeps the reader's
-     // isolation intact. ipynb_reader.cpp holds a markdown cell raw on the argument that
-     // "one consistent behaviour beats two that vary by environment" -- a reader whose
-     // output depends on which extensions happen to be installed is worse than one that
-     // consistently defers. A parameter defaulting to false preserves exactly that: an
-     // unchanged call reads identically with or without the markdown extension present.
-     // Asking for expansion is asking for the dependency, knowingly.
-     {"expand_embedded", "false"},
-     {nullptr, nullptr}},
-    R"SQL(
+const DefaultTableMacro READ_DOC_MACRO = {DEFAULT_SCHEMA,
+                                          "read_panduck_doc",
+                                          {"src", nullptr},
+                                          // `attributes` IS THE FIRST OPTION INTENT to reach dispatch, and it exists
+                                          // here rather than only in panduck_read_arms_opt's own test for a reason:
+                                          // an option the dispatcher cannot be asked for is a feature that exists
+                                          // solely inside its own assertion. Its default is the 'default' sentinel,
+                                          // which renders to nothing -- so an unchanged call generates byte-identical
+                                          // SQL to what it generated before options existed, which is the property
+                                          // the plural and single-path string assertions pin.
+                                          {{"format", "'auto'"},
+                                           {"pages", "''"},
+                                           {"filename", "false"},
+                                           {"attributes", "'default'"},
+                                           // The escape hatch (Task 7): a caller who already knows a sibling reader's
+                                           // exact parameter name says so directly, rather than panduck growing a
+                                           // vocabulary entry -- and a registry row -- per sibling option. `MAP {}`
+                                           // is empty by construction, which is what keeps an unchanged call
+                                           // byte-identical: panduck_render_params(MAP {}) renders '' without
+                                           // consulting anything.
+                                           {"reader_params", "MAP {}"},
+                                           // EXPANDING EMBEDDED FRAGMENTS IS OPT-IN, and the default is what keeps
+                                           // the reader's isolation intact. ipynb_reader.cpp holds a markdown cell
+                                           // raw on the argument that "one consistent behaviour beats two that vary
+                                           // by environment" -- a reader whose output depends on which extensions
+                                           // happen to be installed is worse than one that consistently defers. A
+                                           // parameter defaulting to false preserves exactly that: an unchanged call
+                                           // reads identically with or without the markdown extension present. Asking
+                                           // for expansion is asking for the dependency, knowingly.
+                                           {"expand_embedded", "false"},
+                                           {nullptr, nullptr}},
+                                          R"SQL(
 SELECT * FROM query(panduck_wrap_expand(
     CASE
         -- NULL IS NOT A VALUE FOR A NAMED PARAMETER, and DuckDB CORE is the standard this
@@ -2552,18 +2740,20 @@ SELECT * FROM query(panduck_wrap_expand(
 )
 )SQL"};
 
-// read_panduck_table -- duckeye's --raw. DuckDB's replacement scan already reads csv,
-// parquet, json and xlsx from a bare path, so mostly this gets out of the way.
+// read_panduck_table -- duckeye's --raw. DuckDB's replacement scan already
+// reads csv, parquet, json and xlsx from a bare path, so mostly this gets out
+// of the way.
 //! read_pdf_blocks -- the public name, gating on the `pdf` extension FIRST.
 //!
-//! Answers in panduck's own words when the dependency is absent, in the same wording
-//! read_panduck_doc uses for the same condition, so the two cannot disagree about a missing
-//! extension. Issue #25.
+//! Answers in panduck's own words when the dependency is absent, in the same
+//! wording read_panduck_doc uses for the same condition, so the two cannot
+//! disagree about a missing extension. Issue #25.
 //!
-//! `pages` IS RENDERED WITHOUT panduck_quote, deliberately: that helper coalesces NULL to
-//! '', which would silently turn `pages := NULL` into the valid empty default and lose the
-//! named "pages must be N or N-M" refusal the impl raises. NULL is passed through as the
-//! literal NULL instead.
+//! `pages` IS RENDERED WITHOUT panduck_quote, deliberately: that helper
+//! coalesces NULL to
+//! '', which would silently turn `pages := NULL` into the valid empty default
+//! and lose the named "pages must be N or N-M" refusal the impl raises. NULL is
+//! passed through as the literal NULL instead.
 const DefaultTableMacro READ_PDF_BLOCKS_MACRO = {DEFAULT_SCHEMA,
                                                  "read_pdf_blocks",
                                                  {"src", nullptr},
@@ -2578,22 +2768,25 @@ SELECT * FROM query(
 )
 )SQL"};
 
-//! panduck_dependencies() -- which OTHER extensions panduck needs, and whether you have them.
+//! panduck_dependencies() -- which OTHER extensions panduck needs, and whether
+//! you have them.
 //!
-//! ISSUE #25 GENERALISED. A user hit a missing `pdf` and got a catalog error naming a
-//! function they never typed. Every entry point now answers that in panduck's own words, but
-//! a named error still only arrives AFTER you try something. This is the surface for asking
-//! BEFORE, and for asking in SQL rather than reading prose in a README.
+//! ISSUE #25 GENERALISED. A user hit a missing `pdf` and got a catalog error
+//! naming a function they never typed. Every entry point now answers that in
+//! panduck's own words, but a named error still only arrives AFTER you try
+//! something. This is the surface for asking BEFORE, and for asking in SQL
+//! rather than reading prose in a README.
 //!
-//! WHY PANDUCK NEEDS THIS MORE THAN ITS SIBLINGS: it gates on eight of them -- markdown,
-//! webbed, pdf, zim, toml, yaml, json, excel -- plus duck_block_utils for the doc_* family.
-//! The registry already knows every one of those, because dispatch reads `reader_ext` to
-//! decide what to load. So this is DERIVED from the same rows dispatch uses rather than a
-//! hand-kept list that can drift from what the code actually requires.
+//! WHY PANDUCK NEEDS THIS MORE THAN ITS SIBLINGS: it gates on eight of them --
+//! markdown, webbed, pdf, zim, toml, yaml, json, excel -- plus duck_block_utils
+//! for the doc_* family. The registry already knows every one of those, because
+//! dispatch reads `reader_ext` to decide what to load. So this is DERIVED from
+//! the same rows dispatch uses rather than a hand-kept list that can drift from
+//! what the code actually requires.
 //!
 //! `installed` and `loaded` come from duckdb_extensions() rather than from
-//! panduck_ensure_extension, deliberately: ensure_extension LOADS as a side effect, and a
-//! report that changes the thing it reports on is a bad report.
+//! panduck_ensure_extension, deliberately: ensure_extension LOADS as a side
+//! effect, and a report that changes the thing it reports on is a bad report.
 const DefaultTableMacro DEPENDENCIES_MACRO = {DEFAULT_SCHEMA,
                                               "panduck_dependencies",
                                               {nullptr},
@@ -2676,21 +2869,24 @@ SELECT * FROM query(
 const char DOC_KIND[] = "doc";
 const char TABLE_KIND[] = "table";
 
-// panduck_glob(pattern) -- expand a filesystem pattern to a sorted list of paths.
+// panduck_glob(pattern) -- expand a filesystem pattern to a sorted list of
+// paths.
 //
-// WHY THIS EXISTS IN C++ AT ALL, since one new primitive in a design that is otherwise
-// macro SQL deserves a reason. DuckDB's `glob` is a TABLE function, and dispatch cannot
-// consume a table function: a table function's arguments must be LITERALS, so
-// `LATERAL read_odt_blocks(g.file)` is refused ("does not support lateral join column
-// parameters") and `query((SELECT ... FROM glob(...)))` is refused ("Table function cannot
-// contain subqueries"). A SCALAR returning a list can be consumed by the scalar expression
-// that builds dispatch's SQL string. That is the entire reason.
+// WHY THIS EXISTS IN C++ AT ALL, since one new primitive in a design that is
+// otherwise macro SQL deserves a reason. DuckDB's `glob` is a TABLE function,
+// and dispatch cannot consume a table function: a table function's arguments
+// must be LITERALS, so `LATERAL read_odt_blocks(g.file)` is refused ("does not
+// support lateral join column parameters") and `query((SELECT ... FROM
+// glob(...)))` is refused ("Table function cannot contain subqueries"). A
+// SCALAR returning a list can be consumed by the scalar expression that builds
+// dispatch's SQL string. That is the entire reason.
 //
-// Sorted, because the UNION ALL built from this must be deterministic across runs and
-// platforms; the file system's enumeration order is not.
+// Sorted, because the UNION ALL built from this must be deterministic across
+// runs and platforms; the file system's enumeration order is not.
 //
-// Empty list rather than an error when nothing matches: the primitive stays neutral and
-// read_panduck_doc owns the policy, so the raise has exactly one site.
+// Empty list rather than an error when nothing matches: the primitive stays
+// neutral and read_panduck_doc owns the policy, so the raise has exactly one
+// site.
 void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	auto &fs = FileSystem::GetFileSystem(context);
@@ -2731,90 +2927,168 @@ void RequireReaderEnabled(ClientContext &context, const char *format) {
 }
 } // namespace readers
 
+static void RegisterScalarWithDesc(ExtensionLoader &loader, ScalarFunction fn, const vector<string> &params,
+                                   const string &desc_str, const vector<string> &examples) {
+	CreateScalarFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = params;
+	desc.description = desc_str;
+	desc.examples = examples;
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
+static void RegisterTableWithDesc(ExtensionLoader &loader, TableFunction fn, const vector<string> &params,
+                                  const string &desc_str, const vector<string> &examples) {
+	CreateTableFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = params;
+	desc.description = desc_str;
+	desc.examples = examples;
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
 void RegisterReaderRegistry(ExtensionLoader &loader) {
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun));
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_function_exists", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, FunctionExistsFun));
-	loader.RegisterFunction(ScalarFunction("panduck_glob", {LogicalType::VARCHAR},
-	                                       LogicalType::LIST(LogicalType::VARCHAR), PanduckGlobFun));
-	loader.RegisterFunction(ScalarFunction("panduck_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                                       RegistryFieldFun<Field::FORMAT>));
-	loader.RegisterFunction(ScalarFunction("panduck_reader_function_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                                       RegistryFieldFun<Field::FUNCTION>));
-	loader.RegisterFunction(ScalarFunction("panduck_reader_extension_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                                       RegistryFieldFun<Field::READER_EXT>));
-	loader.RegisterFunction(ScalarFunction("panduck_reader_kind_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                                       RegistryFieldFun<Field::KIND>));
-	// What panduck NATIVELY calls this extension, from the frozen map. Policy consults this
-	// FIRST so a re-registration cannot rename a source out of a denylist.
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_builtin_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR, BuiltinFormatFun));
-	// The registry KEY the source matched ('.odt', 'zim://'). Exposed so policy can name an
-	// entry that has no format -- see panduck_policy_format.
-	loader.RegisterFunction(ScalarFunction("panduck_registry_key_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                                       RegistryFieldFun<Field::EXT>));
-	loader.RegisterFunction(
-	    ScalarFunction("panduck_can_read", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, CanReadFun));
-	// SPECIAL_HANDLING, and it is load-bearing rather than a formality. Under DuckDB's
-	// default the executor short-circuits any row with a NULL argument to NULL without
-	// calling the function at all -- so panduck_read_arms, which delegates with a NULL
-	// intent because it is asking for nothing, rendered NULL, concatenated NULL through the
-	// whole arm, and array_to_string dropped it: every single-path read produced no SQL.
-	// This function defines its own NULL behaviour (a NULL VALUE means "nothing requested"
-	// and renders '') and has to be told it may see one.
+	RegisterScalarWithDesc(
+	    loader,
+	    ScalarFunction("panduck_ensure_extension", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, EnsureExtensionFun),
+	    {"ext_name"}, "Ensure that a required DuckDB extension is loaded.", {"panduck_ensure_extension('fts')"});
+
+	RegisterScalarWithDesc(
+	    loader,
+	    ScalarFunction("panduck_function_exists", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, FunctionExistsFun),
+	    {"function_name"}, "Check if a scalar or table function exists in the catalog.",
+	    {"panduck_function_exists('read_docx_blocks')"});
+
+	RegisterScalarWithDesc(
+	    loader,
+	    ScalarFunction("panduck_glob", {LogicalType::VARCHAR}, LogicalType::LIST(LogicalType::VARCHAR), PanduckGlobFun),
+	    {"pattern"}, "Glob files matching pattern.", {"panduck_glob('docs/*.docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                      RegistryFieldFun<Field::FORMAT>),
+	                       {"path_or_uri"}, "Return the document format name for a file path or URI.",
+	                       {"panduck_format_for('doc.docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_function_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                      RegistryFieldFun<Field::FUNCTION>),
+	                       {"path_or_uri"}, "Return the reader table function name that handles a file path or URI.",
+	                       {"panduck_reader_function_for('doc.docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_extension_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                      RegistryFieldFun<Field::READER_EXT>),
+	                       {"path_or_uri"}, "Return the required extension name to read a file path or URI.",
+	                       {"panduck_reader_extension_for('doc.docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_kind_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                      RegistryFieldFun<Field::KIND>),
+	                       {"path_or_uri"}, "Return the reader kind ('doc' or 'table') for a file path or URI.",
+	                       {"panduck_reader_kind_for('doc.docx')"});
+
+	// What panduck NATIVELY calls this extension, from the frozen map. Policy
+	// consults this FIRST so a re-registration cannot rename a source out of a
+	// denylist.
+	RegisterScalarWithDesc(
+	    loader,
+	    ScalarFunction("panduck_builtin_format_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR, BuiltinFormatFun),
+	    {"path_or_uri"}, "Return the native builtin format name for a file path or URI.",
+	    {"panduck_builtin_format_for('doc.docx')"});
+
+	// The registry KEY the source matched ('.odt', 'zim://'). Exposed so policy
+	// can name an entry that has no format -- see panduck_policy_format.
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_registry_key_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                                      RegistryFieldFun<Field::EXT>),
+	                       {"path_or_uri"}, "Return the registry match key for a file path or URI.",
+	                       {"panduck_registry_key_for('doc.docx')"});
+
+	RegisterScalarWithDesc(
+	    loader, ScalarFunction("panduck_can_read", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, CanReadFun),
+	    {"path_or_uri"}, "Check if panduck can read a given file path or URI.", {"panduck_can_read('doc.docx')"});
+
+	// SPECIAL_HANDLING, and it is load-bearing rather than a formality. Under
+	// DuckDB's default the executor short-circuits any row with a NULL argument
+	// to NULL without calling the function at all -- so panduck_read_arms, which
+	// delegates with a NULL intent because it is asking for nothing, rendered
+	// NULL, concatenated NULL through the whole arm, and array_to_string dropped
+	// it: every single-path read produced no SQL. This function defines its own
+	// NULL behaviour (a NULL VALUE means "nothing requested" and renders '') and
+	// has to be told it may see one.
 	ScalarFunction option_for("panduck_reader_option_for",
 	                          {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	                          ReaderOptionForFun);
-	// THROUGH THE COMPAT SHIM, whose own comment says to call it rather than either
-	// spelling. Written as a direct member assignment, this compiled against the v1.5.5
-	// pin and BROKE THE v2.0 CANARY -- v2.0 moved null_handling behind SetNullHandling()
-	// as part of encapsulating function properties:
+	// THROUGH THE COMPAT SHIM, whose own comment says to call it rather than
+	// either spelling. Written as a direct member assignment, this compiled
+	// against the v1.5.5 pin and BROKE THE v2.0 CANARY -- v2.0 moved
+	// null_handling behind SetNullHandling() as part of encapsulating function
+	// properties:
 	//
-	//     error: 'class duckdb::ScalarFunction' has no member named 'null_handling'
+	//     error: 'class duckdb::ScalarFunction' has no member named
+	//     'null_handling'
 	//
-	// The canary is advisory and only runs on push to main and dispatch, so it reported
-	// this hours after the merge -- and community-extensions builds every release PR
-	// against v2.0 with no per-extension opt-out, so it would have been red there too.
+	// The canary is advisory and only runs on push to main and dispatch, so it
+	// reported this hours after the merge -- and community-extensions builds
+	// every release PR against v2.0 with no per-extension opt-out, so it would
+	// have been red there too.
 	panduck::SetNullHandling(option_for, FunctionNullHandling::SPECIAL_HANDLING);
-	loader.RegisterFunction(option_for);
-	loader.RegisterFunction(ScalarFunction("panduck_render_params",
-	                                       {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)},
-	                                       LogicalType::VARCHAR, RenderParamsFun));
+	RegisterScalarWithDesc(loader, option_for, {"format", "option_name", "intent"},
+	                       "Look up a reader configuration option for a given format.",
+	                       {"panduck_reader_option_for('docx', 'toc', NULL)"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_render_params",
+	                                      {LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)},
+	                                      LogicalType::VARCHAR, RenderParamsFun),
+	                       {"params_map"}, "Render named parameters map into SQL argument string.",
+	                       {"panduck_render_params(MAP {'opt': 'val'})"});
 
 	TableFunction registry("panduck_reader_registry", {}, RegistryScan, RegistryBind, RegistryGlobalState::Init);
-	loader.RegisterFunction(registry);
+	RegisterTableWithDesc(loader, registry, {}, "Return the table of all registered format readers and handlers.",
+	                      {"SELECT * FROM panduck_reader_registry()"});
 
 	auto list_of_varchar = LogicalType::LIST(LogicalType::VARCHAR);
-	// The option row's shape is DECLARED here, so DuckDB casts whatever the caller wrote to
-	// it before RegisterBind sees it.
+	// The option row's shape is DECLARED here, so DuckDB casts whatever the
+	// caller wrote to it before RegisterBind sees it.
 	//
-	// WHAT THAT CAST ACTUALLY DOES, measured rather than assumed -- an earlier version of
-	// this comment claimed a missing or misspelled field became "a bind error naming the
-	// field", and that is FALSE. DuckDB casts a struct BY NAME: fields written in any order
-	// land correctly ({arg_type, arg, param, value, intent} registers fine), and a field
-	// that is absent or misspelled is filled with NULL rather than refused. So a misspelled
-	// `parm:` reaches RegisterBind as param = NULL. It is caught there -- every field is
-	// required and NULL is refused -- but the cast is not what catches it, and a comment
-	// that misdescribes a security check is worse than none, because the next person trusts
-	// it instead of testing it.
+	// WHAT THAT CAST ACTUALLY DOES, measured rather than assumed -- an earlier
+	// version of this comment claimed a missing or misspelled field became "a
+	// bind error naming the field", and that is FALSE. DuckDB casts a struct BY
+	// NAME: fields written in any order land correctly ({arg_type, arg, param,
+	// value, intent} registers fine), and a field that is absent or misspelled is
+	// filled with NULL rather than refused. So a misspelled `parm:` reaches
+	// RegisterBind as param = NULL. It is caught there -- every field is required
+	// and NULL is refused -- but the cast is not what catches it, and a comment
+	// that misdescribes a security check is worse than none, because the next
+	// person trusts it instead of testing it.
 	//
-	// The by-name read in RegisterBind is therefore belt-and-braces rather than the thing
-	// standing between a reordered declaration and a mis-assigned `param`; both hold today.
+	// The by-name read in RegisterBind is therefore belt-and-braces rather than
+	// the thing standing between a reordered declaration and a mis-assigned
+	// `param`; both hold today.
 	auto option_list = LogicalType::LIST(LogicalType::STRUCT({{"intent", LogicalType::VARCHAR},
 	                                                          {"value", LogicalType::VARCHAR},
 	                                                          {"param", LogicalType::VARCHAR},
 	                                                          {"arg", LogicalType::VARCHAR},
 	                                                          {"arg_type", LogicalType::VARCHAR}}));
-	// POLICY SETTINGS, registered before the functions they gate. Defaults preserve today's
-	// behaviour exactly -- see the note on readers::SETTING_ALLOW_REGISTRATION.
+	// POLICY SETTINGS, registered before the functions they gate. Defaults
+	// preserve today's behaviour exactly -- see the note on
+	// readers::SETTING_ALLOW_REGISTRATION.
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 	config.AddExtensionOption(readers::SETTING_ALLOW_REGISTRATION,
 	                          "Allow panduck_register_doc_reader/panduck_register_table_reader to add "
 	                          "readers at runtime",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption(readers::SETTING_ENABLED_READERS,
-	                          "Comma-separated allowlist of reader FORMATS ('*' for all). Applied before "
+	                          "Comma-separated allowlist of reader FORMATS ('*' "
+	                          "for all). Applied before "
 	                          "panduck_disabled_readers",
 	                          LogicalType::VARCHAR, Value("*"));
 	config.AddExtensionOption(readers::SETTING_DISABLED_READERS,
@@ -2822,13 +3096,19 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                          "panduck_enabled_readers. 'code' turns off the fallback that returns a "
 	                          "parse tree for sources no reader claimed",
 	                          LogicalType::VARCHAR, Value(""));
-	loader.RegisterFunction(ScalarFunction("panduck_reader_enabled", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
-	                                       readers::ReaderEnabledFun));
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_enabled", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
+	                                      readers::ReaderEnabledFun),
+	                       {"format"}, "Check if the reader for a specified format is currently enabled.",
+	                       {"panduck_reader_enabled('docx')"});
 
 	TableFunction reg_doc("panduck_register_doc_reader", {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar},
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
 	reg_doc.named_parameters["options"] = option_list;
-	loader.RegisterFunction(reg_doc);
+	RegisterTableWithDesc(loader, reg_doc, {"format", "function_name", "extensions"},
+	                      "Register a custom document block reader for a file format or extension.",
+	                      {"SELECT * FROM panduck_register_doc_reader('custom', 'read_custom', "
+	                       "['.custom'])"});
 
 	for (auto *tm :
 	     {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
@@ -2837,7 +3117,8 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 		loader.RegisterFunction(*info);
 	}
 	for (idx_t i = 0; SCALAR_MACROS[i].name != nullptr; i++) {
-		// `definition` must outlive the call: on v2.0 the built DefaultMacro points into it.
+		// `definition` must outlive the call: on v2.0 the built DefaultMacro points
+		// into it.
 		std::string definition;
 		auto macro = panduck::MakeDefaultMacro(SCALAR_MACROS[i], definition);
 		auto info = DefaultFunctionGenerator::CreateInternalMacroInfo(macro);
@@ -2848,7 +3129,10 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar}, RegisterScan,
 	                      RegisterBind<TABLE_KIND>, RegisterGlobalState::Init);
 	reg_tbl.named_parameters["options"] = option_list;
-	loader.RegisterFunction(reg_tbl);
+	RegisterTableWithDesc(loader, reg_tbl, {"format", "function_name", "extensions"},
+	                      "Register a custom table reader for a file format or extension.",
+	                      {"SELECT * FROM panduck_register_table_reader('custom', "
+	                       "'read_custom_tbl', ['.custom'])"});
 }
 
 } // namespace duckdb

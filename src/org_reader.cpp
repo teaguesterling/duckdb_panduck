@@ -1,6 +1,6 @@
 #include "org_reader.hpp"
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -8,6 +8,7 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -19,11 +20,13 @@ namespace {
 
 //! Org's inline markers, each mapping to a duck_block inline type.
 //!
-//! `=code=` and `~verbatim~` BOTH become `code`. Pandoc distinguishes them by a class --
-//! `=code=` carries ["verbatim"] and `~verbatim~` carries none, the opposite way round
-//! from the names -- and duck_block's `code` inline has no class field. Collapsing them is
-//! deliberate and declared; the surprising direction is recorded because it is exactly
-//! what a later reader would "correct" the wrong way.
+//! `=code=` and `~verbatim~` BOTH become `code`. Pandoc distinguishes them by a
+//! class --
+//! `=code=` carries ["verbatim"] and `~verbatim~` carries none, the opposite
+//! way round from the names -- and duck_block's `code` inline has no class
+//! field. Collapsing them is deliberate and declared; the surprising direction
+//! is recorded because it is exactly what a later reader would "correct" the
+//! wrong way.
 struct InlineMarker {
 	char open;
 	const char *element_type;
@@ -43,9 +46,10 @@ const char *MarkerType(char c) {
 	return nullptr;
 }
 
-//! A marker only opens when it is at a word boundary and its content is non-empty. Without
-//! that, `a * b` and `2 + 2` become emphasis, and arithmetic in a paragraph turns into
-//! markup -- the most common false positive in every lightweight markup reader.
+//! A marker only opens when it is at a word boundary and its content is
+//! non-empty. Without that, `a * b` and `2 + 2` become emphasis, and arithmetic
+//! in a paragraph turns into markup -- the most common false positive in every
+//! lightweight markup reader.
 bool OpensHere(const std::string &s, size_t i) {
 	if (i > 0 && !isspace(static_cast<unsigned char>(s[i - 1])) && s[i - 1] != '(' && s[i - 1] != '[') {
 		return false;
@@ -64,15 +68,16 @@ void PushText(std::vector<OrgInline> &out, const std::string &text, int level) {
 	out.push_back(std::move(run));
 }
 
-//! Split a line's text into inline runs. A FLAT scan: Org's emphasis markers do not nest
-//! in practice and pandoc does not nest them either, so a stack would model something the
-//! format does not have.
+//! Split a line's text into inline runs. A FLAT scan: Org's emphasis markers do
+//! not nest in practice and pandoc does not nest them either, so a stack would
+//! model something the format does not have.
 void ParseInlines(const std::string &s, int level, std::vector<OrgInline> &out) {
 	std::string plain;
 	size_t i = 0;
 	while (i < s.size()) {
-		// `[[url][label]]` and `[[url]]` -- checked first, because a link's target can
-		// contain any of the emphasis characters and must not be scanned for them.
+		// `[[url][label]]` and `[[url]]` -- checked first, because a link's target
+		// can contain any of the emphasis characters and must not be scanned for
+		// them.
 		if (s.compare(i, 2, "[[") == 0) {
 			auto close = s.find("]]", i + 2);
 			if (close != std::string::npos) {
@@ -93,8 +98,8 @@ void ParseInlines(const std::string &s, int level, std::vector<OrgInline> &out) 
 		const char *type = MarkerType(s[i]);
 		if (type && OpensHere(s, i)) {
 			auto close = s.find(s[i], i + 1);
-			// A closing marker must not be preceded by a space, or `* a *` in prose would
-			// close a run the author never opened.
+			// A closing marker must not be preceded by a space, or `* a *` in prose
+			// would close a run the author never opened.
 			while (close != std::string::npos && close > i + 1 && isspace(static_cast<unsigned char>(s[close - 1]))) {
 				close = s.find(s[i], close + 1);
 			}
@@ -182,14 +187,15 @@ public:
 				Item(line);
 				continue;
 			case LineKind::TEXT:
-				// A text line inside an open list CONTINUES its item rather than starting a
-				// paragraph -- that is what an indented continuation line means in Org.
+				// A text line inside an open list CONTINUES its item rather than
+				// starting a paragraph -- that is what an indented continuation line
+				// means in Org.
 				para_.push_back(line.text);
 				continue;
 			case LineKind::DRAWER_BEGIN: {
-				// Skip to :END:. An UNTERMINATED drawer stops at the next blank line rather
-				// than eating the rest of the document -- the same runaway the LaTeX
-				// reader's tabular walker had, avoided here by bounding the scan.
+				// Skip to :END:. An UNTERMINATED drawer stops at the next blank line
+				// rather than eating the rest of the document -- the same runaway the
+				// LaTeX reader's tabular walker had, avoided here by bounding the scan.
 				size_t j = i + 1;
 				while (j < lines.size() && lines[j].kind != LineKind::DRAWER_END && lines[j].kind != LineKind::BLANK) {
 					j++;
@@ -211,7 +217,8 @@ public:
 private:
 	std::vector<OrgBlock> blocks_;
 	std::vector<std::string> para_;
-	//! Open lists, innermost last: {source indent, structural level of the list block}.
+	//! Open lists, innermost last: {source indent, structural level of the list
+	//! block}.
 	std::vector<std::pair<int, int>> lists_;
 	std::map<std::string, std::string> meta_;
 
@@ -232,8 +239,9 @@ private:
 		}
 		std::string text;
 		for (size_t i = 0; i < para_.size(); i++) {
-			// A SOFT LINE BREAK IS A WORD BOUNDARY. Org wraps prose freely and the newline
-			// carries no meaning, so joining with a space is what the document says.
+			// A SOFT LINE BREAK IS A WORD BOUNDARY. Org wraps prose freely and the
+			// newline carries no meaning, so joining with a space is what the
+			// document says.
 			text += (i ? " " : "") + para_[i];
 		}
 		para_.clear();
@@ -241,8 +249,8 @@ private:
 			Emit(DuckBlockTypes::TYPE_PARAGRAPH, text, Depth());
 			return;
 		}
-		// Inside a list, a continuation line belongs to the item that is already open, so
-		// it is appended there rather than becoming a sibling paragraph.
+		// Inside a list, a continuation line belongs to the item that is already
+		// open, so it is appended there rather than becoming a sibling paragraph.
 		auto &item = blocks_.back();
 		if (item.element_type == DuckBlockTypes::TYPE_LIST_ITEM && item.inlines.empty() && item.content.empty()) {
 			item.content = text;
@@ -251,9 +259,9 @@ private:
 		Emit(DuckBlockTypes::TYPE_PARAGRAPH, text, Depth());
 	}
 
-	//! Emit a block whose text may carry inline markup. A run with no markup becomes the
-	//! block's `content` -- duck_block's rule since v1 -- and anything richer becomes
-	//! inline children.
+	//! Emit a block whose text may carry inline markup. A run with no markup
+	//! becomes the block's `content` -- duck_block's rule since v1 -- and
+	//! anything richer becomes inline children.
 	void Emit(const char *type, const std::string &text, int level, const char *role = nullptr) {
 		OrgBlock b;
 		b.element_type = type;
@@ -285,14 +293,14 @@ private:
 			// inline children beside it (duck_block ruling d003d32).
 			//
 			// Flattening alone loses formatting irreversibly -- `**Bold** title` and
-			// `Bold title` become byte-identical, so a round trip rewrites the first as
-			// the second. Children alone break every consumer that reads a title from
-			// `content`, which doc_toc does.
+			// `Bold title` become byte-identical, so a round trip rewrites the first
+			// as the second. Children alone break every consumer that reads a title
+			// from `content`, which doc_toc does.
 			//
-			// The structure marks itself and needs no new vocabulary: a lone text child
-			// lives in `content` and produces NO children, so children alongside
-			// non-empty content can only mean the content is a DERIVED flattening.
-			// CHILDREN ARE AUTHORITATIVE when both are present.
+			// The structure marks itself and needs no new vocabulary: a lone text
+			// child lives in `content` and produces NO children, so children
+			// alongside non-empty content can only mean the content is a DERIVED
+			// flattening. CHILDREN ARE AUTHORITATIVE when both are present.
 			std::string all;
 			for (auto &r : runs) {
 				all += r.content;
@@ -320,8 +328,8 @@ private:
 			list.list_type = want;
 			list.level = Depth();
 			if (line.ordered) {
-				// ALWAYS emitted, including at their defaults, matching the stricter of the
-				// two upstream producers so there is one shape rather than two.
+				// ALWAYS emitted, including at their defaults, matching the stricter of
+				// the two upstream producers so there is one shape rather than two.
 				list.list_start = std::to_string(line.start);
 				list.number_style = "Decimal";
 				list.number_delim = "Period";
@@ -332,8 +340,9 @@ private:
 		}
 		const int item_level = lists_.back().second + 1;
 		if (line.definition) {
-			// ONE ITEM PRODUCES TWO ROWS, as in the EPUB and LaTeX readers: `- term :: def`
-			// is a term and a definition, and the term is the half carrying the meaning.
+			// ONE ITEM PRODUCES TWO ROWS, as in the EPUB and LaTeX readers: `- term
+			// :: def` is a term and a definition, and the term is the half carrying
+			// the meaning.
 			Emit(DuckBlockTypes::TYPE_LIST_ITEM, line.term, item_level, DuckBlockTypes::ROLE_TERM);
 			Emit(DuckBlockTypes::TYPE_LIST_ITEM, line.text, item_level, DuckBlockTypes::ROLE_DEFINITION);
 			return;
@@ -350,8 +359,9 @@ private:
 			if (lines[j].kind == LineKind::BLOCK_END && lines[j].key == name) {
 				break;
 			}
-			// The body is taken VERBATIM -- a source block's indentation and blank lines are
-			// its content, so the scanner's classification of those lines is ignored here.
+			// The body is taken VERBATIM -- a source block's indentation and blank
+			// lines are its content, so the scanner's classification of those lines
+			// is ignored here.
 			body += (body.empty() ? "" : "\n") + lines[j].text;
 		}
 		i = j; // the END line, or the last line for an unterminated block
@@ -368,9 +378,9 @@ private:
 		b.content = body;
 		b.level = Depth();
 		if (name == "SRC" && !arg.empty()) {
-			// `#+BEGIN_EXAMPLE` gets NO language: pandoc gives it the class "example", which
-			// is not a language, and recording it as one would make a consumer highlight
-			// text as a dialect that does not exist.
+			// `#+BEGIN_EXAMPLE` gets NO language: pandoc gives it the class
+			// "example", which is not a language, and recording it as one would make
+			// a consumer highlight text as a dialect that does not exist.
 			auto sp = arg.find_first_of(" \t");
 			b.language = sp == std::string::npos ? arg : arg.substr(0, sp);
 		}
@@ -400,9 +410,10 @@ private:
 		}
 		std::vector<std::string> headers;
 		size_t first = 0;
-		// A RULE AFTER THE FIRST ROW PROMOTES IT. Measured against pandoc for Org rather
-		// than carried over from the LaTeX reader -- the formats are unrelated and pandoc's
-		// readers share no logic. They agree, but as a measurement.
+		// A RULE AFTER THE FIRST ROW PROMOTES IT. Measured against pandoc for Org
+		// rather than carried over from the LaTeX reader -- the formats are
+		// unrelated and pandoc's readers share no logic. They agree, but as a
+		// measurement.
 		if (rows.size() > 1 && ruled[0]) {
 			headers = rows[0];
 			first = 1;
@@ -420,27 +431,31 @@ private:
 		if (line.key != "TITLE" && line.key != "AUTHOR" && line.key != "DATE") {
 			// EVERY OTHER #+KEY: IS HELD RAW, not dropped.
 			//
-			// This returned early -- "every other #+KEY: is an option, not document metadata"
-			// -- which is true and was the wrong conclusion. Not being metadata does not make
-			// it not content. MEASURED: pandoc emits RawBlock ["org", "#+notarealkeyword: X"]
-			// for an unrecognised keyword, so it occupies a block position, and panduck was
-			// silently discarding #+CAPTION:, #+ATTR_HTML: and every custom keyword a
-			// document carries.
+			// This returned early -- "every other #+KEY: is an option, not document
+			// metadata"
+			// -- which is true and was the wrong conclusion. Not being metadata does
+			// not make it not content. MEASURED: pandoc emits RawBlock ["org",
+			// "#+notarealkeyword: X"] for an unrecognised keyword, so it occupies a
+			// block position, and panduck was silently discarding #+CAPTION:,
+			// #+ATTR_HTML: and every custom keyword a document carries.
 			//
-			// Found by duck_block_utils, who tested a claim I made about org keywords never
-			// being in the block flow. The claim was wrong and this was hiding behind it.
+			// Found by duck_block_utils, who tested a claim I made about org keywords
+			// never being in the block flow. The claim was wrong and this was hiding
+			// behind it.
 			OrgBlock b;
 			b.element_type = DuckBlockTypes::TYPE_RAW;
 			b.level = 1;
-			// VERBATIM, not reconstructed: the scanner upper-cases `key`, and a `raw` block
-			// rebuilt from it would report #+NOTAREALKEYWORD for a source that wrote
+			// VERBATIM, not reconstructed: the scanner upper-cases `key`, and a `raw`
+			// block rebuilt from it would report #+NOTAREALKEYWORD for a source that
+			// wrote
 			// #+notarealkeyword.
 			b.content = line.raw.empty() ? "#+" + line.key + ": " + line.text : line.raw;
-			// THE FORMAT NAME IS AN ATTRIBUTE, NOT AN `encoding`. duck_block validates
-			// encoding against a closed set -- text, json, yaml, html, xml, latex, markdown,
-			// toml -- with no `org` in it, so encoding='org' is not conformant. The converter
-			// already reads attributes['format'] to build RawBlock [<format>, ...], which is
-			// the same lesson the mediawiki reader learned.
+			// THE FORMAT NAME IS AN ATTRIBUTE, NOT AN `encoding`. duck_block
+			// validates encoding against a closed set -- text, json, yaml, html, xml,
+			// latex, markdown, toml -- with no `org` in it, so encoding='org' is not
+			// conformant. The converter already reads attributes['format'] to build
+			// RawBlock [<format>, ...], which is the same lesson the mediawiki reader
+			// learned.
 			b.attributes["format"] = "org";
 			blocks_.push_back(std::move(b));
 			return;
@@ -451,16 +466,18 @@ private:
 			meta_[key] = line.text;
 			return;
 		}
-		// REPEATED #+AUTHOR: CONCATENATES into ONE value -- measured. LaTeX's \author yields
-		// a MetaList for the same logical field, so this reader cannot generalise from that
-		// one. Joined with a space here; pandoc uses a SoftBreak node, which duck_block has
-		// as an inline type but which a single flattened value cannot carry.
+		// REPEATED #+AUTHOR: CONCATENATES into ONE value -- measured. LaTeX's
+		// \author yields a MetaList for the same logical field, so this reader
+		// cannot generalise from that one. Joined with a space here; pandoc uses a
+		// SoftBreak node, which duck_block has as an inline type but which a single
+		// flattened value cannot carry.
 		it->second += " " + line.text;
 	}
 
 	void EmitMetadata() {
-		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract. std::map
-		// iterates sorted, which is also pandoc's Meta serialisation order.
+		// AFTER the blocks -- spec 6.2 makes body-then-metadata a contract.
+		// std::map iterates sorted, which is also pandoc's Meta serialisation
+		// order.
 		for (auto &kv : meta_) {
 			OrgBlock b;
 			b.kind = DuckBlockTypes::KIND_VALUE;
@@ -543,9 +560,9 @@ void BuildRows(const std::string &src, std::vector<OrgRow> &rows) {
 			row.attributes["language"] = block.language;
 		}
 		if (!block.list_type.empty()) {
-			// BOTH SPELLINGS, as every other panduck reader emits: `ordered` is the v1 name
-			// and `list_type` the later alias, and a consumer written against either reads
-			// this output.
+			// BOTH SPELLINGS, as every other panduck reader emits: `ordered` is the
+			// v1 name and `list_type` the later alias, and a consumer written against
+			// either reads this output.
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
@@ -620,14 +637,35 @@ void OrgScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterOrgReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_org_blocks", {LogicalType::VARCHAR}, OrgScan, OrgFileBind, OrgGlobalState::Init);
-	loader.RegisterFunction(file_fn);
+	{
+		TableFunction file_fn("read_org_blocks", {LogicalType::VARCHAR}, OrgScan, OrgFileBind, OrgGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(file_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"file_path"};
+		desc.description = "Read an Emacs Org-mode document and return structured "
+		                   "document blocks.";
+		desc.examples = {"SELECT * FROM read_org_blocks('document.org')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
-	// The string form, as the LaTeX reader has: asserting a two-line snippet is how the
-	// nesting and inline rules stay readable in the tests.
-	TableFunction string_fn("read_org_blocks_string", {LogicalType::VARCHAR}, OrgScan, OrgStringBind,
-	                        OrgGlobalState::Init);
-	loader.RegisterFunction(string_fn);
+	// The string form, as the LaTeX reader has: asserting a two-line snippet is
+	// how the nesting and inline rules stay readable in the tests.
+	{
+		TableFunction string_fn("read_org_blocks_string", {LogicalType::VARCHAR}, OrgScan, OrgStringBind,
+		                        OrgGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(string_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"org_text"};
+		desc.description = "Parse an Emacs Org-mode string and return structured document blocks.";
+		desc.examples = {"SELECT * FROM read_org_blocks_string('* Heading\\nParagraph')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace org

@@ -4,18 +4,20 @@
 #include "panduck_duckdb_compat.hpp"
 #include "duckdb/common/types/value.hpp"
 
-// Ported verbatim from duck_block_utils v3.1.0 (6c1c2e5) src/repair.cpp, with two changes
-// and no others: BlockTypes:: -> DuckBlockTypes:: for panduck's class name, and the public
-// duck_blocks_repair registration omitted (see the header for why). Keeping the passes
-// byte-comparable to upstream is the point -- check-divergence compares the two copies.
+// Ported verbatim from duck_block_utils v3.1.0 (6c1c2e5) src/repair.cpp, with
+// two changes and no others: BlockTypes:: -> DuckBlockTypes:: for panduck's
+// class name, and the public duck_blocks_repair registration omitted (see the
+// header for why). Keeping the passes byte-comparable to upstream is the point
+// -- check-divergence compares the two copies.
 
 namespace duckdb {
 namespace panduck {
 
 namespace {
 
-// A working copy of one element: the fields the passes read and rewrite, plus the
-// original Value, from which every OTHER field is carried verbatim on output.
+// A working copy of one element: the fields the passes read and rewrite, plus
+// the original Value, from which every OTHER field is carried verbatim on
+// output.
 struct El {
 	string kind;
 	string type;
@@ -33,7 +35,8 @@ int32_t IntField(const Value &v, idx_t idx, int32_t def) {
 	return (idx < c.size() && !c[idx].IsNull()) ? c[idx].GetValue<int32_t>() : def;
 }
 
-// Rebuild a duck_block Value with a new level and order, every other field verbatim.
+// Rebuild a duck_block Value with a new level and order, every other field
+// verbatim.
 Value WithLevelAndOrder(const Value &v, int32_t level, int32_t order) {
 	auto &c = StructValue::GetChildren(v);
 	child_list_t<Value> out;
@@ -47,8 +50,8 @@ Value WithLevelAndOrder(const Value &v, int32_t level, int32_t order) {
 	return Value::STRUCT(std::move(out));
 }
 
-// The wrapper an orphan run gets. A `list` says which kind of list it is, because
-// list_type is the canonical attribute and a consumer reads it.
+// The wrapper an orphan run gets. A `list` says which kind of list it is,
+// because list_type is the canonical attribute and a consumer reads it.
 Value Wrapper(const string &type, int32_t level) {
 	vector<Value> keys, vals;
 	if (type == DuckBlockTypes::TYPE_LIST) {
@@ -96,11 +99,12 @@ bool Satisfied(const El &e, const vector<Frame> &stack) {
 	return false;
 }
 
-// Pass 1 (L4, L5): wrap each maximal run of orphans that share an implicit parent.
-// A run starts at an element lacking its required ancestor and continues through
-// consecutive elements that are either the same kind of orphan at the same level or
-// deeper than it (its descendants). The wrapper goes at level-1; if that would be 0
-// the whole run shifts down by one instead, so nothing sits at level 0.
+// Pass 1 (L4, L5): wrap each maximal run of orphans that share an implicit
+// parent. A run starts at an element lacking its required ancestor and
+// continues through consecutive elements that are either the same kind of
+// orphan at the same level or deeper than it (its descendants). The wrapper
+// goes at level-1; if that would be 0 the whole run shifts down by one instead,
+// so nothing sits at level 0.
 void WrapOrphans(vector<El> &els) {
 	vector<El> out;
 	vector<Frame> stack;
@@ -167,8 +171,8 @@ void Rebase(vector<El> &els) {
 	}
 }
 
-// Pass 3 (L3): a jump from p to l > p+1 pulls the jumped element and everything at or
-// below its depth, until something shallower than l, up by the excess.
+// Pass 3 (L3): a jump from p to l > p+1 pulls the jumped element and everything
+// at or below its depth, until something shallower than l, up by the excess.
 void CollapseJumps(vector<El> &els) {
 	int32_t prev = 0;
 	for (idx_t i = 0; i < els.size(); i++) {

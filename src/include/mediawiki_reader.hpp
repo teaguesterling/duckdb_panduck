@@ -12,8 +12,9 @@ class ExtensionLoader;
 
 namespace mediawiki {
 
-//! An inline run. `level` is absolute: a run directly inside a block sits at that block's
-//! level + 1, and a run nested inside another (bold wrapping italic) one deeper again.
+//! An inline run. `level` is absolute: a run directly inside a block sits at
+//! that block's level + 1, and a run nested inside another (bold wrapping
+//! italic) one deeper again.
 struct MwInline {
 	std::string element_type; //!< text, bold, italic, code, link, note, raw
 	std::string content;
@@ -33,8 +34,9 @@ struct MwBlock {
 	std::vector<MwInline> inlines;
 };
 
-//! Parse MediaWiki source into blocks. Never throws: malformed input degrades, because
-//! wikitext has no error state -- MediaWiki renders whatever it can and so does this.
+//! Parse MediaWiki source into blocks. Never throws: malformed input degrades,
+//! because wikitext has no error state -- MediaWiki renders whatever it can and
+//! so does this.
 std::vector<MwBlock> ParseMediaWikiString(const std::string &src);
 
 void RegisterMediaWikiReader(ExtensionLoader &loader);

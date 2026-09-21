@@ -1,8 +1,8 @@
 #include "rst_reader.hpp"
 
-#include <algorithm>
-#include "reader_registry.hpp"
 #include "panduck_duckdb_compat.hpp"
+#include "reader_registry.hpp"
+#include <algorithm>
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
@@ -10,6 +10,7 @@
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
 #include <fstream>
 #include <map>
@@ -29,9 +30,9 @@ void PushText(std::vector<RstInline> &out, const std::string &text, int level) {
 	out.push_back(std::move(run));
 }
 
-//! Split text into inline runs. `**strong**` is tested BEFORE `*emph*`: the shorter marker
-//! is a prefix of the longer one, so checking emphasis first turns every bold run into an
-//! empty italic followed by stray asterisks.
+//! Split text into inline runs. `**strong**` is tested BEFORE `*emph*`: the
+//! shorter marker is a prefix of the longer one, so checking emphasis first
+//! turns every bold run into an empty italic followed by stray asterisks.
 void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) {
 	std::string plain;
 	size_t i = 0;
@@ -74,8 +75,8 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 			}
 		}
 		if (s[i] == '`') {
-			// `text <url>`_ -- the trailing underscore is what makes it a link rather than
-			// interpreted text, so it is required here.
+			// `text <url>`_ -- the trailing underscore is what makes it a link rather
+			// than interpreted text, so it is required here.
 			auto close = s.find("`_", i + 1);
 			if (close != std::string::npos) {
 				auto body = s.substr(i + 1, close - i - 1);
@@ -87,7 +88,8 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 				}
 				emit(DuckBlockTypes::INLINE_LINK, text, href);
 				i = close + 2;
-				// A named reference may be spelled with two underscores; consume the second.
+				// A named reference may be spelled with two underscores; consume the
+				// second.
 				if (i < s.size() && s[i] == '_') {
 					i++;
 				}
@@ -102,19 +104,20 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 
 //! A table cell's text with its inline markup RESOLVED, not carried literally.
 //!
-//! `**a**` is a cell containing `a`, not a cell containing four asterisks. panduck's own
-//! sibling already answers this: webbed reads `<td><b>a</b></td>` as `"a"`. So this is not a
-//! vocabulary question needing a ruling -- there is a worked answer in the fleet, and .rst
-//! was the reader diverging from it.
+//! `**a**` is a cell containing `a`, not a cell containing four asterisks.
+//! panduck's own sibling already answers this: webbed reads `<td><b>a</b></td>`
+//! as `"a"`. So this is not a vocabulary question needing a ruling -- there is
+//! a worked answer in the fleet, and .rst was the reader diverging from it.
 //!
-//! REUSES ParseInlines RATHER THAN STRIPPING CHARACTERS. The resolver already exists and is
-//! used for paragraph text; it simply was never reached on the cell path. Deleting `*` by
-//! hand would also eat a literal asterisk in prose, and would need re-deciding every time
-//! rst grows a marker.
+//! REUSES ParseInlines RATHER THAN STRIPPING CHARACTERS. The resolver already
+//! exists and is used for paragraph text; it simply was never reached on the
+//! cell path. Deleting `*` by hand would also eat a literal asterisk in prose,
+//! and would need re-deciding every time rst grows a marker.
 //!
-//! FLATTENED TO TEXT because a cell in the native {headers, rows} schema is a STRING. The
-//! emphasis is lost either way; the choice is only whether the markers are lost with it.
-//! Reported by duckeye (#38), who found it against pandoc, which resolves the same cell.
+//! FLATTENED TO TEXT because a cell in the native {headers, rows} schema is a
+//! STRING. The emphasis is lost either way; the choice is only whether the
+//! markers are lost with it. Reported by duckeye (#38), who found it against
+//! pandoc, which resolves the same cell.
 std::string CellText(const std::string &s) {
 	std::vector<RstInline> runs;
 	ParseInlines(s, 2, runs);
@@ -145,21 +148,22 @@ std::vector<std::string> GridCells(const std::string &row) {
 	return cells;
 }
 
-//! A simple table's cells come from COLUMN POSITIONS, not delimiters -- the rule row's runs
-//! locate them. This is the only positional extraction in the reader, and it is why the
-//! rule line's offsets are carried on the Line.
+//! A simple table's cells come from COLUMN POSITIONS, not delimiters -- the
+//! rule row's runs locate them. This is the only positional extraction in the
+//! reader, and it is why the rule line's offsets are carried on the Line.
 //!
-//! Each cell spans [start of its run, start of the NEXT run), and the last runs to the end
-//! of the line. Earlier this walked forward as `at += width + 2`, assuming two spaces
-//! between columns. RST separates them by ONE OR MORE, so on a single-space table the
-//! offset drifted by a character per column and the error accumulated:
+//! Each cell spans [start of its run, start of the NEXT run), and the last runs
+//! to the end of the line. Earlier this walked forward as `at += width + 2`,
+//! assuming two spaces between columns. RST separates them by ONE OR MORE, so
+//! on a single-space table the offset drifted by a character per column and the
+//! error accumulated:
 //!
 //!     ==== ===== ====        headers  ["Name", "alue", "te"]
 //!     Name Value Note        rows     [["a", "", ""], ["b", "", ""]]
 //!
-//! -- the first column right, the second short a character, the third short two, and every
-//! data row past column one empty. Reading the boundaries instead of predicting them means
-//! there is no gap to guess.
+//! -- the first column right, the second short a character, the third short
+//! two, and every data row past column one empty. Reading the boundaries
+//! instead of predicting them means there is no gap to guess.
 std::vector<std::string> SimpleCells(const std::string &row, const std::vector<int> &starts) {
 	std::vector<std::string> cells;
 	for (size_t c = 0; c < starts.size(); c++) {
@@ -187,11 +191,11 @@ public:
 private:
 	std::vector<Line> lines_;
 	std::vector<RstBlock> blocks_;
-	//! ADORNMENT CHARACTERS IN ORDER OF FIRST APPEARANCE. RST sets a heading's level by
-	//! WHERE its adornment first appeared in the document, not by which character it is --
-	//! measured, and the opposite of the usual assumption that `=` is level 1. A reader
-	//! that hardcodes the conventional order is right on conventional documents and wrong
-	//! on valid ones.
+	//! ADORNMENT CHARACTERS IN ORDER OF FIRST APPEARANCE. RST sets a heading's
+	//! level by WHERE its adornment first appeared in the document, not by which
+	//! character it is -- measured, and the opposite of the usual assumption that
+	//! `=` is level 1. A reader that hardcodes the conventional order is right on
+	//! conventional documents and wrong on valid ones.
 	std::vector<char> adornments_;
 
 	int LevelFor(char c) {
@@ -222,9 +226,10 @@ private:
 		blocks_.push_back(std::move(b));
 	}
 
-	//! The indented run starting at `i`, as [i, end) -- every following line indented
-	//! deeper than `base`, blank lines included. RST expresses containment by indent and
-	//! four constructs share the shape, so finding the run is one function.
+	//! The indented run starting at `i`, as [i, end) -- every following line
+	//! indented deeper than `base`, blank lines included. RST expresses
+	//! containment by indent and four constructs share the shape, so finding the
+	//! run is one function.
 	size_t IndentedRun(size_t i, int base) const {
 		size_t j = i;
 		while (j < lines_.size()) {
@@ -260,8 +265,8 @@ private:
 		return body;
 	}
 
-	//! The shallowest indent among the non-blank lines of [from, to): a nested run's own left
-	//! margin. `fallback` when the run is all blank.
+	//! The shallowest indent among the non-blank lines of [from, to): a nested
+	//! run's own left margin. `fallback` when the run is all blank.
 	int MinIndent(size_t from, size_t to, int fallback) const {
 		int m = -1;
 		for (size_t j = from; j < to && j < lines_.size(); j++) {
@@ -272,9 +277,10 @@ private:
 		return m < 0 ? fallback : m;
 	}
 
-	//! Parse [from, to) at `depth`. `base` is the run's OWN LEFT MARGIN -- 0 for the document, a
-	//! directive body's indent, a quote's, a list item's text column. RST expresses containment
-	//! by indentation alone, so the margin is what makes a line "indented" at all (#64).
+	//! Parse [from, to) at `depth`. `base` is the run's OWN LEFT MARGIN -- 0 for
+	//! the document, a directive body's indent, a quote's, a list item's text
+	//! column. RST expresses containment by indentation alone, so the margin is
+	//! what makes a line "indented" at all (#64).
 	void Run(size_t from, size_t to, int depth, int base) {
 		std::vector<std::string> para;
 		bool literal_pending = false;
@@ -287,9 +293,9 @@ private:
 				text += (k ? " " : "") + para[k];
 			}
 			para.clear();
-			// `::` AT THE END OF A PARAGRAPH opens a literal block AND stays as a colon in
-			// the prose -- docutils drops one colon and keeps the other. A bare `::` on its
-			// own paragraph disappears entirely.
+			// `::` AT THE END OF A PARAGRAPH opens a literal block AND stays as a
+			// colon in the prose -- docutils drops one colon and keeps the other. A
+			// bare `::` on its own paragraph disappears entirely.
 			if (text.size() >= 2 && text.compare(text.size() - 2, 2, "::") == 0) {
 				literal_pending = true;
 				text = text.size() == 2 ? std::string() : text.substr(0, text.size() - 1);
@@ -301,9 +307,10 @@ private:
 
 		for (size_t i = from; i < to; i++) {
 			auto &line = lines_[i];
-			// A LITERAL BLOCK claims the indented run after a `::` paragraph, whatever its first line
-			// looks like -- code can open with `- ` or `+--+`. Checked before the quote rule, which
-			// would otherwise take it (#64).
+			// A LITERAL BLOCK claims the indented run after a `::` paragraph,
+			// whatever its first line looks like -- code can open with `- ` or
+			// `+--+`. Checked before the quote rule, which would otherwise take it
+			// (#64).
 			if (literal_pending && line.kind != LineKind::BLANK) {
 				literal_pending = false;
 				if (line.indent > base) {
@@ -317,11 +324,13 @@ private:
 					continue;
 				}
 			}
-			// A BLOCK QUOTE is an indented run that nothing above it claims (#64). Every claim is made
-			// by the line that OPENS a run -- a definition term, a field, a list item, a directive, a
-			// comment, a `::` -- and each consumes its run before control returns here. So an
-			// unclaimed line indented past this run's margin, at the START of a block, is a quote.
-			// Before #64 it read as a level-1 paragraph, and duck_blocks_to_md lost the `>`.
+			// A BLOCK QUOTE is an indented run that nothing above it claims (#64).
+			// Every claim is made by the line that OPENS a run -- a definition term,
+			// a field, a list item, a directive, a comment, a `::` -- and each
+			// consumes its run before control returns here. So an unclaimed line
+			// indented past this run's margin, at the START of a block, is a quote.
+			// Before #64 it read as a level-1 paragraph, and duck_blocks_to_md lost
+			// the `>`.
 			if (para.empty() && line.kind != LineKind::BLANK && line.indent > base) {
 				size_t end = std::min(IndentedRun(i, base), to);
 				RstBlock q;
@@ -337,37 +346,44 @@ private:
 				flush();
 				continue;
 			case LineKind::COMMENT: {
-				// A ONE-LINE FOOTNOTE OR CITATION carries its body on the LABEL LINE: `.. [1] text`.
-				// The scanner files that whole line under COMMENT with `[1] text` as its text, and the
-				// body rule below only ever looked at the NEXT line -- so this text went nowhere (#67).
-				// Measured on main before this: `.. [1] The footnote body.` emitted NOTHING, and the
-				// wrapped form emitted only its continuation line, losing the label line's words.
+				// A ONE-LINE FOOTNOTE OR CITATION carries its body on the LABEL LINE:
+				// `.. [1] text`. The scanner files that whole line under COMMENT with
+				// `[1] text` as its text, and the body rule below only ever looked at
+				// the NEXT line -- so this text went nowhere (#67). Measured on main
+				// before this: `.. [1] The footnote body.` emitted NOTHING, and the
+				// wrapped form emitted only its continuation line, losing the label
+				// line's words.
 				//
-				// SEEDING `para` RATHER THAN EMITTING is what joins the label line with an indented
-				// continuation into ONE paragraph, as pandoc does. The quote rule and the
-				// definition-list branch both require an empty `para`, so the following indented line
-				// falls through to TEXT and appends here. The run is deliberately NOT consumed.
+				// SEEDING `para` RATHER THAN EMITTING is what joins the label line with
+				// an indented continuation into ONE paragraph, as pandoc does. The
+				// quote rule and the definition-list branch both require an empty
+				// `para`, so the following indented line falls through to TEXT and
+				// appends here. The run is deliberately NOT consumed.
 				if (!line.text.empty() && line.text[0] == '[') {
 					size_t close = line.text.find(']');
 					if (close != std::string::npos) {
 						size_t b = line.text.find_first_not_of(" \t", close + 1);
 						if (b != std::string::npos) {
-							// The scanner already trimmed this line, so the remainder needs no trim.
+							// The scanner already trimmed this line, so the remainder needs
+							// no trim.
 							para.push_back(line.text.substr(b));
 							continue;
 						}
 					}
 				}
-				// A COMMENT'S BODY is the indented run that starts on the VERY NEXT line. A blank line
-				// straight after the comment means it has none, and the run after the blank is a quote
-				// -- the `..` + blank idiom. Measured against pandoc; before #64 the body leaked into
-				// the document as prose.
+				// A COMMENT'S BODY is the indented run that starts on the VERY NEXT
+				// line. A blank line straight after the comment means it has none, and
+				// the run after the blank is a quote
+				// -- the `..` + blank idiom. Measured against pandoc; before #64 the
+				// body leaked into the document as prose.
 				if (i + 1 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].indent > line.indent) {
 					size_t end = std::min(IndentedRun(i + 1, line.indent), to);
-					// A FOOTNOTE OR CITATION BODY IS DOCUMENT TEXT, not commentary. The scanner files
-					// `.. [1]` and `.. [CIT]` under COMMENT with every other non-directive `..`, so the
-					// label is what tells them apart. pandoc carries the body as a Note; panduck keeps it
-					// as prose at this depth, which is what it emitted before #64. Dropping it was the
+					// A FOOTNOTE OR CITATION BODY IS DOCUMENT TEXT, not commentary. The
+					// scanner files
+					// `.. [1]` and `.. [CIT]` under COMMENT with every other
+					// non-directive `..`, so the label is what tells them apart. pandoc
+					// carries the body as a Note; panduck keeps it as prose at this
+					// depth, which is what it emitted before #64. Dropping it was the
 					// first cut of #64, and only the word-loss guard noticed.
 					if (!line.text.empty() && line.text[0] == '[') {
 						flush();
@@ -378,16 +394,18 @@ private:
 				continue; // produces nothing, and must not fall through as prose
 			}
 			case LineKind::ADORNMENT: {
-				// A LONE `::` IS A LITERAL-BLOCK MARKER, not a transition. `::` is a legal two-character
-				// adornment, so the scanner cannot tell; nothing preceding it can. flush() already turns
-				// a paragraph ENDING in `::` into a pending literal -- this is the paragraph that is ONLY
+				// A LONE `::` IS A LITERAL-BLOCK MARKER, not a transition. `::` is a
+				// legal two-character adornment, so the scanner cannot tell; nothing
+				// preceding it can. flush() already turns a paragraph ENDING in `::`
+				// into a pending literal -- this is the paragraph that is ONLY
 				// `::`, which never reached flush() and became an hr (#64).
 				if (para.empty() && line.text == "::") {
 					literal_pending = true;
 					continue;
 				}
-				// A TRANSITION when nothing precedes it, a heading UNDERLINE when text does.
-				// The scanner cannot tell them apart; this is the only place that can.
+				// A TRANSITION when nothing precedes it, a heading UNDERLINE when text
+				// does. The scanner cannot tell them apart; this is the only place that
+				// can.
 				if (!para.empty()) {
 					std::string title = para.back();
 					para.pop_back();
@@ -396,26 +414,28 @@ private:
 					b.element_type = DuckBlockTypes::TYPE_HEADING;
 					b.heading_level = LevelFor(line.adornment);
 					b.level = depth;
-					// THE TITLE WAS NOT PARSED AT ALL, so `**Bold** title` reached `content`
-					// as literal source -- markup leaking as text, which is worse than the
-					// flattening the other readers did. Now it is parsed like any other run.
+					// THE TITLE WAS NOT PARSED AT ALL, so `**Bold** title` reached
+					// `content` as literal source -- markup leaking as text, which is
+					// worse than the flattening the other readers did. Now it is parsed
+					// like any other run.
 					std::vector<RstInline> runs;
 					ParseInlines(title, depth + 1, runs);
 					if (runs.size() == 1 && runs[0].element_type == DuckBlockTypes::INLINE_TEXT) {
 						b.content = runs[0].content;
 					} else {
-						// A HEADING CARRIES BOTH: a flattened title in `content` AND the rich
-						// inline children beside it (duck_block ruling d003d32).
+						// A HEADING CARRIES BOTH: a flattened title in `content` AND the
+						// rich inline children beside it (duck_block ruling d003d32).
 						//
-						// Flattening alone loses formatting irreversibly -- `**Bold** title` and
-						// `Bold title` become byte-identical, so a round trip rewrites the first as
-						// the second. Children alone break every consumer that reads a title from
-						// `content`, which doc_toc does.
+						// Flattening alone loses formatting irreversibly -- `**Bold**
+						// title` and `Bold title` become byte-identical, so a round trip
+						// rewrites the first as the second. Children alone break every
+						// consumer that reads a title from `content`, which doc_toc does.
 						//
-						// The structure marks itself and needs no new vocabulary: a lone text child
-						// lives in `content` and produces NO children, so children alongside
-						// non-empty content can only mean the content is a DERIVED flattening.
-						// CHILDREN ARE AUTHORITATIVE when both are present.
+						// The structure marks itself and needs no new vocabulary: a lone
+						// text child lives in `content` and produces NO children, so
+						// children alongside non-empty content can only mean the content is
+						// a DERIVED flattening. CHILDREN ARE AUTHORITATIVE when both are
+						// present.
 						std::string all;
 						for (auto &r : runs) {
 							all += r.content;
@@ -448,18 +468,19 @@ private:
 				list.list_type = DuckBlockTypes::LIST_TYPE_DEFINITION;
 				list.level = depth;
 				blocks_.push_back(std::move(list));
-				// A FIELD LIST IS A DEFINITION LIST, NOT METADATA. Measured: pandoc emits a
-				// DefinitionList and an EMPTY meta. RST is the only panduck format with no
-				// document metadata at all, and the opposite reading is the obvious one --
-				// which is why it is asserted rather than assumed.
+				// A FIELD LIST IS A DEFINITION LIST, NOT METADATA. Measured: pandoc
+				// emits a DefinitionList and an EMPTY meta. RST is the only panduck
+				// format with no document metadata at all, and the opposite reading is
+				// the obvious one -- which is why it is asserted rather than assumed.
 				while (j < to && lines_[j].kind == LineKind::FIELD) {
 					const int field_indent = lines_[j].indent;
 					std::string value = lines_[j].text;
 					Emit(DuckBlockTypes::TYPE_LIST_ITEM, lines_[j].name, depth + 1, DuckBlockTypes::ROLE_TERM);
 					j++;
-					// A FIELD VALUE WRAPS onto indented lines that follow it with no blank between -- the
-					// same value, as pandoc reads it. Before #64 each wrap leaked out as a level-1
-					// paragraph and split the field list in two.
+					// A FIELD VALUE WRAPS onto indented lines that follow it with no
+					// blank between -- the same value, as pandoc reads it. Before #64
+					// each wrap leaked out as a level-1 paragraph and split the field
+					// list in two.
 					while (j < to && lines_[j].kind == LineKind::TEXT && lines_[j].indent > field_indent) {
 						value += (value.empty() ? "" : " ") + lines_[j].text;
 						j++;
@@ -527,18 +548,19 @@ private:
 			return;
 		}
 		// EVERY OTHER DIRECTIVE IS A DIV, with the directive NAME in
-		// attributes['source_type'] rather than a minted role. The directive set is OPEN --
-		// docutils ships dozens and Sphinx hundreds -- so a reader cannot enumerate it, and
-		// the spec's instruction for an unrecognised name is to keep the original in
-		// source_type so it is visible as a gap rather than silently private.
+		// attributes['source_type'] rather than a minted role. The directive set is
+		// OPEN -- docutils ships dozens and Sphinx hundreds -- so a reader cannot
+		// enumerate it, and the spec's instruction for an unrecognised name is to
+		// keep the original in source_type so it is visible as a gap rather than
+		// silently private.
 		RstBlock b;
 		b.element_type = DuckBlockTypes::TYPE_DIV;
 		b.source_type = line.name;
 		b.level = depth;
 		blocks_.push_back(std::move(b));
-		// THE BODY IS DESCENDED INTO, never dropped. A directive body is prose, and the
-		// LaTeX reader's rule applies: an unknown environment usually wraps paragraphs, so
-		// dropping it loses them.
+		// THE BODY IS DESCENDED INTO, never dropped. A directive body is prose, and
+		// the LaTeX reader's rule applies: an unknown environment usually wraps
+		// paragraphs, so dropping it loses them.
 		if (to > from) {
 			Run(from, to, depth + 1, MinIndent(from, to, line.indent + 1));
 		}
@@ -571,27 +593,30 @@ private:
 			const bool line_ordered = line.kind == LineKind::ENUM;
 			if ((line.kind != LineKind::BULLET && line.kind != LineKind::ENUM) || line.indent != indent ||
 			    line_ordered != ordered) {
-				// ORDEREDNESS ENDS A LIST as surely as a dedent does. Without this a bullet
-				// list followed by an enumerated one at the same indent became a single
-				// list carrying both, with the second list's numbering lost entirely.
+				// ORDEREDNESS ENDS A LIST as surely as a dedent does. Without this a
+				// bullet list followed by an enumerated one at the same indent became a
+				// single list carrying both, with the second list's numbering lost
+				// entirely.
 				break;
 			}
 			const int text_col = line.text_col > 0 ? line.text_col : indent + 2;
 			std::string text = line.text;
 			j++;
-			// THE ITEM'S TEXT WRAPS onto following lines indented to its text column with no blank
-			// between -- one run, as pandoc reads it. Absorbed BEFORE the body, or a wrapped item's
-			// second line would become a child paragraph. Before #64 the wrap split the list.
+			// THE ITEM'S TEXT WRAPS onto following lines indented to its text column
+			// with no blank between -- one run, as pandoc reads it. Absorbed BEFORE
+			// the body, or a wrapped item's second line would become a child
+			// paragraph. Before #64 the wrap split the list.
 			while (j < to && lines_[j].kind == LineKind::TEXT && lines_[j].indent >= text_col) {
 				text += (text.empty() ? "" : " ") + lines_[j].text;
 				j++;
 			}
 			Emit(DuckBlockTypes::TYPE_LIST_ITEM, text, depth + 1);
-			// THE ITEM'S BODY is everything indented to its TEXT COLUMN or deeper: more paragraphs, a
-			// nested list, a quote. Measured against pandoc, the column is the marker's width, and a
-			// line indented past the marker but SHORT of it is not the item's: the list ends there and
-			// the run is quoted beside it (#64). Before #64 only a nested list was recognised, and only
-			// with no blank line before it.
+			// THE ITEM'S BODY is everything indented to its TEXT COLUMN or deeper:
+			// more paragraphs, a nested list, a quote. Measured against pandoc, the
+			// column is the marker's width, and a line indented past the marker but
+			// SHORT of it is not the item's: the list ends there and the run is
+			// quoted beside it (#64). Before #64 only a nested list was recognised,
+			// and only with no blank line before it.
 			size_t end = std::min(IndentedRun(j, text_col - 1), to);
 			if (end > j) {
 				Run(j, end, depth + 2, text_col);
@@ -645,7 +670,8 @@ private:
 			first = 1;
 		}
 		std::vector<std::vector<std::string>> body(rows.begin() + (long)first, rows.end());
-		// RESOLVED HERE, at the last point before the cells become an opaque JSON string.
+		// RESOLVED HERE, at the last point before the cells become an opaque JSON
+		// string.
 		for (auto &h : headers) {
 			h = CellText(h);
 		}
@@ -714,9 +740,9 @@ void BuildRows(const std::string &src, std::vector<RstRow> &rows) {
 			row.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}
 		if (!block.source_type.empty()) {
-			// The directive name a `div` came from. RST has NO document metadata -- a field
-			// list is a definition list -- so there is no ATTR_KEY here, unlike every other
-			// reader.
+			// The directive name a `div` came from. RST has NO document metadata -- a
+			// field list is a definition list -- so there is no ATTR_KEY here, unlike
+			// every other reader.
 			row.attributes[DuckBlockTypes::ATTR_SOURCE_TYPE] = block.source_type;
 		}
 		if (!block.role.empty()) {
@@ -726,9 +752,9 @@ void BuildRows(const std::string &src, std::vector<RstRow> &rows) {
 			row.attributes["language"] = block.language;
 		}
 		if (!block.list_type.empty()) {
-			// BOTH SPELLINGS, as every other panduck reader emits: `ordered` is the v1 name
-			// and `list_type` the later alias, and a consumer written against either reads
-			// this output.
+			// BOTH SPELLINGS, as every other panduck reader emits: `ordered` is the
+			// v1 name and `list_type` the later alias, and a consumer written against
+			// either reads this output.
 			row.attributes[DuckBlockTypes::ATTR_ORDERED_LEGACY] =
 			    block.list_type == DuckBlockTypes::LIST_TYPE_ORDERED ? "true" : "false";
 			row.attributes[DuckBlockTypes::ATTR_LIST_TYPE] = block.list_type;
@@ -803,14 +829,36 @@ void RstScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 } // namespace
 
 void RegisterRstReader(ExtensionLoader &loader) {
-	TableFunction file_fn("read_rst_blocks", {LogicalType::VARCHAR}, RstScan, RstFileBind, RstGlobalState::Init);
-	loader.RegisterFunction(file_fn);
+	{
+		TableFunction file_fn("read_rst_blocks", {LogicalType::VARCHAR}, RstScan, RstFileBind, RstGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(file_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"file_path"};
+		desc.description = "Read a reStructuredText (RST) document and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_rst_blocks('document.rst')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
-	// The string form, as the LaTeX reader has: asserting a two-line snippet is how the
-	// nesting and inline rules stay readable in the tests.
-	TableFunction string_fn("read_rst_blocks_string", {LogicalType::VARCHAR}, RstScan, RstStringBind,
-	                        RstGlobalState::Init);
-	loader.RegisterFunction(string_fn);
+	// The string form, as the LaTeX reader has: asserting a two-line snippet is
+	// how the nesting and inline rules stay readable in the tests.
+	{
+		TableFunction string_fn("read_rst_blocks_string", {LogicalType::VARCHAR}, RstScan, RstStringBind,
+		                        RstGlobalState::Init);
+		CreateTableFunctionInfo info(std::move(string_fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"rst_text"};
+		desc.description = "Parse a reStructuredText (RST) string and return "
+		                   "structured document blocks.";
+		desc.examples = {"SELECT * FROM read_rst_blocks_string('Title\\n=====\\n\\nParagraph')"};
+		desc.categories = {"panduck"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace rst

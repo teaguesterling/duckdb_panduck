@@ -9,15 +9,16 @@ namespace duckdb {
 //! JSON string escaping for `table` content.
 //!
 //! Spec 5.0 makes `table` the ONE element_type whose content is a JSON document
-//! ({"headers": [...], "rows": [[...]]}); everything else is text. Two readers emit it --
-//! EPUB from <table>, LaTeX from tabular -- so this lives here rather than as a copy in
-//! each. Two copies of one rule cannot detect their own disagreement, which is the defect
-//! this project has spent a day finding in other people's code.
+//! ({"headers": [...], "rows": [[...]]}); everything else is text. Two readers
+//! emit it -- EPUB from <table>, LaTeX from tabular -- so this lives here
+//! rather than as a copy in each. Two copies of one rule cannot detect their
+//! own disagreement, which is the defect this project has spent a day finding
+//! in other people's code.
 //!
-//! Deliberately dependency-free: no DuckDB types, no JSON library. Pulling in a library to
-//! serialise two arrays of strings would be a dependency per element type, and this header
-//! is the shape a reader-side helper needs to keep if the parsers are ever extracted from
-//! the extension.
+//! Deliberately dependency-free: no DuckDB types, no JSON library. Pulling in a
+//! library to serialise two arrays of strings would be a dependency per element
+//! type, and this header is the shape a reader-side helper needs to keep if the
+//! parsers are ever extracted from the extension.
 inline std::string JsonEscapeString(const std::string &in) {
 	std::string out;
 	out.reserve(in.size() + 8);
@@ -55,8 +56,9 @@ inline std::string JsonEscapeString(const std::string &in) {
 
 //! Build the spec 5.0 native table schema from already-flattened cell text.
 //!
-//! `headers` may be empty -- that is "this table has no header row", spelled as an empty
-//! array rather than by omitting the key, so a consumer reads the same shape either way.
+//! `headers` may be empty -- that is "this table has no header row", spelled as
+//! an empty array rather than by omitting the key, so a consumer reads the same
+//! shape either way.
 inline std::string BuildTableJson(const std::vector<std::string> &headers,
                                   const std::vector<std::vector<std::string>> &rows) {
 	std::string json = "{\"headers\":[";

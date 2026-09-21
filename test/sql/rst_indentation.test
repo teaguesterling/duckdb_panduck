@@ -410,3 +410,69 @@ SELECT count(*), count(*) FILTER (WHERE element_type = 'paragraph'), count(*) FI
 FROM read_rst_blocks('test/fixtures/footnotes.rst');
 ----
 9	8	1
+
+# ---------------------------------------------------------------------------------------
+# AN ENUMERATED SECTION TITLE IS A HEADING (#84). `1. Table of Contents` under an underline
+# was read as a one-item ordered list plus an `hr`: the heading lost, the number discarded,
+# the rule invented. Measured on duckeye's fixture, panduck found 2 headings where pandoc
+# found 4 -- lost structure, so doc_toc could not see the section.
+#
+# WHAT QUALIFIES was measured against pandoc, not assumed: only ENUM, and only when the
+# adornment run is at least as long as the title. The two `unchanged` records below are the
+# shapes pandoc does NOT make titles; they are pinned so a later change cannot quietly
+# convert them.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'1. Table of Contents\n--------------------\n\nBody under it.\n') ORDER BY element_order;
+----
+1	heading	1. Table of Contents
+1	paragraph	Body under it.
+
+# The marker is kept as written: `1.` and `1)` are both ENUM with start=1, so the scanner
+# carries the line's original text rather than rebuilding it.
+query III
+SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+  E'1) Paren Title\n--------------\n\nBody.\n') ORDER BY element_order;
+----
+1	heading	1) Paren Title
+1	paragraph	Body.
+
+# CONTROL: an un-underlined enumerated list is still a list.
+#
+# `coalesce(content, '<none>')`, not `''`: a `list` row has empty content, and a row whose
+# LAST column is empty ends in a trailing tab, which sqllogictest reads as one column short.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'1. a real list item\n2. another list item\n') ORDER BY element_order;
+----
+1	list	<none>
+2	list_item	a real list item
+2	list_item	another list item
+
+# CONTROL: a list item followed by a lone `::` still opens a literal block -- `::` is an
+# adornment run to the scanner, and is shorter than any title it could underline.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'- item\n\n::\n\n   code\n') ORDER BY element_order;
+----
+1	list	<none>
+2	list_item	item
+1	code	code
+
+# UNCHANGED, and deliberately so: pandoc reads a bulleted line under an underline as a
+# paragraph, not a title. panduck still emits list + item + hr here; the spurious hr
+# predates #84 and is tracked separately. Pinned so the shape cannot drift unnoticed.
+query I
+SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
+  E'- Bulleted Title\n----------------\n\nBody.\n');
+----
+list,list_item,hr,paragraph
+
+# UNCHANGED for the same reason: an underline SHORTER than the title is not a title.
+query I
+SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
+  E'1. Short Underline\n----\n\nBody.\n');
+----
+list,list_item,hr,paragraph

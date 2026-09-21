@@ -90,143 +90,130 @@ namespace duckdb {
  */
 class DuckBlockTypes : public DuckBlockVocabulary {
 public:
-  // Create the doc_element type (unified type for both blocks and inlines)
-  static LogicalType DuckBlockType() {
-    child_list_t<LogicalType> struct_children;
-    struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));
-    struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR));
-    struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
-    struct_children.push_back(make_pair("level", LogicalType::INTEGER));
-    struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));
-    struct_children.push_back(
-        make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR,
-                                                 LogicalType::VARCHAR)));
-    struct_children.push_back(make_pair("element_order", LogicalType::INTEGER));
+	// Create the doc_element type (unified type for both blocks and inlines)
+	static LogicalType DuckBlockType() {
+		child_list_t<LogicalType> struct_children;
+		struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));
+		struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR));
+		struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
+		struct_children.push_back(make_pair("level", LogicalType::INTEGER));
+		struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));
+		struct_children.push_back(
+		    make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
+		struct_children.push_back(make_pair("element_order", LogicalType::INTEGER));
 
-    return LogicalType::STRUCT(std::move(struct_children));
-  }
+		return LogicalType::STRUCT(std::move(struct_children));
+	}
 
-  // Alias for semantic clarity
-  static LogicalType DocElementType() { return DuckBlockType(); }
+	// Alias for semantic clarity
+	static LogicalType DocElementType() {
+		return DuckBlockType();
+	}
 
-  // Create a LIST(doc_element) type
-  static LogicalType DuckBlockListType() {
-    return LogicalType::LIST(DuckBlockType());
-  }
+	// Create a LIST(doc_element) type
+	static LogicalType DuckBlockListType() {
+		return LogicalType::LIST(DuckBlockType());
+	}
 
-  // Alias for semantic clarity
-  static LogicalType DocElementListType() { return DuckBlockListType(); }
+	// Alias for semantic clarity
+	static LogicalType DocElementListType() {
+		return DuckBlockListType();
+	}
 
-  // Field indices for doc_element struct: see the note below -- the *_IDX
-  // offsets are inherited.
+	// Field indices for doc_element struct: see the note below -- the *_IDX
+	// offsets are inherited.
 
-  // Kind values
+	// Kind values
 
-  // Core block type names
+	// Core block type names
 
-  // Inline element type names
+	// Inline element type names
 
-  // ENCODING_*, ATTR_HEADING_LEVEL AND THE *_IDX FIELD OFFSETS ARE INHERITED,
-  // not redeclared here.
-  //
-  // The *_IDX offsets (KIND_IDX .. ELEMENT_ORDER_IDX) were the second instance
-  // of the shape described below, found after the first was fixed: seven
-  // `static constexpr idx_t` copies hiding DuckBlockVocabulary's `uint64_t`
-  // ones (idx_t IS uint64_t), all equal to the vendored values 0..6 when
-  // removed. Reported by duck_block_utils' consumer check once it parsed
-  // integer constants (their #37); panduck #72.
-  //
-  // They WERE declared locally, shadowing DuckBlockVocabulary's. That built
-  // clean -- C++ name hiding is legal, not an error -- so every
-  // `DuckBlockTypes::ENCODING_JSON` in this repo silently resolved to the local
-  // copy while appearing to use the vendored vocabulary. All six values were
-  // byte-identical, so nothing behaved differently; the hazard was that
-  // upstream could change one and this copy would keep the old value, compile,
-  // and pass every check.
-  //
-  // It is invisible to duck_block_utils' consumer-alignment check BY
-  // CONSTRUCTION: that compares the VENDORED header against canonical, and the
-  // vendored header was always correct. The divergence would have lived in the
-  // subclass that hides it. Raised by duck_block_utils after duckdb_webbed hit
-  // the same shape.
-  //
-  // Verified byte-identical BEFORE removing rather than after -- deleting first
-  // and checking later is how a real value difference becomes an unexplained
-  // behaviour change three commits downstream.
+	// ENCODING_*, ATTR_HEADING_LEVEL AND THE *_IDX FIELD OFFSETS ARE INHERITED,
+	// not redeclared here.
+	//
+	// The *_IDX offsets (KIND_IDX .. ELEMENT_ORDER_IDX) were the second instance
+	// of the shape described below, found after the first was fixed: seven
+	// `static constexpr idx_t` copies hiding DuckBlockVocabulary's `uint64_t`
+	// ones (idx_t IS uint64_t), all equal to the vendored values 0..6 when
+	// removed. Reported by duck_block_utils' consumer check once it parsed
+	// integer constants (their #37); panduck #72.
+	//
+	// They WERE declared locally, shadowing DuckBlockVocabulary's. That built
+	// clean -- C++ name hiding is legal, not an error -- so every
+	// `DuckBlockTypes::ENCODING_JSON` in this repo silently resolved to the local
+	// copy while appearing to use the vendored vocabulary. All six values were
+	// byte-identical, so nothing behaved differently; the hazard was that
+	// upstream could change one and this copy would keep the old value, compile,
+	// and pass every check.
+	//
+	// It is invisible to duck_block_utils' consumer-alignment check BY
+	// CONSTRUCTION: that compares the VENDORED header against canonical, and the
+	// vendored header was always correct. The divergence would have lived in the
+	// subclass that hides it. Raised by duck_block_utils after duckdb_webbed hit
+	// the same shape.
+	//
+	// Verified byte-identical BEFORE removing rather than after -- deleting first
+	// and checking later is how a real value difference becomes an unexplained
+	// behaviour change three commits downstream.
 
-  // MIME type for frontmatter in HTML (RFC 9512 compliant)
-  static constexpr const char *FRONTMATTER_MIME_TYPE =
-      "application/vnd.frontmatter+yaml";
+	// MIME type for frontmatter in HTML (RFC 9512 compliant)
+	static constexpr const char *FRONTMATTER_MIME_TYPE = "application/vnd.frontmatter+yaml";
 
-  // Attribute keys: see the note above -- ATTR_HEADING_LEVEL is inherited.
+	// Attribute keys: see the note above -- ATTR_HEADING_LEVEL is inherited.
 
-  // Helper to create an attributes MAP from a std::map
-  static Value
-  CreateAttributesMap(const std::map<std::string, std::string> &attrs) {
-    vector<Value> keys;
-    vector<Value> values;
-    for (auto &entry : attrs) {
-      keys.push_back(Value(entry.first));
-      values.push_back(Value(entry.second));
-    }
-    return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, keys, values);
-  }
+	// Helper to create an attributes MAP from a std::map
+	static Value CreateAttributesMap(const std::map<std::string, std::string> &attrs) {
+		vector<Value> keys;
+		vector<Value> values;
+		for (auto &entry : attrs) {
+			keys.push_back(Value(entry.first));
+			values.push_back(Value(entry.second));
+		}
+		return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, keys, values);
+	}
 
-  // Helper to create a doc_element Value (block kind)
-  static Value CreateBlock(const std::string &element_type,
-                           const std::string &content, const Value &level,
-                           const std::string &encoding,
-                           const std::map<std::string, std::string> &attributes,
-                           int32_t element_order = 0) {
-    child_list_t<Value> struct_values;
-    struct_values.push_back(make_pair("kind", Value(KIND_BLOCK)));
-    struct_values.push_back(make_pair("element_type", Value(element_type)));
-    // Empty content => NULL (spec convention for containers whose text lives
-    // in structured inline children).
-    struct_values.push_back(
-        make_pair("content", content.empty() ? Value(LogicalType::VARCHAR)
-                                             : Value(content)));
-    struct_values.push_back(make_pair("level", level));
-    struct_values.push_back(make_pair("encoding", Value(encoding)));
-    struct_values.push_back(
-        make_pair("attributes", CreateAttributesMap(attributes)));
-    struct_values.push_back(make_pair("element_order", Value(element_order)));
+	// Helper to create a doc_element Value (block kind)
+	static Value CreateBlock(const std::string &element_type, const std::string &content, const Value &level,
+	                         const std::string &encoding, const std::map<std::string, std::string> &attributes,
+	                         int32_t element_order = 0) {
+		child_list_t<Value> struct_values;
+		struct_values.push_back(make_pair("kind", Value(KIND_BLOCK)));
+		struct_values.push_back(make_pair("element_type", Value(element_type)));
+		// Empty content => NULL (spec convention for containers whose text lives
+		// in structured inline children).
+		struct_values.push_back(make_pair("content", content.empty() ? Value(LogicalType::VARCHAR) : Value(content)));
+		struct_values.push_back(make_pair("level", level));
+		struct_values.push_back(make_pair("encoding", Value(encoding)));
+		struct_values.push_back(make_pair("attributes", CreateAttributesMap(attributes)));
+		struct_values.push_back(make_pair("element_order", Value(element_order)));
 
-    return Value::STRUCT(std::move(struct_values));
-  }
+		return Value::STRUCT(std::move(struct_values));
+	}
 
-  // Convenience overload for blocks without level
-  static Value CreateBlock(const std::string &element_type,
-                           const std::string &content,
-                           const std::string &encoding,
-                           const std::map<std::string, std::string> &attributes,
-                           int32_t element_order = 0) {
-    return CreateBlock(element_type, content, Value(), encoding, attributes,
-                       element_order);
-  }
+	// Convenience overload for blocks without level
+	static Value CreateBlock(const std::string &element_type, const std::string &content, const std::string &encoding,
+	                         const std::map<std::string, std::string> &attributes, int32_t element_order = 0) {
+		return CreateBlock(element_type, content, Value(), encoding, attributes, element_order);
+	}
 
-  // Helper to create an inline doc_element Value
-  static Value
-  CreateInline(const std::string &element_type, const std::string &content,
-               const Value &level, const std::string &encoding,
-               const std::map<std::string, std::string> &attributes,
-               int32_t element_order = 0) {
-    child_list_t<Value> struct_values;
-    struct_values.push_back(make_pair("kind", Value(KIND_INLINE)));
-    struct_values.push_back(make_pair("element_type", Value(element_type)));
-    // Empty content => NULL (a formatting container that recurses into
-    // structured child inlines carries no literal content of its own).
-    struct_values.push_back(
-        make_pair("content", content.empty() ? Value(LogicalType::VARCHAR)
-                                             : Value(content)));
-    struct_values.push_back(make_pair("level", level));
-    struct_values.push_back(make_pair("encoding", Value(encoding)));
-    struct_values.push_back(
-        make_pair("attributes", CreateAttributesMap(attributes)));
-    struct_values.push_back(make_pair("element_order", Value(element_order)));
+	// Helper to create an inline doc_element Value
+	static Value CreateInline(const std::string &element_type, const std::string &content, const Value &level,
+	                          const std::string &encoding, const std::map<std::string, std::string> &attributes,
+	                          int32_t element_order = 0) {
+		child_list_t<Value> struct_values;
+		struct_values.push_back(make_pair("kind", Value(KIND_INLINE)));
+		struct_values.push_back(make_pair("element_type", Value(element_type)));
+		// Empty content => NULL (a formatting container that recurses into
+		// structured child inlines carries no literal content of its own).
+		struct_values.push_back(make_pair("content", content.empty() ? Value(LogicalType::VARCHAR) : Value(content)));
+		struct_values.push_back(make_pair("level", level));
+		struct_values.push_back(make_pair("encoding", Value(encoding)));
+		struct_values.push_back(make_pair("attributes", CreateAttributesMap(attributes)));
+		struct_values.push_back(make_pair("element_order", Value(element_order)));
 
-    return Value::STRUCT(std::move(struct_values));
-  }
+		return Value::STRUCT(std::move(struct_values));
+	}
 };
 
 } // namespace duckdb

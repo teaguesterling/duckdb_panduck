@@ -43,13 +43,12 @@ static constexpr const char *STATUS_IMPLEMENTED = "implemented";
 static constexpr const char *STATUS_PLANNED = "planned";
 
 struct FormatReader {
-  const char *format; //!< pandoc's name for the format, i.e. its `--from` value
-  const char *const
-      *extensions;    //!< nullptr-terminated, lowercase, no leading dot
-  const char *reader; //!< panduck table function that reads it, or nullptr when
-                      //!< none exists yet
-  const char *status; //!< one of STATUS_*
-  const char *notes;
+	const char *format;            //!< pandoc's name for the format, i.e. its `--from` value
+	const char *const *extensions; //!< nullptr-terminated, lowercase, no leading dot
+	const char *reader;            //!< panduck table function that reads it, or nullptr when
+	                               //!< none exists yet
+	const char *status;            //!< one of STATUS_*
+	const char *notes;
 };
 
 extern const FormatReader FORMATS[];

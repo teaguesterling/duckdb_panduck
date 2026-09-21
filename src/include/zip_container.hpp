@@ -19,28 +19,28 @@ namespace duckdb {
 //! two.
 class ZipContainer {
 public:
-  //! Throws IOException when the file is missing or is not a readable ZIP.
-  ZipContainer(const std::string &path, const char *reader_name);
-  ~ZipContainer();
+	//! Throws IOException when the file is missing or is not a readable ZIP.
+	ZipContainer(const std::string &path, const char *reader_name);
+	~ZipContainer();
 
-  ZipContainer(const ZipContainer &) = delete;
-  ZipContainer &operator=(const ZipContainer &) = delete;
+	ZipContainer(const ZipContainer &) = delete;
+	ZipContainer &operator=(const ZipContainer &) = delete;
 
-  //! Reads one member into `out`. Returns false when the member is absent --
-  //! normal for an optional part (a minimal DOCX may omit styles.xml) and fatal
-  //! for the document body, so the caller decides which.
-  bool Read(const char *member, std::string &out);
+	//! Reads one member into `out`. Returns false when the member is absent --
+	//! normal for an optional part (a minimal DOCX may omit styles.xml) and fatal
+	//! for the document body, so the caller decides which.
+	bool Read(const char *member, std::string &out);
 
-  //! Reads a member that must exist, throwing InvalidInputException naming both
-  //! the file and the member when it does not. A ZIP without its body member is
-  //! not the format it claims to be, and saying so beats returning zero rows.
-  std::string ReadRequired(const char *member);
+	//! Reads a member that must exist, throwing InvalidInputException naming both
+	//! the file and the member when it does not. A ZIP without its body member is
+	//! not the format it claims to be, and saying so beats returning zero rows.
+	std::string ReadRequired(const char *member);
 
 private:
-  struct Impl;
-  unique_ptr<Impl> impl;
-  std::string path;
-  std::string reader_name;
+	struct Impl;
+	unique_ptr<Impl> impl;
+	std::string path;
+	std::string reader_name;
 };
 
 } // namespace duckdb

@@ -31,23 +31,23 @@ namespace rtf {
 //! ("text", "bold", "italic", "underline", "strikethrough") fixed by
 //! duck_block_utils.
 struct RtfInline {
-  std::string element_type;
-  std::string content;
+	std::string element_type;
+	std::string content;
 };
 
 //! One block-level element.
 struct RtfBlock {
-  //! duck_block kind. Empty means `block`. `value` is document METADATA.
-  std::string kind;
-  //! `value` only: field name for attributes['key'], in PANDOC's namespace.
-  std::string key;
-  std::string element_type; //!< "heading", "paragraph", "list", "list_item"
-  std::string content;   //!< flattened text; empty when inlines are populated
-  int heading_level = 0; //!< 1-6 for headings, 0 otherwise
-  int level = 1;         //!< STRUCTURAL depth; lists nest, so not always 1
-  std::string list_type; //!< `list` only: DuckBlockTypes::LIST_TYPE_*
-  std::string encoding;  //!< `table` only: 'json'
-  std::vector<RtfInline> inlines; //!< empty for a text-only run
+	//! duck_block kind. Empty means `block`. `value` is document METADATA.
+	std::string kind;
+	//! `value` only: field name for attributes['key'], in PANDOC's namespace.
+	std::string key;
+	std::string element_type;       //!< "heading", "paragraph", "list", "list_item"
+	std::string content;            //!< flattened text; empty when inlines are populated
+	int heading_level = 0;          //!< 1-6 for headings, 0 otherwise
+	int level = 1;                  //!< STRUCTURAL depth; lists nest, so not always 1
+	std::string list_type;          //!< `list` only: DuckBlockTypes::LIST_TYPE_*
+	std::string encoding;           //!< `table` only: 'json'
+	std::vector<RtfInline> inlines; //!< empty for a text-only run
 };
 
 //! Parse an RTF document into block elements.

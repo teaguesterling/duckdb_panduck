@@ -20,42 +20,41 @@ namespace rst {
 //!              reports the INDENT and the reader groups by it, rather than
 //!              guessing here.
 enum class LineKind {
-  BLANK,
-  ADORNMENT,  //!< a run of one punctuation character: heading underline OR
-              //!< transition
-  DIRECTIVE,  //!< `.. name:: argument`
-  COMMENT,    //!< `.. anything else` -- an RST comment, which produces nothing
-  FIELD,      //!< `:Name: value` -- a field list entry, which is NOT metadata
-  BULLET,     //!< `- x`, `* x`, `+ x`
-  ENUM,       //!< `1. x`, `1) x`, `#. x`
-  GRID_SEP,   //!< `+-----+-----+` and `+=====+=====+`
-  TABLE_ROW,  //!< `| a | b |`
-  SIMPLE_SEP, //!< `=====  =====` -- a simple table's rule, whose runs give
-              //!< column spans
-  TEXT,
+	BLANK,
+	ADORNMENT,  //!< a run of one punctuation character: heading underline OR
+	            //!< transition
+	DIRECTIVE,  //!< `.. name:: argument`
+	COMMENT,    //!< `.. anything else` -- an RST comment, which produces nothing
+	FIELD,      //!< `:Name: value` -- a field list entry, which is NOT metadata
+	BULLET,     //!< `- x`, `* x`, `+ x`
+	ENUM,       //!< `1. x`, `1) x`, `#. x`
+	GRID_SEP,   //!< `+-----+-----+` and `+=====+=====+`
+	TABLE_ROW,  //!< `| a | b |`
+	SIMPLE_SEP, //!< `=====  =====` -- a simple table's rule, whose runs give
+	            //!< column spans
+	TEXT,
 };
 
 struct Line {
-  LineKind kind = LineKind::TEXT;
-  std::string text;   //!< content with the marker removed
-  std::string name;   //!< DIRECTIVE: the directive name. FIELD: the field name.
-  char adornment = 0; //!< ADORNMENT: which character
-  int indent = 0; //!< leading columns, which is how RST expresses containment
-  bool ordered = false;
-  int start = 1;
-  //! BULLET/ENUM: the column where the item's TEXT begins -- the marker's
-  //! width, not a fixed 2 (`10. x` and `-   x` both put it at 4). An item owns
-  //! lines indented to this column or deeper; a line indented past the marker
-  //! but short of it ends the list (pandoc, #64).
-  int text_col = 0;
-  bool header_sep =
-      false; //!< GRID_SEP written with `=` -- promotes the rows above it
-  std::vector<int> spans; //!< SIMPLE_SEP: the rule runs' WIDTHS
-  //! SIMPLE_SEP: where each rule run STARTS. Widths alone are not enough to
-  //! locate a column: RST separates them by one or more spaces, so a reader
-  //! accumulating `width + gap` has to guess the gap and drifts further with
-  //! every column.
-  std::vector<int> span_starts;
+	LineKind kind = LineKind::TEXT;
+	std::string text;   //!< content with the marker removed
+	std::string name;   //!< DIRECTIVE: the directive name. FIELD: the field name.
+	char adornment = 0; //!< ADORNMENT: which character
+	int indent = 0;     //!< leading columns, which is how RST expresses containment
+	bool ordered = false;
+	int start = 1;
+	//! BULLET/ENUM: the column where the item's TEXT begins -- the marker's
+	//! width, not a fixed 2 (`10. x` and `-   x` both put it at 4). An item owns
+	//! lines indented to this column or deeper; a line indented past the marker
+	//! but short of it ends the list (pandoc, #64).
+	int text_col = 0;
+	bool header_sep = false; //!< GRID_SEP written with `=` -- promotes the rows above it
+	std::vector<int> spans;  //!< SIMPLE_SEP: the rule runs' WIDTHS
+	//! SIMPLE_SEP: where each rule run STARTS. Widths alone are not enough to
+	//! locate a column: RST separates them by one or more spaces, so a reader
+	//! accumulating `width + gap` has to guess the gap and drifts further with
+	//! every column.
+	std::vector<int> span_starts;
 };
 
 //! Classify every line. Never fails: an unrecognised line is TEXT.

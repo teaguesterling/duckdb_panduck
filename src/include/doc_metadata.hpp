@@ -43,17 +43,17 @@ namespace duckdb {
 //! need the same treatment. Kept beside the field table rather than copied per
 //! reader, and dependency-free so the parse layer stays extractable.
 inline std::string TrimMetaText(const std::string &s) {
-  size_t b = s.find_first_not_of(" \t\r\n");
-  if (b == std::string::npos) {
-    return std::string();
-  }
-  size_t e = s.find_last_not_of(" \t\r\n");
-  return s.substr(b, e - b + 1);
+	size_t b = s.find_first_not_of(" \t\r\n");
+	if (b == std::string::npos) {
+		return std::string();
+	}
+	size_t e = s.find_last_not_of(" \t\r\n");
+	return s.substr(b, e - b + 1);
 }
 
 struct MetadataField {
-  const char *source; //!< the element name in the source document
-  const char *key;    //!< pandoc's key, which is what attributes['key'] carries
+	const char *source; //!< the element name in the source document
+	const char *key;    //!< pandoc's key, which is what attributes['key'] carries
 };
 
 //! DOCX `docProps/core.xml`. dcterms:modified is deliberately absent: pandoc
@@ -100,30 +100,29 @@ static constexpr MetadataField ODT_META_FIELDS[] = {
 //! `Block` must expose `kind`, `content` and `inlines[].content`; both readers'
 //! block types do, which is why this is a template rather than two copies.
 template <typename Block>
-void DropDuplicatedMetadataParagraphs(
-    std::vector<Block> &blocks,
-    const std::vector<std::pair<size_t, std::string>> &candidates) {
-  if (candidates.empty()) {
-    return;
-  }
-  std::set<std::string> meta_text;
-  for (auto &b : blocks) {
-    if (b.kind != DuckBlockTypes::KIND_VALUE) {
-      continue;
-    }
-    for (auto &run : b.inlines) {
-      if (!run.content.empty()) {
-        meta_text.insert(run.content);
-      }
-    }
-  }
-  // Highest index first: erasing from the front would invalidate the later
-  // ones.
-  for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
-    if (it->first < blocks.size() && meta_text.count(it->second)) {
-      blocks.erase(blocks.begin() + static_cast<long>(it->first));
-    }
-  }
+void DropDuplicatedMetadataParagraphs(std::vector<Block> &blocks,
+                                      const std::vector<std::pair<size_t, std::string>> &candidates) {
+	if (candidates.empty()) {
+		return;
+	}
+	std::set<std::string> meta_text;
+	for (auto &b : blocks) {
+		if (b.kind != DuckBlockTypes::KIND_VALUE) {
+			continue;
+		}
+		for (auto &run : b.inlines) {
+			if (!run.content.empty()) {
+				meta_text.insert(run.content);
+			}
+		}
+	}
+	// Highest index first: erasing from the front would invalidate the later
+	// ones.
+	for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+		if (it->first < blocks.size() && meta_text.count(it->second)) {
+			blocks.erase(blocks.begin() + static_cast<long>(it->first));
+		}
+	}
 }
 
 } // namespace duckdb

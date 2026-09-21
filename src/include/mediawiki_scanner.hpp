@@ -25,44 +25,40 @@ namespace mediawiki {
 //! reader, and a multi-line template arrives as ONE line of kind TEMPLATE
 //! carrying the whole raw call.
 enum class LineKind {
-  BLANK,        //!< empty or whitespace-only: separates paragraphs and lists
-  HEADING,      //!< `== text ==`, level from the `=` run length
-  LIST_ITEM,    //!< `*`, `#`, `;`, `:` runs -- nesting is the run's LENGTH, not
-                //!< indentation
-  PREFORMATTED, //!< a leading space. MediaWiki renders this <pre>; see the
-                //!< reader.
-  TABLE_START,  //!< `{|`
-  TABLE_ROW,    //!< `|-` -- a row separator, not a row's content
-  TABLE_CELL,   //!< `| a` or `| a || b`
-  TABLE_HEADER, //!< `! a` or `! a !! b`
-  TABLE_END,    //!< `|}`
-  HRULE,        //!< four or more dashes alone on a line
-  TEMPLATE, //!< a `{{...}}` call starting a line, possibly spanning many source
-            //!< lines
-  BEHAVIOR, //!< `__TOC__`, `__NOTOC__` -- consumed by MediaWiki, never shown to
-            //!< a reader
-  COMMENT,  //!< `<!-- ... -->` alone on a line
-  HTML_BLOCK, //!< `<blockquote>`, `<syntaxhighlight>`, `<pre>`,
-              //!< `<references/>`, ...
-  TEXT,       //!< anything else: paragraph content
+	BLANK,        //!< empty or whitespace-only: separates paragraphs and lists
+	HEADING,      //!< `== text ==`, level from the `=` run length
+	LIST_ITEM,    //!< `*`, `#`, `;`, `:` runs -- nesting is the run's LENGTH, not
+	              //!< indentation
+	PREFORMATTED, //!< a leading space. MediaWiki renders this <pre>; see the
+	              //!< reader.
+	TABLE_START,  //!< `{|`
+	TABLE_ROW,    //!< `|-` -- a row separator, not a row's content
+	TABLE_CELL,   //!< `| a` or `| a || b`
+	TABLE_HEADER, //!< `! a` or `! a !! b`
+	TABLE_END,    //!< `|}`
+	HRULE,        //!< four or more dashes alone on a line
+	TEMPLATE,     //!< a `{{...}}` call starting a line, possibly spanning many source
+	              //!< lines
+	BEHAVIOR,     //!< `__TOC__`, `__NOTOC__` -- consumed by MediaWiki, never shown to
+	              //!< a reader
+	COMMENT,      //!< `<!-- ... -->` alone on a line
+	HTML_BLOCK,   //!< `<blockquote>`, `<syntaxhighlight>`, `<pre>`,
+	              //!< `<references/>`, ...
+	TEXT,         //!< anything else: paragraph content
 };
 
 //! One classified line. `text` is the line's CONTENT with its marker removed,
 //! so a consumer never re-parses the prefix.
 struct Line {
-  LineKind kind = LineKind::TEXT;
-  std::string
-      text; //!< content after the marker; for TEMPLATE, the whole raw call
-  std::string name; //!< TEMPLATE: the template's name. BEHAVIOR: the switch,
-                    //!< e.g. __TOC__. HTML_BLOCK: the tag name, lowercased.
-  std::string
-      attrs; //!< HTML_BLOCK: the raw attribute text inside the opening tag
-  std::string markers; //!< LIST_ITEM: the raw marker run (`#*`), so each depth
-                       //!< knows its type
-  bool verbatim =
-      false; //!< HTML_BLOCK: `text` is the COMPLETE raw markup, emit it as-is
-  int level =
-      0; //!< HEADING: `=` count, capped at 6. LIST_ITEM: marker run length.
+	LineKind kind = LineKind::TEXT;
+	std::string text;      //!< content after the marker; for TEMPLATE, the whole raw call
+	std::string name;      //!< TEMPLATE: the template's name. BEHAVIOR: the switch,
+	                       //!< e.g. __TOC__. HTML_BLOCK: the tag name, lowercased.
+	std::string attrs;     //!< HTML_BLOCK: the raw attribute text inside the opening tag
+	std::string markers;   //!< LIST_ITEM: the raw marker run (`#*`), so each depth
+	                       //!< knows its type
+	bool verbatim = false; //!< HTML_BLOCK: `text` is the COMPLETE raw markup, emit it as-is
+	int level = 0;         //!< HEADING: `=` count, capped at 6. LIST_ITEM: marker run length.
 };
 
 //! Classify every line of a MediaWiki document. Never fails: an unrecognised

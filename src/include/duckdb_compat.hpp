@@ -59,17 +59,16 @@ namespace duckdb {
 template <class T, class = void>
 struct CompatHasSetChildCardinality : std::false_type {};
 template <class T>
-struct CompatHasSetChildCardinality<
-    T, decltype(void(std::declval<T &>().SetChildCardinality(idx_t(0))))>
+struct CompatHasSetChildCardinality<T, decltype(void(std::declval<T &>().SetChildCardinality(idx_t(0))))>
     : std::true_type {};
 
 template <class CHUNK = DataChunk>
 inline void CompatSetOutputCardinality(CHUNK &chunk, idx_t count) {
-  if constexpr (CompatHasSetChildCardinality<CHUNK>::value) {
-    chunk.SetChildCardinality(count);
-  } else {
-    chunk.SetCardinality(count);
-  }
+	if constexpr (CompatHasSetChildCardinality<CHUNK>::value) {
+		chunk.SetChildCardinality(count);
+	} else {
+		chunk.SetCardinality(count);
+	}
 }
 
 } // namespace duckdb

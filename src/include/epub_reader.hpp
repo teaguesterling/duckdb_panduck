@@ -39,51 +39,50 @@ namespace duckdb {
 namespace epub {
 
 struct EpubInline {
-  std::string element_type;
-  std::string content;
-  std::string href; //!< set for links
-  std::string src;  //!< set for images
+	std::string element_type;
+	std::string content;
+	std::string href; //!< set for links
+	std::string src;  //!< set for images
 };
 
 struct EpubBlock {
-  //! duck_block kind. Empty means `block`, which is everything a document body
-  //! produces. `value` is document METADATA -- a discrete field, not body
-  //! content.
-  std::string kind;
-  //! `value` only: the field name, in attributes['key']. PANDOC'S namespace,
-  //! not the source's -- dc:creator is `author`.
-  std::string key;
-  //! `page_break` only: the PRINT edition's page label, from
-  //! epub:type="pagebreak". EPUB 3's way of recording where the print edition's
-  //! page N began, which citation and library workflows need and which this
-  //! reader discarded until 2026-09-01.
-  std::string page_number;
-  std::string element_type; //!< heading, paragraph, list_item, blockquote, div,
-                            //!< code, hr
-  std::string content;   //!< flattened text; empty when inlines are populated
-  int heading_level = 0; //!< 1-6 for headings, 0 otherwise
-  bool container =
-      false; //!< true for blocks whose text lives in the blocks that follow
-  //! Structural nesting depth, NOT the heading level. 0 means NULL -- a block
-  //! at the top of the document, owned by no container. `level` IS duck_block's
-  //! containment mechanism: a container's children follow it at level+1 and the
-  //! container ends at the first element back at its own level, so a consumer
-  //! has nothing else to read.
-  int level = 0;
-  //! 'bullet' or 'ordered' for a `list`, empty otherwise. Ordered lists
-  //! additionally carry start/number_style/number_delim -- emitted always, even
-  //! at their defaults, because that is what duck_block_utils' Pandoc reader
-  //! does and matching the stricter producer keeps one shape rather than two.
-  //! For a `section`: which kind of sectioning container the source marked, per
-  //! the duck_block role vocabulary. Empty for anything else.
-  std::string role;
-  //! `table` only: 'json', because spec 5.0 makes table the one element_type
-  //! whose content is a JSON document rather than text. Empty elsewhere, and an
-  //! empty encoding is emitted as NULL rather than as the string.
-  std::string encoding;
-  std::string list_type;
-  std::string list_start, number_style, number_delim;
-  std::vector<EpubInline> inlines;
+	//! duck_block kind. Empty means `block`, which is everything a document body
+	//! produces. `value` is document METADATA -- a discrete field, not body
+	//! content.
+	std::string kind;
+	//! `value` only: the field name, in attributes['key']. PANDOC'S namespace,
+	//! not the source's -- dc:creator is `author`.
+	std::string key;
+	//! `page_break` only: the PRINT edition's page label, from
+	//! epub:type="pagebreak". EPUB 3's way of recording where the print edition's
+	//! page N began, which citation and library workflows need and which this
+	//! reader discarded until 2026-09-01.
+	std::string page_number;
+	std::string element_type; //!< heading, paragraph, list_item, blockquote, div,
+	                          //!< code, hr
+	std::string content;      //!< flattened text; empty when inlines are populated
+	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
+	bool container = false;   //!< true for blocks whose text lives in the blocks that follow
+	//! Structural nesting depth, NOT the heading level. 0 means NULL -- a block
+	//! at the top of the document, owned by no container. `level` IS duck_block's
+	//! containment mechanism: a container's children follow it at level+1 and the
+	//! container ends at the first element back at its own level, so a consumer
+	//! has nothing else to read.
+	int level = 0;
+	//! 'bullet' or 'ordered' for a `list`, empty otherwise. Ordered lists
+	//! additionally carry start/number_style/number_delim -- emitted always, even
+	//! at their defaults, because that is what duck_block_utils' Pandoc reader
+	//! does and matching the stricter producer keeps one shape rather than two.
+	//! For a `section`: which kind of sectioning container the source marked, per
+	//! the duck_block role vocabulary. Empty for anything else.
+	std::string role;
+	//! `table` only: 'json', because spec 5.0 makes table the one element_type
+	//! whose content is a JSON document rather than text. Empty elsewhere, and an
+	//! empty encoding is emitted as NULL rather than as the string.
+	std::string encoding;
+	std::string list_type;
+	std::string list_start, number_style, number_delim;
+	std::vector<EpubInline> inlines;
 };
 
 //! Parse a .epub file into block elements, in spine order. Throws IOException

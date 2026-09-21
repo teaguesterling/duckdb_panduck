@@ -261,68 +261,60 @@ namespace {
 struct SupportedExtensionsBindData : public TableFunctionData {};
 
 struct SupportedExtensionsGlobalState : public GlobalTableFunctionState {
-  idx_t offset = 0;
+	idx_t offset = 0;
 
-  static unique_ptr<GlobalTableFunctionState> Init(ClientContext &,
-                                                   TableFunctionInitInput &) {
-    return make_uniq<SupportedExtensionsGlobalState>();
-  }
+	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &, TableFunctionInitInput &) {
+		return make_uniq<SupportedExtensionsGlobalState>();
+	}
 };
 
-unique_ptr<FunctionData>
-SupportedExtensionsBind(ClientContext &, TableFunctionBindInput &,
-                        vector<LogicalType> &return_types,
-                        panduck::BindNames &names) {
-  names = {"format", "extensions", "reader", "status", "notes"};
-  return_types = {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
-                  LogicalType::VARCHAR, LogicalType::VARCHAR,
-                  LogicalType::VARCHAR};
-  return make_uniq<SupportedExtensionsBindData>();
+unique_ptr<FunctionData> SupportedExtensionsBind(ClientContext &, TableFunctionBindInput &,
+                                                 vector<LogicalType> &return_types, panduck::BindNames &names) {
+	names = {"format", "extensions", "reader", "status", "notes"};
+	return_types = {LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR), LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::VARCHAR};
+	return make_uniq<SupportedExtensionsBindData>();
 }
 
-void SupportedExtensionsScan(ClientContext &, TableFunctionInput &input,
-                             DataChunk &output) {
-  auto &state = input.global_state->Cast<SupportedExtensionsGlobalState>();
+void SupportedExtensionsScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
+	auto &state = input.global_state->Cast<SupportedExtensionsGlobalState>();
 
-  idx_t count = 0;
-  while (state.offset < readers::FORMAT_COUNT && count < STANDARD_VECTOR_SIZE) {
-    const auto &f = readers::FORMATS[state.offset];
+	idx_t count = 0;
+	while (state.offset < readers::FORMAT_COUNT && count < STANDARD_VECTOR_SIZE) {
+		const auto &f = readers::FORMATS[state.offset];
 
-    vector<Value> extensions;
-    for (auto ext = f.extensions; *ext; ext++) {
-      extensions.push_back(Value(*ext));
-    }
+		vector<Value> extensions;
+		for (auto ext = f.extensions; *ext; ext++) {
+			extensions.push_back(Value(*ext));
+		}
 
-    output.SetValue(0, count, Value(f.format));
-    output.SetValue(1, count, Value::LIST(LogicalType::VARCHAR, extensions));
-    // A format with no reader in this build has no function to name -- NULL,
-    // not "".
-    output.SetValue(2, count,
-                    f.reader ? Value(f.reader) : Value(LogicalType::VARCHAR));
-    output.SetValue(3, count, Value(f.status));
-    output.SetValue(4, count, Value(f.notes));
+		output.SetValue(0, count, Value(f.format));
+		output.SetValue(1, count, Value::LIST(LogicalType::VARCHAR, extensions));
+		// A format with no reader in this build has no function to name -- NULL,
+		// not "".
+		output.SetValue(2, count, f.reader ? Value(f.reader) : Value(LogicalType::VARCHAR));
+		output.SetValue(3, count, Value(f.status));
+		output.SetValue(4, count, Value(f.notes));
 
-    state.offset++;
-    count++;
-  }
-  output.SetCardinality(count);
+		state.offset++;
+		count++;
+	}
+	output.SetCardinality(count);
 }
 
 } // namespace
 
 void RegisterSupportedExtensionsFunction(ExtensionLoader &loader) {
-  TableFunction fn("panduck_supported_extensions", {}, SupportedExtensionsScan,
-                   SupportedExtensionsBind,
-                   SupportedExtensionsGlobalState::Init);
-  CreateTableFunctionInfo info(std::move(fn));
-  info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-  FunctionDescription desc;
-  desc.description =
-      "Return list of supported document formats and extensions in panduck.";
-  desc.examples = {"SELECT * FROM panduck_supported_extensions()"};
-  desc.categories = {"panduck"};
-  info.descriptions.push_back(desc);
-  loader.RegisterFunction(std::move(info));
+	TableFunction fn("panduck_supported_extensions", {}, SupportedExtensionsScan, SupportedExtensionsBind,
+	                 SupportedExtensionsGlobalState::Init);
+	CreateTableFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.description = "Return list of supported document formats and extensions in panduck.";
+	desc.examples = {"SELECT * FROM panduck_supported_extensions()"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

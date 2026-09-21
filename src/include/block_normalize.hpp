@@ -26,8 +26,7 @@ namespace duckdb {
 //! reaches the run. panduck's own readers enforce the rule at emission instead,
 //! where they do.
 inline void CollapseLonePlainIntoParent(vector<Value> &blocks) {
-  duck_block::CollapseLonePlainIntoParent(blocks,
-                                          DuckBlockTypes::DuckBlockType());
+	duck_block::CollapseLonePlainIntoParent(blocks, DuckBlockTypes::DuckBlockType());
 }
 
 } // namespace duckdb

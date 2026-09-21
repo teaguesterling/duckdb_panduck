@@ -50,12 +50,11 @@ static constexpr const char *STATUS_PLANNED = "planned";
 static constexpr const char *STATUS_DROPPED = "dropped";
 
 struct Mapping {
-  const char *pandoc_type; //!< Pandoc constructor name, e.g. "Header"
-  const char *kind;        //!< "block" or "inline"
-  const char
-      *element_type;  //!< duck_block element_type, or nullptr when dropped
-  const char *status; //!< one of STATUS_*
-  const char *notes;
+	const char *pandoc_type;  //!< Pandoc constructor name, e.g. "Header"
+	const char *kind;         //!< "block" or "inline"
+	const char *element_type; //!< duck_block element_type, or nullptr when dropped
+	const char *status;       //!< one of STATUS_*
+	const char *notes;
 };
 
 extern const Mapping MAPPINGS[];

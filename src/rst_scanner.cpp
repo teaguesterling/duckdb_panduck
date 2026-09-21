@@ -186,6 +186,7 @@ std::vector<Line> ScanRst(const std::string &src) {
 		}
 		if ((t[0] == '-' || t[0] == '*' || t[0] == '+') && t.size() > 1 && t[1] == ' ') {
 			line.kind = LineKind::BULLET;
+			line.raw_text = t;
 			line.text = TrimBoth(t.substr(2));
 			{
 				auto k = t.find_first_not_of(" \t", 1);
@@ -208,6 +209,7 @@ std::vector<Line> ScanRst(const std::string &src) {
 				line.ordered = true;
 				line.start = auto_num ? 1 : std::atoi(t.substr(0, d).c_str());
 				line.text = TrimBoth(t.substr(d + 2));
+				line.raw_text = t; // the marker is not recoverable from start alone (#84)
 				{
 					auto k = t.find_first_not_of(" \t", d + 1);
 					line.text_col = line.indent + static_cast<int>(k == std::string::npos ? d + 2 : k);

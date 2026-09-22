@@ -4,6 +4,7 @@
 
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
+#include "slugify.hpp"
 #include "textile_scanner.hpp"
 
 #include "duckdb/function/table_function.hpp"
@@ -28,30 +29,10 @@ std::string Trim(const std::string &s) {
 	return s.substr(b, e - b + 1);
 }
 
-//! Heading anchors, matching pandoc's: lowercase, spaces to hyphens,
-//! punctuation dropped. Measured -- `h1. Top Heading` anchors as `top-heading`.
-//! NOTE THE SEPARATOR: MediaWiki slugs use underscores and these use hyphens,
-//! which is a difference between the two formats' conventions rather than a
-//! choice either reader made.
-std::string Slugify(const std::string &text) {
-	std::string out;
-	bool prev_sep = false;
-	for (char c : text) {
-		if (std::isalnum(static_cast<unsigned char>(c))) {
-			out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-			prev_sep = false;
-		} else if (c == ' ' || c == '-' || c == '_') {
-			if (!out.empty() && !prev_sep) {
-				out += '-';
-				prev_sep = true;
-			}
-		}
-	}
-	while (!out.empty() && out.back() == '-') {
-		out.pop_back();
-	}
-	return out;
-}
+// The heading anchor moved to slugify.hpp, shared with rst and mediawiki (#85). The copy
+// that lived here differed from mediawiki's only in its separator -- and the two were
+// wrong in the SAME three ways, which is what one function in two places hides: it reads
+// as two independent decisions agreeing, rather than one mistake written twice.
 
 //! Strip a leading textile CELL MODIFIER, and report whether it marked a header
 //! cell.
@@ -266,7 +247,7 @@ public:
 				// AN EXPLICIT ID WINS over the derived slug. `h1(#guide-title).` states
 				// its anchor; the slugifier only guesses one from the heading text, and
 				// the two agree by luck rather than by rule.
-				auto id = ln.id.empty() ? Slugify(ln.text) : ln.id;
+				auto id = ln.id.empty() ? HeadingSlug(ln.text, '-') : ln.id;
 				if (!id.empty()) {
 					b.attributes["id"] = id;
 				}

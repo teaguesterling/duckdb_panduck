@@ -387,3 +387,22 @@ query I
 SELECT count(*) FROM read_pdf_blocks('test/fixtures/two_pages.pdf', pages := '1');
 ----
 28
+
+# ---------------------------------------------------------------------------
+# MOVED FROM multidoc.test (#34). A default (empty) reader_params on the pdf branch still
+# works -- the guard that refuses a NAMED reader_params on a special-cased branch must not
+# also refuse a call that names nothing.
+#
+# It lived in multidoc.test next to its negative twin, which is where it reads best, but it
+# cannot stay there: it actually READS the pdf, and the community registry excludes pdf on
+# six platforms (wasm x3, windows mingw/rtools/arm64), so multidoc.test cannot install it
+# without turning those red. Here the dependency is already declared by
+# `require-env PANDUCK_TEST_PDF` at the top of this file.
+#
+# Worth recording why it never failed before: multidoc.test skipped entirely on a clean
+# runner, and on developer machines pdf happened to be installed. The assertion has only
+# ever run where its undeclared dependency was already satisfied.
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf'));
+----
+7

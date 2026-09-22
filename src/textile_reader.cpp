@@ -119,16 +119,59 @@ void PushWrapped(std::vector<TxInline> &out, const char *type, const std::string
 	}
 }
 
-//! One delimiter pair, e.g. `-del-` or `^sup^`. Returns false when
-//! unterminated, which leaves the character to be emitted as ordinary text.
+//! One delimiter pair, e.g. `-del-` or `^sup^`. Returns false when unterminated
+//! or when either end sits INSIDE A WORD, which leaves the character to be
+//! emitted as ordinary text.
+//!
+//! THE WORD-BOUNDARY RULE (#90). Without it, ordinary hyphenated English is
+//! corrupted and characters are LOST. `a well-known co-author wrote this` paired
+//! the two hyphens and produced `a well` + strikethrough `known co` + `author
+//! wrote this` -- the sentence split across three nodes and both hyphens eaten.
+//! check-wordloss cannot catch that: every WORD survives, only the punctuation
+//! dies. Two `snake_case` identifiers in one sentence do the same thing.
+//!
+//! Measured against RedCloth 4.3.3 -- textile's reference implementation -- and
+//! python-textile 4.0.4, which agree with each other and with pandoc. ALL ELEVEN
+//! delimiters were affected, not only the `_` and `-` this was reported for.
+//!
+//! THE TEST IS ON ALPHANUMERICS, deliberately, and not on spaces:
+//!
+//!   `see (*bold*) here`     -> markup:  `(` and `)` are not alphanumeric
+//!   `a -strike-.`           -> markup:  the close is followed by `.`
+//!   `a well-known co-b`     -> literal: the open is preceded by `n`
+//!   `a *bold*text here`     -> literal: the close is followed by `t`
+//!
+//! A "must be surrounded by spaces" rule would wrongly reject the first two, both
+//! of which the references read as markup.
+//!
+//! REJECTION IS PER CANDIDATE, not per line. Returning false leaves ParseInlines
+//! to emit one character and keep scanning, so `a -del- well-known b` still gets
+//! its `del` AND still keeps `well-known` literal -- measured on both references.
+//!
+//! A failed close GIVES UP rather than searching for a later one: both references
+//! read `a *bold*text here` as literal rather than pairing the open with some
+//! delimiter further along.
+//!
+//! `??` is the single delimiter the two references disagree on -- RedCloth makes
+//! it a cite intra-word, python-textile leaves it literal. The rule is applied
+//! uniformly, so panduck follows python-textile there. A declared divergence on a
+//! shape nobody writes beats a special case the next reader has to justify.
 bool TryDelim(const std::string &s, size_t &i, const char *open, const char *type, int level,
               std::vector<TxInline> &out, std::string &pending) {
 	size_t n = strlen(open);
 	if (s.compare(i, n, open) != 0) {
 		return false;
 	}
+	// The OPENING delimiter may not sit inside a word.
+	if (i > 0 && std::isalnum(static_cast<unsigned char>(s[i - 1]))) {
+		return false;
+	}
 	size_t close = s.find(open, i + n);
 	if (close == std::string::npos) {
+		return false;
+	}
+	// ...and neither may the CLOSING one.
+	if (close + n < s.size() && std::isalnum(static_cast<unsigned char>(s[close + n]))) {
 		return false;
 	}
 	PushText(out, pending, level);

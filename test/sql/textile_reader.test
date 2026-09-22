@@ -134,6 +134,89 @@ cite	cite
 span	spn
 code	cd
 
+# ---------------------------------------------------------------------------
+# A DELIMITER ONLY OPENS AND CLOSES AT A WORD BOUNDARY (#90).
+#
+# Without this, ordinary hyphenated English is CORRUPTED and characters are lost.
+# `a well-known co-author wrote this` paired the two hyphens and emitted
+# `text[a well] strikethrough[known co] text[author wrote this]` -- the sentence split
+# across three nodes and both hyphens eaten. check-wordloss cannot see it: every WORD
+# survives, only the punctuation dies.
+#
+# Measured against RedCloth 4.3.3 -- textile's reference implementation -- and
+# python-textile 4.0.4. Both agree, and all ELEVEN delimiters were affected, not just the
+# `_` and `-` this was filed for.
+#
+# THE RULE: an opening delimiter must be at the start or preceded by a non-alphanumeric;
+# a closing one must be at the end or followed by a non-alphanumeric. That is deliberately
+# NOT "surrounded by spaces" -- the records below include the punctuation-adjacent forms a
+# space rule would wrongly reject.
+
+# Asserted UNFILTERED, so the absence of inline children is part of the assertion: with no
+# markup left, the text lives in the paragraph's own `content` and there are no child rows.
+# A stray inline would show up here as an extra row.
+query II
+SELECT element_type, coalesce(content, '<NULL>') FROM read_textile_blocks_string(
+  E'p. a well-known co-author wrote this') ORDER BY element_order;
+----
+paragraph	a well-known co-author wrote this
+
+query II
+SELECT element_type, coalesce(content, '<NULL>') FROM read_textile_blocks_string(
+  E'p. use snake_case_name and another_one here') ORDER BY element_order;
+----
+paragraph	use snake_case_name and another_one here
+
+# PUNCTUATION ADJACENT IS STILL MARKUP. `(` before and `)` after are non-alphanumeric, so
+# these stay bold -- a space-based rule would break them, which is why the rule is phrased
+# on alphanumerics.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'p. see (*bold*) here')
+WHERE kind = 'inline' AND element_type <> 'text';
+----
+bold	bold
+
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'p. a -strike-.')
+WHERE kind = 'inline' AND element_type <> 'text';
+----
+strikethrough	strike
+
+# REJECTION IS PER CANDIDATE, not per line: a valid pair earlier must not stop a literal
+# hyphenated word later, and vice versa. Both references read exactly this.
+query I
+SELECT string_agg(element_type || '[' || coalesce(content, '') || ']', ' ' ORDER BY element_order)
+FROM read_textile_blocks_string(E'p. a -del- well-known b') WHERE kind = 'inline';
+----
+text[a ] strikethrough[del] text[ well-known b]
+
+# ...and two valid pairs on one line both still match.
+query II
+SELECT element_type, content FROM read_textile_blocks_string(E'p. a -one- and -two- b')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+strikethrough	one
+strikethrough	two
+
+# A CLOSING DELIMITER FOLLOWED BY A LETTER does not close: both references read this whole
+# span as literal rather than pairing with some later delimiter.
+query II
+SELECT element_type, coalesce(content, '<NULL>') FROM read_textile_blocks_string(
+  E'p. a *bold*text here') ORDER BY element_order;
+----
+paragraph	a *bold*text here
+
+# DECLARED DIVERGENCE -- `??` is the one delimiter the two references disagree on. RedCloth
+# makes `aa??bb??cc` a cite intra-word; python-textile leaves it literal. panduck applies
+# the boundary rule uniformly, so it is literal here. Uniformity across eleven delimiters is
+# worth more than matching RedCloth on a shape nobody writes, but it is a CHOICE and is
+# pinned as one.
+query II
+SELECT element_type, coalesce(content, '<NULL>') FROM read_textile_blocks_string(
+  E'p. aa??bb??cc') ORDER BY element_order;
+----
+paragraph	aa??bb??cc
+
 # A link's trailing sentence punctuation is NOT part of the URL. Textile's own rule, and
 # without it every link ending a sentence keeps the full stop.
 query III

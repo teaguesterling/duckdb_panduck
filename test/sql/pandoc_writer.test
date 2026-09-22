@@ -575,9 +575,21 @@ SELECT regexp_extract(panduck_blocks_to_pandoc_json([
 ----
 [{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]}
 
-# 5. CONTROL -- the fix is NARROW. An element_type panduck does not know is still turned
-# into a blank Para. Whether an unmapped type should instead RAISE is a separate open
-# question (#81); pinning the current behaviour keeps this fix from silently deciding it.
+# 5. AN UNMAPPED TYPE BECOMES A Div TAGGED WITH source_type, NOT A BLANK Para (#81).
+#
+# This record used to pin `Para [Str ""]` as the behaviour and named the question open. The
+# ruling: be generous with input, do not validate, do not raise -- and an empty paragraph is
+# not the answer either, because it INVENTS a paragraph the document never had.
+#
+# The mechanism already existed and is not new here. TYPE_GENERIC's read arm says it
+# outright -- "Never drop a constructor silently: preserve it verbatim so document length is
+# stable and the gap stays visible instead of invisible" -- and the unparseable-content arm
+# a few lines above already emits exactly this shape for the same reason: "it does not
+# fabricate prose the document never had". An unmapped type arriving from OUTSIDE has no
+# encoding='json' payload, so it missed both arms and fell through to the Para fallback.
+#
+# A Div accepts anything, asserts nothing, and keeps the original type name where a consumer
+# can find it. Round-trips as valid pandoc JSON, which check-writeback verifies.
 query I
 SELECT panduck_blocks_to_pandoc_blocks([
   {'kind':'block','element_type':'sparkle','content':'','level':1,
@@ -585,7 +597,26 @@ SELECT panduck_blocks_to_pandoc_blocks([
   {'kind':'block','element_type':'paragraph','content':'Real body.','level':1,
    'encoding':'text','attributes':MAP{},'element_order':1}]);
 ----
-[{"t":"Para","c":[{"t":"Str","c":""}]},{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]
+[{"t":"Div","c":[["",["sparkle"],[]],[]]},{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]
+
+# CONTENT IS KEPT, not dropped: an unmapped type carrying text gets that text as a Para
+# inside the Div. Dropping it would be a silent loss, and re-printing it as a bare Para
+# would be the fabrication this fix removes -- the Div is what makes it attributable.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'sparkle','content':'held text','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0}]);
+----
+[{"t":"Div","c":[["",["sparkle"],[]],[{"t":"Para","c":[{"t":"Str","c":"held text"}]}]]}]
+
+# AND IT IS STILL ACCEPTED BY A REAL PANDOC -- the property check-writeback enforces, and
+# the reason a Div was chosen over inventing a constructor pandoc does not have.
+query I
+SELECT regexp_extract(panduck_blocks_to_pandoc_json([
+  {'kind':'block','element_type':'sparkle','content':'held text','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0}]), '"blocks":(.*)$', 1);
+----
+[{"t":"Div","c":[["",["sparkle"],[]],[{"t":"Para","c":[{"t":"Str","c":"held text"}]}]]}]}
 
 # ---------------------------------------------------------------------------------------
 # A NOTE AND A CITE SURVIVE THE WRITE.

@@ -586,3 +586,72 @@ SELECT panduck_blocks_to_pandoc_blocks([
    'encoding':'text','attributes':MAP{},'element_order':1}]);
 ----
 [{"t":"Para","c":[{"t":"Str","c":""}]},{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]
+
+# ---------------------------------------------------------------------------------------
+# A NOTE AND A CITE SURVIVE THE WRITE.
+#
+# Both fell through to the placeholder arm at the end of ConvertDbInlinesToPandocVal, which
+# emits `Str "[" + element_type + "]"`. Measured on a real round trip of rich.docx:
+#
+#     footnote body text in the output : 0 occurrences
+#     the literal string `[note]`      : 1 occurrence
+#
+# So a docx footnote exported as the visible text `[note]` with its body DELETED, and a
+# real pandoc accepted it -- `Para [ Str "Text with a footnote." , Str "[note]" ]`. That is
+# the failure the TYPE_GENERIC arm in pandoc_block_convert.cpp already names: worse than a
+# drop, because the corruption looks like content.
+#
+# NEITHER GUARD COULD SEE IT. check-writeback asserts only that a real pandoc ACCEPTS the
+# JSON, and it does. check-wordloss compares READERS against pandoc, so it never looks at
+# the write direction at all. Eight fixtures across docx, odt and latex were affected.
+#
+# `INLINE_NOTE` and `INLINE_CITE` needed no vocabulary addition -- both already exist, four
+# readers already emit them, and pandoc_ast_map.cpp already declares Note STATUS_MAPPED.
+# Only the export arm was missing.
+
+# The note body becomes `Para [Str body]` inside the Note, because pandoc's Note holds
+# BLOCKS while a panduck note row carries its body as content. Verified to RENDER, not
+# merely parse: this JSON converts to markdown as `Text with a footnote.[^1]` with
+# `[^1]: The footnote body.` beneath it.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'inline','element_type':'text','content':'Text with a footnote.','level':2,
+   'encoding':'text','attributes':MAP{},'element_order':1},
+  {'kind':'inline','element_type':'note','content':'The footnote body.','level':2,
+   'encoding':'text','attributes':MAP{},'element_order':2}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":"Text with a footnote."},{"t":"Note","c":[{"t":"Para","c":[{"t":"Str","c":"The footnote body."}]}]}]}]
+
+# A CITE keeps its text and its constructor. The citations list is EMPTY on purpose:
+# panduck has no citation record to put there, and inventing one would be worse than an
+# honest gap. pandoc itself uses this same constructor for textile's `??cited work??` --
+# measured, `Cite [] [Str "cited" Space Str "work"]` -- so this is not a bibliographic
+# claim, it is the constructor pandoc uses for both.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'inline','element_type':'cite','content':'cited work','level':2,
+   'encoding':'text','attributes':MAP{},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Cite","c":[[],[{"t":"Str","c":"cited work"}]]}]}]
+
+# CONTROL: the placeholder arm still catches a type that genuinely has no constructor, so
+# this fix stays narrow and the no-silent-drops rule keeps its visible marker.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'inline','element_type':'glimmer','content':'x','level':2,
+   'encoding':'text','attributes':MAP{},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":"[glimmer]"}]}]
+
+# END TO END on a real document: the body text is present and the placeholder is gone.
+query II
+SELECT contains(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/rich.docx')), 'The footnote body.'),
+       contains(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtures/rich.docx')), '[note]');
+----
+true	false

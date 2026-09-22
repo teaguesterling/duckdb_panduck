@@ -498,3 +498,91 @@ SELECT starts_with(panduck_blocks_to_pandoc_json(panduck_read_blocks('test/fixtu
                 '"blocks":[{"t":"Header"');
 ----
 true
+
+# ---------------------------------------------------------------------------------------
+# A DOCUMENT ROOT CONTRIBUTES NOTHING (#81).
+#
+# duck_block 1.4 allows an optional `kind='block' element_type='document'` row as an
+# explicit document root -- several per relation, one per document. The writer had no arm
+# for it, so it reached the catch-all that turns any unmapped type into a Para built from
+# `content`. That has TWO failure modes, and the second is the serious one:
+#
+#   empty root             -> an INVENTED blank paragraph
+#   content-carrying root  -> the root's text FABRICATED as document prose
+#
+# A real pandoc accepts both (exit 0) and renders a blank line, so nothing failed loudly.
+#
+# The fix is a skip, not a mapping: pandoc's AST has no constructor for "the document
+# itself", so a root is lossless to drop. It is dropped REGARDLESS OF CONTENT, because the
+# alternative for a content-carrying root is to fabricate text -- the same reasoning the
+# unparseable-content branch already gives for emitting an empty Div rather than reprinting
+# a blob as prose.
+#
+# WHAT TO PIN, learned from duck_block_utils getting this wrong first: their original test
+# pinned only the empty-root case, which PROVED THE THING THAT ALREADY WORKED. The record
+# that catches the real defect is the content-carrying one.
+
+# 1. The blank is gone. Asserted as exact JSON, not as equality between two computed sides.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'document','content':'','level':0,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'paragraph','content':'Real body.','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]
+
+# 2. THE RECORD THAT MATTERS: a root carrying content is DROPPED, not rendered. Before the
+# fix this emitted `{"t":"Str","c":"LEAKED ROOT TEXT"}` -- prose the document never had.
+# The 1.4 ruling says a root carries no content and the validator rejects it, but panduck's
+# writer does not validate its input, so invalid input must still not fabricate text.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'document','content':'LEAKED ROOT TEXT','level':0,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'paragraph','content':'Real body.','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]
+
+# 3. SEVERAL ROOTS CONCATENATE rather than refusing. Pandoc JSON is ONE document, so the
+# boundary is lost in the OUTPUT FORMAT, not in the relation -- refusing would make a valid
+# multi-document relation unconvertible. Concatenation already worked; the blanks between
+# were the defect.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'document','content':'','level':0,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'paragraph','content':'a','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':1},
+  {'kind':'block','element_type':'document','content':'','level':0,
+   'encoding':'text','attributes':MAP{},'element_order':2},
+  {'kind':'block','element_type':'paragraph','content':'bb','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':3}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":"a"}]},{"t":"Para","c":[{"t":"Str","c":"bb"}]}]
+
+# 4. A SECOND ENTRY POINT, because the fix rests on all six surfaces sharing BuildBlocksJson
+# -- panduck_blocks_to_pandoc_ast / _blocks / _json, panduck_pandoc_ast_json,
+# panduck_write_pandoc_ast and the pandoc_ast table function. A test on one entry point
+# would pass even if that were false.
+query I
+SELECT regexp_extract(panduck_blocks_to_pandoc_json([
+  {'kind':'block','element_type':'document','content':'LEAKED ROOT TEXT','level':0,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'paragraph','content':'Real body.','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':1}]), '"blocks":(.*)$', 1);
+----
+[{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]}
+
+# 5. CONTROL -- the fix is NARROW. An element_type panduck does not know is still turned
+# into a blank Para. Whether an unmapped type should instead RAISE is a separate open
+# question (#81); pinning the current behaviour keeps this fix from silently deciding it.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'sparkle','content':'','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'paragraph','content':'Real body.','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Str","c":""}]},{"t":"Para","c":[{"t":"Str","c":"Real body."}]}]

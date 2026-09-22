@@ -2264,7 +2264,37 @@ static string BuildBlocksJson(const vector<Value> &blocks_in) {
 		auto element_type = GetElementStringField(block, DuckBlockTypes::ELEMENT_TYPE_IDX);
 		auto content = GetElementStringField(block, DuckBlockTypes::CONTENT_IDX);
 
-		if (element_type == DuckBlockTypes::TYPE_LIST_ITEM || element_type == DuckBlockTypes::TYPE_METADATA) {
+		// A DOCUMENT ROOT CONTRIBUTES NOTHING (#81). duck_block 1.4 allows an optional
+		// level-0 `element_type='document'` row as an explicit document root -- several per
+		// relation, one per document -- and those are legal rows a consumer may hand to any
+		// of the six surfaces that reach this builder.
+		//
+		// Without this arm the row fell through to the catch-all below, which builds a Para
+		// from `content`, and that had two failure modes: an empty root INVENTED a blank
+		// paragraph, and a content-carrying root FABRICATED the root's text as document
+		// prose. A real pandoc accepts both and renders a blank line, so neither failed
+		// loudly.
+		//
+		// Dropped REGARDLESS OF CONTENT. Pandoc's AST has no constructor for "the document
+		// itself", so a root is lossless to drop, and the alternative for a content-carrying
+		// root is to invent prose -- the same reasoning the unparseable-content branch below
+		// already gives for emitting an empty Div rather than reprinting a blob as text. The
+		// 1.4 ruling says a root carries no content and duck_blocks_validate() rejects it,
+		// but this writer does not validate its input, so invalid input must still not
+		// fabricate text.
+		//
+		// Several roots CONCATENATE rather than raising: Pandoc JSON is one document, so the
+		// boundary is lost in the output format, not in the relation. Refusing would make a
+		// valid multi-document relation unconvertible.
+		//
+		// NOT DuckBlockTypes::TYPE_DOCUMENT: the vendored header is v3.3.0 (95a84e6), which
+		// predates the constant -- it is precisely what check-vocabulary reports this copy as
+		// BEHIND on. Re-vendoring is a separate decision under the re-vendor-only-when-needed
+		// rule, and this literal becomes the constant on the day the header moves.
+		constexpr const char *TYPE_DOCUMENT_PENDING_VENDOR = "document";
+
+		if (element_type == DuckBlockTypes::TYPE_LIST_ITEM || element_type == DuckBlockTypes::TYPE_METADATA ||
+		    element_type == TYPE_DOCUMENT_PENDING_VENDOR) {
 			block_idx++;
 			continue;
 		}

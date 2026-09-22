@@ -21,10 +21,26 @@ require panduck
 # the exact failure this suite has been hunting all day. This mirrors what
 # duck_block_utils' own doc_macros.test does for markdown.
 statement ok
-INSTALL duck_block_utils;
+INSTALL duck_block_utils FROM community;
 
 statement ok
 LOAD duck_block_utils;
+
+# MARKDOWN TOO, for the same reason and with a sharper history (#34). `doc_render(..., 'md')`
+# below needs it, and this file used to SKIP ENTIRELY on a clean runner -- the bare
+# `INSTALL duck_block_utils;` 404ed, sqllogictest skipped it, and line 154 was never reached.
+# Fixing the install spelling made the file run and it failed HERE, on markdown, which is
+# exactly the osx_arm64 failure #34 recorded and called unreproducible locally. It was
+# reproducible all along; the skip was hiding it.
+#
+# Safe on every platform: the community registry gives markdown no excluded_platforms,
+# unlike pdf (wasm x3, windows mingw/rtools/arm64), which is why the pdf-dependent
+# assertion lives in the env-gated pdf_reader.test rather than being installed here.
+statement ok
+INSTALL markdown FROM community;
+
+statement ok
+LOAD markdown;
 
 # ---------------------------------------------------------------------------
 # WHICH SPELLING THE INSTALLED BUILD USES. duck_block_utils renamed its whole surface --

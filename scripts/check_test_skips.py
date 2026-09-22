@@ -17,9 +17,16 @@ clean extension directory, which is what every CI runner has: 25 files ran and 2
 assertions passed, against 30 files and 2932 assertions locally -- so five whole files
 and 238 assertions vanished under a summary reading "All tests passed" (#34, #59).
 
-A community extension cannot be downloaded by a bare `INSTALL` (HTTP 404), so the very
-statement written to make a file self-sufficient is what removes its assertions. That is
-worse than doing nothing, because it is invisible.
+THOSE FIVE NOW RUN (#34). A bare `INSTALL x;` resolves against the CORE repository, so for
+a community extension it is an HTTP 404 -- and the very statement written to make a file
+self-sufficient was what removed its assertions, invisibly. The spelling that works is
+`INSTALL x FROM community;`, and the eight such statements now use it, so the HTTP
+allowlist below is empty.
+
+THIS SCRIPT DID NOT BECOME REDUNDANT. It is what made the loss legible in the first place,
+and the scan for a bare community INSTALL is what stops one being reintroduced: the next
+person to write `INSTALL webbed;` gets a red check instead of 40 assertions quietly
+disappearing. An allowlist emptying out is the fix landing, not the guard retiring.
 
 WHAT THIS DOES
 ==============
@@ -63,18 +70,16 @@ REQUIRE_ENV_RE = re.compile(r"^require-env\s+(\S+)", re.M)
 
 # (file, reason prefix) -> why this skip is expected.
 DECLARED = {
-    ("doc_namespace.test", HTTP):
-        "INSTALL duck_block_utils: a community extension, 404 on a bare INSTALL. The "
-        "doc_* macros it covers need duck_block_utils at RUNTIME, which a runner cannot "
-        "download. Named as a coverage gap in #34 rather than papered over.",
-    ("html_attributes.test", HTTP):
-        "INSTALL webbed: community, same 404. panduck's html reader dispatches to webbed.",
-    ("html_reader.test", HTTP):
-        "INSTALL webbed: community, same 404.",
-    ("multidoc.test", HTTP):
-        "INSTALL webbed and duck_block_utils: community, same 404.",
-    ("register_reader.test", HTTP):
-        "INSTALL duck_block_utils: community, same 404.",
+    # THE FIVE HTTP ENTRIES ARE GONE (#34), and their absence is the fix landing. They
+    # declared doc_namespace, html_attributes, html_reader, multidoc and register_reader --
+    # the five files whose assertions vanished on a clean runner because a bare `INSTALL` of
+    # a community extension is a 404, and sqllogictest skips any statement whose error
+    # matches `HTTP`. Those statements now say `FROM community`, so the files RUN instead of
+    # skipping and there is nothing left to declare.
+    #
+    # THE DETECTION ABOVE STAYS. COMMUNITY and BARE_INSTALL_RE still scan for a bare
+    # community INSTALL, so reintroducing one fails this check rather than quietly removing
+    # assertions again. An allowlist emptying out is the goal; the scanner is not.
     ("doc_body_parity.test", "require-env PANDUCK_BODY_PARITY_EXT"):
         "Compares panduck's native body walk against duck_block_utils' duck_blocks_body. "
         "Needs a duck_block_utils BUILD, so it is gated deliberately (#70).",

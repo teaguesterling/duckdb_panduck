@@ -40,7 +40,7 @@ require panduck
 # hypothesis, not a measurement -- see #34 -- and the honest state today is that this
 # statement is decoration whose comment used to claim otherwise.
 statement ok
-INSTALL webbed;
+INSTALL webbed FROM community;
 
 # panduck_glob is the one primitive this feature needs in C++. DuckDB's own glob is a TABLE
 # function, and dispatch cannot use it: a table function's arguments must be literals, so
@@ -70,14 +70,30 @@ true
 # was produced by running panduck_glob itself and pasting its output, not hand-derived,
 # so this test fails if sorting is removed even on a filesystem whose natural enumeration
 # order happens to already be alphabetical (see the note above).
+#
+# SEPARATORS ARE NORMALISED FOR THE ASSERTION ONLY (#34). panduck_glob passes through
+# DuckDB's LocalFileSystem glob, which returns NATIVE separators, so on Windows this is
+# `test\fixtures\constructs.docx`. That is DuckDB's own behaviour and not a defect, so the
+# test normalises rather than the function.
+#
+# It went unnoticed because this whole FILE skipped on every CI platform: a bare
+# `INSTALL webbed;` 404s against the CORE repository whatever the network, so the run never
+# reached here. Fixing the install spelling is what surfaced it -- measured on
+# windows_amd64, where the expected list differed from the actual only in `/` versus `\`.
+#
+# `lambda p:` rather than `p ->`: the v2.0 line deprecates the single-arrow form.
 query I
-SELECT panduck_glob('test/fixtures/constructs.*');
+SELECT list_transform(panduck_glob('test/fixtures/constructs.*'), lambda p: replace(p, '\', '/'));
 ----
 [test/fixtures/constructs.docx, test/fixtures/constructs.html, test/fixtures/constructs.odt, test/fixtures/constructs.rst, test/fixtures/constructs.source.md, test/fixtures/constructs.textile]
 
-# An exact path that exists resolves to itself.
+# An exact path that exists resolves to itself. Normalised for the same reason as above --
+# and here it is a PRECAUTION rather than a measured failure: the file aborted at the
+# assertion above, so this one has never actually run on Windows, and whether glob echoes
+# the caller's forward slashes or returns the filesystem's native form is untested. The
+# normalisation is correct either way, which is cheaper than another CI round to find out.
 query I
-SELECT panduck_glob('test/fixtures/constructs.odt');
+SELECT list_transform(panduck_glob('test/fixtures/constructs.odt'), lambda p: replace(p, '\', '/'));
 ----
 [test/fixtures/constructs.odt]
 
@@ -414,7 +430,7 @@ STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "
 # problem (panduck's submodule pin vs. whatever build is actually installed).
 # ---------------------------------------------------------------------------
 statement ok
-INSTALL duck_block_utils;
+INSTALL duck_block_utils FROM community;
 
 statement ok
 LOAD duck_block_utils;
@@ -943,13 +959,17 @@ SELECT count(*) FROM read_panduck_doc('test/fixtures/two_pages.pdf', reader_para
 ----
 reader_params is not supported for
 
-# A default (empty) reader_params on the SAME special-cased branch still works -- the guard
-# above must not refuse a call that names nothing, only one that names something the branch
-# cannot honour.
-query I
-SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf'));
-----
-7
+# The positive half of that pair -- a default (empty) reader_params on the SAME
+# special-cased branch still working -- MOVED to pdf_reader.test (#34).
+#
+# It has to be somewhere env-gated, because it actually READS the pdf and so needs the pdf
+# extension, which the community registry excludes on six platforms (wasm x3, windows
+# mingw/rtools/arm64). Installing pdf here would turn those six red. It only ever passed
+# because the machines that ran it happened to have pdf installed -- the same
+# installed-vs-declared blind spot this file's own INSTALL statements had.
+#
+# The NEGATIVE half stays here: it raises before touching pdf, so it needs no extension and
+# belongs with the other guard assertions above.
 
 # AND THE FORMAT THAT DOES HONOUR IT STILL DOES, end to end through dispatch rather than
 # only through panduck_read_arms_opt's own test -- the positive control that no guard above

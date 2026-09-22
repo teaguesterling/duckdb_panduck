@@ -70,14 +70,30 @@ true
 # was produced by running panduck_glob itself and pasting its output, not hand-derived,
 # so this test fails if sorting is removed even on a filesystem whose natural enumeration
 # order happens to already be alphabetical (see the note above).
+#
+# SEPARATORS ARE NORMALISED FOR THE ASSERTION ONLY (#34). panduck_glob passes through
+# DuckDB's LocalFileSystem glob, which returns NATIVE separators, so on Windows this is
+# `test\fixtures\constructs.docx`. That is DuckDB's own behaviour and not a defect, so the
+# test normalises rather than the function.
+#
+# It went unnoticed because this whole FILE skipped on every CI platform: a bare
+# `INSTALL webbed;` 404s against the CORE repository whatever the network, so the run never
+# reached here. Fixing the install spelling is what surfaced it -- measured on
+# windows_amd64, where the expected list differed from the actual only in `/` versus `\`.
+#
+# `lambda p:` rather than `p ->`: the v2.0 line deprecates the single-arrow form.
 query I
-SELECT panduck_glob('test/fixtures/constructs.*');
+SELECT list_transform(panduck_glob('test/fixtures/constructs.*'), lambda p: replace(p, '\', '/'));
 ----
 [test/fixtures/constructs.docx, test/fixtures/constructs.html, test/fixtures/constructs.odt, test/fixtures/constructs.rst, test/fixtures/constructs.source.md, test/fixtures/constructs.textile]
 
-# An exact path that exists resolves to itself.
+# An exact path that exists resolves to itself. Normalised for the same reason as above --
+# and here it is a PRECAUTION rather than a measured failure: the file aborted at the
+# assertion above, so this one has never actually run on Windows, and whether glob echoes
+# the caller's forward slashes or returns the filesystem's native form is untested. The
+# normalisation is correct either way, which is cheaper than another CI round to find out.
 query I
-SELECT panduck_glob('test/fixtures/constructs.odt');
+SELECT list_transform(panduck_glob('test/fixtures/constructs.odt'), lambda p: replace(p, '\', '/'));
 ----
 [test/fixtures/constructs.odt]
 

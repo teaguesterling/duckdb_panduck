@@ -2776,22 +2776,57 @@ static string BuildBlocksJson(const vector<Value> &blocks_in) {
 			}
 			block_idx++;
 		} else {
-			yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add_str(doc, para_obj, "t", "Para");
+			// AN UNMAPPED element_type BECOMES A Div TAGGED WITH ITS OWN NAME (#81), not a
+			// Para. This arm used to build `Para [Str content]`, which had two failure
+			// modes on a type panduck does not know: with empty content it INVENTED a
+			// blank paragraph the document never had, and with content it re-printed that
+			// content as ordinary prose, unattributable to the element it came from.
+			//
+			// THE RULE: be generous with input, do not validate, do not raise. A reader is
+			// not a validator, and a block list can arrive from anywhere -- a sibling
+			// extension, a hand-built relation, a future vocabulary this build predates.
+			// Refusing it would make a valid duck_block relation unconvertible.
+			//
+			// THE MECHANISM IS NOT NEW. TYPE_GENERIC's read arm already states the
+			// principle -- "Never drop a constructor silently: preserve it verbatim so
+			// document length is stable and the gap stays visible instead of invisible" --
+			// and the unparseable-content arm above already emits exactly this shape for
+			// the same reason, "it does not fabricate prose the document never had". What
+			// was missing is that a type arriving from OUTSIDE carries no encoding='json'
+			// payload, so it matched neither arm and fell through to here.
+			//
+			// A Div accepts anything, asserts nothing, and keeps the original type name in
+			// its class list where a consumer can find it. CONTENT IS KEPT as a child Para
+			// when there is any: dropping it would be a silent loss, and emitting it as a
+			// bare Para is the fabrication this removes -- the Div is what makes the text
+			// attributable to the element it came from.
+			yyjson_mut_val *gen_obj = yyjson_mut_obj(doc);
+			yyjson_mut_obj_add_str(doc, gen_obj, "t", "Div");
+			yyjson_mut_val *gc_arr = yyjson_mut_arr(doc);
+			yyjson_mut_arr_add_val(gc_arr, CreatePandocAttrVal(doc, block, element_type));
+			yyjson_mut_val *body_arr = yyjson_mut_arr(doc);
 			if (!inline_children.empty()) {
 				idx_t inl_end = 0;
 				yyjson_mut_val *inl_arr =
 				    PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, inline_children, 0, 2, inl_end, 1);
+				yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, para_obj, "t", "Para");
 				yyjson_mut_obj_add_val(doc, para_obj, "c", inl_arr);
-			} else {
+				yyjson_mut_arr_add_val(body_arr, para_obj);
+			} else if (!content.empty()) {
 				yyjson_mut_val *inl_arr = yyjson_mut_arr(doc);
 				yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
 				yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
 				yyjson_mut_obj_add_strncpy(doc, str_obj, "c", content.data(), content.size());
 				yyjson_mut_arr_add_val(inl_arr, str_obj);
+				yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, para_obj, "t", "Para");
 				yyjson_mut_obj_add_val(doc, para_obj, "c", inl_arr);
+				yyjson_mut_arr_add_val(body_arr, para_obj);
 			}
-			yyjson_mut_arr_add_val(blocks_arr, para_obj);
+			yyjson_mut_arr_add_val(gc_arr, body_arr);
+			yyjson_mut_obj_add_val(doc, gen_obj, "c", gc_arr);
+			yyjson_mut_arr_add_val(blocks_arr, gen_obj);
 			block_idx++;
 		}
 	}

@@ -20,19 +20,39 @@ namespace duckdb {
 namespace rst {
 namespace {
 
-//! How long an adornment run must be before it can make a SECTION (#87).
+//! The CAP on how long an adornment run must be to make a SECTION (#87, #88).
 //!
-//! DOCUTILS HAS TWO DIFFERENT MINIMUMS and they are easy to collapse into one:
+//! The threshold is `min(RST_MIN_SECTION_ADORNMENT, title length)`, not this
+//! number alone. #87 recorded a flat four-character floor and said outright that
+//! the title's own length was not part of it. That was WRONG, and wrong in the
+//! direction that keeps a bug alive: it is correct for every enumerated title,
+//! because `1. a` is already four characters, so the min collapses to 4 and the
+//! flat rule can never be caught out there. A plain TEXT title can be shorter.
+//! Measured on docutils 0.20.1:
 //!
-//!   2  a run is an adornment AT ALL -- `rst_scanner.cpp`'s IsAdornment, which
-//!      is why a lone `::` reaches the reader as an ADORNMENT line.
-//!   4  a run may underline a SECTION TITLE. Below this, measured on docutils
-//!      0.20.1, `1. item` over `---` is a paragraph, not a title.
+//!   `Doc`   / `===`  (3,3)  -> TITLE      3 >= min(4,3)
+//!   `Ab`    / `--`   (2,2)  -> TITLE      2 >= min(4,2)
+//!   `Abc`   / `--`   (3,2)  -> paragraph  2 <  min(4,3)
+//!   `Abcde` / `----` (5,4)  -> TITLE      4 >= min(4,5)
+//!   `Abcde` / `---`  (5,3)  -> paragraph  3 <  min(4,5)
 //!
-//! The title's own length is NOT part of this: docutils makes the section even
-//! when the run is far shorter than the text, adding only the warning "Title
-//! underline too short". Collapsing these two numbers is what would turn `::`
-//! back into a heading and lose the literal block under it.
+//! So a run reaching the title's length always underlines it, and four characters
+//! suffice however long the title is. Only pandoc requires the run to reach the
+//! title -- it reads `Abcde` / `----` as prose where docutils reads a section --
+//! and panduck follows docutils, as #87 ruled.
+//!
+//! DOCUTILS HAS A SECOND, LOWER MINIMUM, and the two are easy to conflate:
+//!
+//!   2  a run is an adornment AT ALL -- `rst_scanner.cpp`'s IsAdornment, which is
+//!      why a lone `::` reaches the reader as an ADORNMENT line. A one-character
+//!      run is a section to docutils but is invisible to this reader, which is a
+//!      scanner-level divergence and not this constant's business.
+//!
+//! `::` is NOT specially excluded here, and must not be: under a title of two
+//! characters or fewer it genuinely IS a section underline, and all three
+//! implementations agree it is. Under anything longer it falls below the
+//! threshold and folds into the paragraph, where flush()'s end-of-paragraph rule
+//! opens the literal block.
 constexpr size_t RST_MIN_SECTION_ADORNMENT = 4;
 
 void PushText(std::vector<RstInline> &out, const std::string &text, int level) {
@@ -423,6 +443,34 @@ private:
 				// does. The scanner cannot tell them apart; this is the only place that
 				// can.
 				if (!para.empty()) {
+					// HOW LONG THE RUN MUST BE: min(4, title length) (#88), measured on
+					// docutils 0.20.1. #87 recorded a flat four-character floor, which was
+					// right for every case it measured and wrong in general -- see the
+					// constant's own comment.
+					//
+					//   `Doc`   / `===`  (3,3)  -> TITLE      3 >= min(4,3)
+					//   `Ab`    / `--`   (2,2)  -> TITLE      2 >= min(4,2)
+					//   `Abc`   / `--`   (3,2)  -> paragraph  2 <  min(4,3)
+					//   `Abcde` / `----` (5,4)  -> TITLE      4 >= min(4,5)
+					//
+					// A flat floor would have turned test/fixtures/table_markup.rst's
+					// opening `Doc` over `===` into a paragraph.
+					const size_t need = std::min<size_t>(RST_MIN_SECTION_ADORNMENT, para.back().size());
+					if (line.text.size() < need) {
+						// BELOW THE THRESHOLD THE RUN IS PROSE. Falling through to the
+						// transition arm below would emit an `hr` -- trading an invented
+						// heading for an invented rule. Both references fold the run into
+						// the paragraph, so it joins `para` as a continuation line and
+						// flush() joins it with a space like any wrapped paragraph.
+						//
+						// This is also what fixes `::` under a long title, with no arm of
+						// its own: `Plain item` over `::` folds to `Plain item ::`, and
+						// flush()'s EXISTING end-of-paragraph rule opens the literal block
+						// and leaves one colon in the prose. Before this it became a
+						// heading with a blockquote under it, which neither reference has.
+						para.push_back(line.text);
+						continue;
+					}
 					std::string title = para.back();
 					para.pop_back();
 					flush();
@@ -525,38 +573,52 @@ private:
 				// title, and the underline -- left over with an empty paragraph -- became an
 				// `hr`. Measured on duckeye's fixture: 2 headings where pandoc found 4.
 				//
-				// WHAT THE RUN HAS TO BE, measured against docutils 0.20.1 -- the RST reference
-				// implementation. #84 shipped a pandoc-derived rule here, "only ENUM, and only
-				// when the run is at least as long as the text", and BOTH halves were wrong
-				// about pandoc; the ENUM half was right for a reason #84 did not give (#87):
-				//   `1. Title` / `----------` (4 or more)  -> section title, marker included
-				//   `1. Title` / `---`        (2 or 3)     -> NOT a title; the list stands
-				//   `- Title`  / `----------` (any length) -> bullet_list + TRANSITION
-				// docutils gates a section adornment on the RUN'S OWN LENGTH -- four characters
-				// -- not on the title's. A run shorter than the text only earns the warning
-				// "Title underline too short"; the section is still made. pandoc instead needs
-				// the run to reach the title's length, so it reads `1. Short Underline` / `----`
-				// as prose where docutils reads a section. panduck follows docutils, which also
-				// recovers the `1.` that the list reading discarded -- the one shape that
-				// matched NEITHER reference and broke README's "discard nothing" rule.
+				// WHAT THIS CASE DECIDES, AND WHAT IT NO LONGER DOES (#84, #87, #88). An
+				// enumerated line followed by an adornment run is handed to the ADORNMENT case
+				// by seeding `para`. That case owns the whole rule; this one only recognises
+				// the shape, which keeps the level rule and inline parsing in one place.
 				//
-				// A BULLET never becomes a title: docutils emits bullet_list + transition, which
-				// is already what this reader produces, so that shape falls through untouched.
+				// THE THRESHOLD USED TO BE DUPLICATED HERE as a flat four, and #87 wrote it up
+				// as "the run's own length -- four characters -- not the title's". That was
+				// wrong in general (#88), and this path could never have revealed it: the
+				// shortest possible enum title is `1. a`, already four characters, so
+				// min(4, title length) always collapses to 4 here. A flat rule cannot be caught
+				// out by an enumerated document -- only a plain TEXT title is ever shorter.
 				//
-				// The title is handed to the ADORNMENT case by seeding `para`, rather than
-				// emitted here, so the level rule and inline parsing stay in one place. The
-				// four-character floor is what keeps `::` out: it is two characters, so a lone
-				// `::` after an item still opens a literal block. A transition separated by a
-				// blank line is out of reach for a different reason -- `lines_[i + 1]` is then
-				// BLANK, not ADORNMENT.
+				// Measured on docutils 0.20.1:
+				//   `1. Title` / `----------`  -> section title, marker included
+				//   `1. item`  / `---`         -> ONE PARAGRAPH `1. item ---`; no list, no `hr`
+				//   `1. item`  / `::`          -> paragraph plus a literal block
+				//   `- Title`  / `----------`  -> bullet_list + TRANSITION, untouched here
+				//
+				// The middle two are #88. Below the threshold the marker line and the run fold
+				// into prose, which RECOVERS THE `1.` the list reading used to discard -- the
+				// same breach of README's "discard nothing" that #87 fixed above the threshold,
+				// surviving below it until now. pandoc differs in the band `4 <= run < title
+				// length`, needing the run to reach the title; panduck follows docutils.
+				//
+				// `::` needs no arm of its own. Once the line folds, flush()'s end-of-paragraph
+				// rule opens the literal block and leaves one colon in the prose.
+				//
+				// A BULLET never reaches the seeding path: docutils keeps the bullet_list, so
+				// that shape falls through to List() untouched.
+				//
+				// A transition separated by a blank line is out of reach for a different
+				// reason: `lines_[i + 1]` is then BLANK, not ADORNMENT.
 				if (line.kind == LineKind::ENUM && i + 1 < to && lines_[i + 1].kind == LineKind::ADORNMENT) {
 					// raw_text keeps the marker the scanner stripped; the heading text is
 					// `1. Table of Contents`, number included.
 					const std::string &title = line.raw_text.empty() ? line.text : line.raw_text;
-					if (lines_[i + 1].text.size() >= RST_MIN_SECTION_ADORNMENT) {
-						para.push_back(title);
-						continue;
-					}
+					// NO THRESHOLD TEST HERE (#88). Seeding `para` unconditionally lets the
+					// ADORNMENT case apply min(4, title length) ONCE, for this path and the
+					// plain-text one alike. Below the threshold it folds the run into the
+					// paragraph, which is what recovers the `1.` that the list reading used
+					// to discard -- the same breach #87 fixed above the threshold, surviving
+					// below it until now. `1. item` over `---` is one paragraph in docutils,
+					// not a list and not an `hr`; `1. item` over `::` is a paragraph plus a
+					// literal block.
+					para.push_back(title);
+					continue;
 				}
 				flush();
 				i = List(i, to, depth) - 1;

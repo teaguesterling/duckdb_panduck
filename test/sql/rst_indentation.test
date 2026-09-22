@@ -494,25 +494,142 @@ SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_str
 1	heading	1. Short Underline
 1	paragraph	Body.
 
-# CONTROL, BELOW THE FLOOR: a 3-character run is not an adornment docutils accepts, so the
-# enumerated list stands. panduck still emits an `hr` and still drops the `1.` here, where
-# docutils reads one paragraph. That residue is much narrower than #87 was; it is recorded
-# rather than fixed, so a later change to it cannot pass unnoticed.
+# BELOW THE THRESHOLD AN ENUMERATED LINE IS PROSE TOO (#88). These two records previously
+# pinned `list, list_item, hr, paragraph` and `list, list_item, code`, recorded in #87 as
+# a narrower residue left for later. Measured against docutils 0.20.1, BOTH were wrong:
+# docutils reads one paragraph, `1. item` and the run together, and never makes a list.
+#
+#   `1. item` / `---`  -> docutils paragraph `1. item` + `---`;  pandoc `1. item ---`
+#   `1. item` / `::`   -> docutils paragraph + literal_block;    pandoc `1. item :` + code
+#
+# So the list reading DISCARDED the `1.` here exactly as it did above the threshold -- the
+# same breach of README's "discard nothing" that #87 fixed for long runs, surviving below
+# it. The fold is the same one the TEXT path uses: the marker line and the run join `para`
+# as prose, and no `hr` is invented.
 query III
 SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
   E'1. item\n---\n\nBody.\n') ORDER BY element_order;
 ----
-1	list	<none>
-2	list_item	item
-1	hr	<none>
+1	paragraph	1. item ---
 1	paragraph	Body.
 
-# CONTROL: `::` after an ENUMERATED item still opens a literal block. Two characters is
-# below the floor, which is precisely why the heading test cannot swallow it.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'1. item\n--\n\nBody.\n') ORDER BY element_order;
+----
+1	paragraph	1. item --
+1	paragraph	Body.
+
+# `::` AFTER AN ENUMERATED ITEM still opens a literal block -- but as prose plus a literal,
+# not as a list. flush()'s end-of-paragraph rule does the work once the line folds, and one
+# colon stays in the prose: panduck's documented convention, and pandoc's reading. docutils
+# drops both colons, which is the same one-character divergence declared on the TEXT path.
 query III
 SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
   E'1. item\n::\n\n   code\n') ORDER BY element_order;
 ----
-1	list	<none>
-2	list_item	item
+1	paragraph	1. item :
 1	code	code
+
+# CONTROL: a BULLET below the threshold is NOT folded. docutils keeps the bullet_list and
+# puts the run in a paragraph inside the item; pandoc reads the whole thing as prose; the
+# two references disagree, and panduck matches neither exactly. That is the #87 transition
+# story rather than this one, so it is pinned unchanged rather than swept into the fold.
+query I
+SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
+  E'- item\n---\n\nBody.\n');
+----
+list,list_item,hr,paragraph
+
+# ---------------------------------------------------------------------------------------
+# THE ADORNMENT THRESHOLD IS `min(4, title length)` (#88), NOT A FLAT FLOOR.
+#
+# #87 recorded a flat four-character floor. That was right for every case #87 measured and
+# WRONG in general, because an enumerated title is always at least four characters (`1. a`),
+# so `min(4, len)` is always 4 there -- the flat rule was correct by accident. A plain TEXT
+# title can be shorter, and docutils 0.20.1 makes a section of it:
+#
+#   `Doc`   / `===`   (3,3)  -> TITLE      3 >= min(4,3)
+#   `Ab`    / `--`    (2,2)  -> TITLE      2 >= min(4,2)
+#   `Abc`   / `--`    (3,2)  -> paragraph  2 <  min(4,3)
+#   `Abcde` / `----`  (5,4)  -> TITLE      4 >= min(4,5)
+#   `Abcde` / `---`   (5,3)  -> paragraph  3 <  min(4,5)
+#
+# panduck made a heading at EVERY run length, so it invented sections both references read
+# as prose. pandoc differs from docutils in the band `4 <= run < title length` -- pandoc
+# needs the run to reach the title -- and panduck follows docutils here, as it does for #87.
+#
+# BELOW THE THRESHOLD THE RUN IS PROSE, not a transition. Emitting an `hr` instead would
+# trade an invented heading for an invented rule; both references fold the run into the
+# paragraph, and panduck joins continuation lines with a space as it does for any wrapped
+# paragraph.
+
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Plain item\n--\n\nBody.\n') ORDER BY element_order;
+----
+1	paragraph	Plain item --
+1	paragraph	Body.
+
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Plain item\n---\n\nBody.\n') ORDER BY element_order;
+----
+1	paragraph	Plain item ---
+1	paragraph	Body.
+
+# AT the threshold: four characters is enough however long the title is.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Plain item\n----\n\nBody.\n') ORDER BY element_order;
+----
+1	heading	Plain item
+1	paragraph	Body.
+
+# A SHORT TITLE NEEDS ONLY ITS OWN LENGTH. This record also guards a real fixture:
+# test/fixtures/table_markup.rst opens with exactly `Doc` over `===`, so a flat floor of
+# four would have turned that heading into a paragraph.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Doc\n===\n\nBody.\n') ORDER BY element_order;
+----
+1	heading	Doc
+1	paragraph	Body.
+
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Ab\n--\n\nBody.\n') ORDER BY element_order;
+----
+1	heading	Ab
+1	paragraph	Body.
+
+# ...and one character more of title puts the same run below the threshold.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Abc\n--\n\nBody.\n') ORDER BY element_order;
+----
+1	paragraph	Abc --
+1	paragraph	Body.
+
+# `::` UNDER A LONG TITLE IS A LITERAL-BLOCK MARKER, not an underline. panduck read this as
+# a heading plus a blockquote, where docutils reads `paragraph, literal_block` and pandoc
+# reads `Para, CodeBlock`. Below the threshold the `::` folds into the paragraph, and the
+# EXISTING end-of-paragraph rule takes it from there -- one colon stays in the prose, which
+# is panduck's documented convention and matches pandoc. docutils drops both colons; that
+# one character is a declared divergence, not a new invention.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'Plain item\n::\n\n   code\n') ORDER BY element_order;
+----
+1	paragraph	Plain item :
+1	code	code
+
+# CONTROL, and the reason the threshold is `min` rather than a floor: under a title short
+# enough for it, `::` IS a section underline, and all three implementations agree. Pinned
+# because the #87 comment claimed `::` could never reach the heading test -- true under a
+# flat floor, false under this rule, and correct either way.
+query I
+SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
+  E'Do\n::\n\n   code\n');
+----
+heading,blockquote,paragraph

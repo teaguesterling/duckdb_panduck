@@ -556,6 +556,70 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);
 			i = nested_end - 1;
+		} else if (inline_type == DuckBlockTypes::INLINE_NOTE || inline_type == DuckBlockTypes::INLINE_CITE) {
+			// THE EXPORT ARM THESE TWO NEVER HAD. Both fell through to the placeholder
+			// below, which emits `Str "[" + element_type + "]"`. Measured on a real
+			// round trip of rich.docx: the footnote body text appeared 0 times and the
+			// literal `[note]` appeared once, so a docx footnote exported as the
+			// VISIBLE TEXT `[note]` with its body deleted. Same for textile's
+			// `??cited work??`, which exported as `[cite]`.
+			//
+			// Neither guard could see it. check-writeback asserts only that a real
+			// pandoc ACCEPTS the JSON -- it does, happily -- and check-wordloss
+			// compares READERS against pandoc, so it never looks at the write
+			// direction. Eight fixtures across docx, odt and latex were affected.
+			//
+			// No vocabulary change was needed: INLINE_NOTE and INLINE_CITE already
+			// exist, four readers already emit them, and pandoc_ast_map.cpp already
+			// declared Note STATUS_MAPPED. The map described a mapping whose export
+			// half was missing.
+			//
+			// CHILDREN FIRST, CONTENT AS FALLBACK, copying the emphasis arm above
+			// rather than SPAN: the readers that emit notes today (docx at :558, odt
+			// at :200) carry the body flattened into `content` with no children, while
+			// a note read back from pandoc arrives with neither. Recursing first and
+			// falling back to `content` covers both, and will not need rewriting when
+			// the READ side is fixed to descend into a Note's blocks.
+			idx_t nested_end = i + 1;
+			yyjson_mut_val *nested = ConvertDbInlinesToPandocVal(doc, inlines, i + 1, level + 1, nested_end, depth + 1);
+			if (yyjson_mut_arr_size(nested) == 0 && !content.empty()) {
+				nested = yyjson_mut_arr(doc);
+				yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
+				yyjson_mut_obj_add_strncpy(doc, str_obj, "c", content.data(), content.size());
+				yyjson_mut_arr_add_val(nested, str_obj);
+			}
+			yyjson_mut_val *obj = yyjson_mut_obj(doc);
+			if (inline_type == DuckBlockTypes::INLINE_NOTE) {
+				// pandoc's Note holds BLOCKS, not inlines, so the body is wrapped in a
+				// Para. Verified to RENDER and not merely parse: this JSON converts to
+				// markdown as `Text with a footnote.[^1]` with `[^1]: The footnote
+				// body.` beneath it. A multi-paragraph note flattens to one Para here,
+				// which is already what odt_reader.cpp:193 does when it joins a note's
+				// paragraphs with a space -- every note the fleet currently produces is
+				// single-paragraph.
+				yyjson_mut_obj_add_str(doc, obj, "t", "Note");
+				yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, para_obj, "t", "Para");
+				yyjson_mut_obj_add_val(doc, para_obj, "c", nested);
+				yyjson_mut_val *blocks_arr = yyjson_mut_arr(doc);
+				yyjson_mut_arr_add_val(blocks_arr, para_obj);
+				yyjson_mut_obj_add_val(doc, obj, "c", blocks_arr);
+			} else {
+				// Cite's first slot is a list of citation RECORDS and the second its
+				// rendered inlines. The list is left EMPTY deliberately: panduck has no
+				// citation record to put there, and fabricating one would be worse than
+				// an honest gap. This is not a bibliographic claim -- pandoc uses this
+				// same constructor for textile's `??cited work??`, measured as
+				// `Cite [] [Str "cited" Space Str "work"]`.
+				yyjson_mut_obj_add_str(doc, obj, "t", "Cite");
+				yyjson_mut_val *c_arr = yyjson_mut_arr(doc);
+				yyjson_mut_arr_add_val(c_arr, yyjson_mut_arr(doc));
+				yyjson_mut_arr_add_val(c_arr, nested);
+				yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
+			}
+			yyjson_mut_arr_add_val(arr, obj);
+			i = nested_end - 1;
 		} else if (inline_type == DuckBlockTypes::INLINE_GENERIC) {
 			// The EXPORT half of the no-silent-drops rule. This used to fall through
 			// to the "[generic]" placeholder below, which destroyed the children's

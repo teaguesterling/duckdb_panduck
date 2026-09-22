@@ -19,6 +19,21 @@ namespace duckdb {
 namespace rst {
 namespace {
 
+//! How long an adornment run must be before it can make a SECTION (#87).
+//!
+//! DOCUTILS HAS TWO DIFFERENT MINIMUMS and they are easy to collapse into one:
+//!
+//!   2  a run is an adornment AT ALL -- `rst_scanner.cpp`'s IsAdornment, which
+//!      is why a lone `::` reaches the reader as an ADORNMENT line.
+//!   4  a run may underline a SECTION TITLE. Below this, measured on docutils
+//!      0.20.1, `1. item` over `---` is a paragraph, not a title.
+//!
+//! The title's own length is NOT part of this: docutils makes the section even
+//! when the run is far shorter than the text, adding only the warning "Title
+//! underline too short". Collapsing these two numbers is what would turn `::`
+//! back into a heading and lose the literal block under it.
+constexpr size_t RST_MIN_SECTION_ADORNMENT = 4;
+
 void PushText(std::vector<RstInline> &out, const std::string &text, int level) {
 	if (text.empty()) {
 		return;
@@ -498,24 +513,35 @@ private:
 				// title, and the underline -- left over with an empty paragraph -- became an
 				// `hr`. Measured on duckeye's fixture: 2 headings where pandoc found 4.
 				//
-				// WHAT THE UNDERLINE HAS TO BE, measured against pandoc rather than assumed
-				// symmetric -- the first cut of this fix was wrong on both counts:
-				//   `1. Title` / `--------` (as long as the title)  -> Header "1. Title"
-				//   `1) Title` / `--------`                         -> Header "1) Title"
-				//   `1. Title` / `----`     (SHORTER than the title) -> Para, NOT a title
-				//   `- Title`  / `--------` (a BULLET, any length)   -> Para, NOT a title
-				// So only ENUM qualifies, and only when the run is at least as long as the
-				// text. A bullet line never becomes a title, and a short underline leaves the
-				// list alone. Anything else here would invent a heading pandoc does not have.
+				// WHAT THE RUN HAS TO BE, measured against docutils 0.20.1 -- the RST reference
+				// implementation. #84 shipped a pandoc-derived rule here, "only ENUM, and only
+				// when the run is at least as long as the text", and BOTH halves were wrong
+				// about pandoc; the ENUM half was right for a reason #84 did not give (#87):
+				//   `1. Title` / `----------` (4 or more)  -> section title, marker included
+				//   `1. Title` / `---`        (2 or 3)     -> NOT a title; the list stands
+				//   `- Title`  / `----------` (any length) -> bullet_list + TRANSITION
+				// docutils gates a section adornment on the RUN'S OWN LENGTH -- four characters
+				// -- not on the title's. A run shorter than the text only earns the warning
+				// "Title underline too short"; the section is still made. pandoc instead needs
+				// the run to reach the title's length, so it reads `1. Short Underline` / `----`
+				// as prose where docutils reads a section. panduck follows docutils, which also
+				// recovers the `1.` that the list reading discarded -- the one shape that
+				// matched NEITHER reference and broke README's "discard nothing" rule.
+				//
+				// A BULLET never becomes a title: docutils emits bullet_list + transition, which
+				// is already what this reader produces, so that shape falls through untouched.
 				//
 				// The title is handed to the ADORNMENT case by seeding `para`, rather than
-				// emitted here, so the level rule and inline parsing stay in one place. `::`
-				// cannot reach that test: it is shorter than any title it could underline.
+				// emitted here, so the level rule and inline parsing stay in one place. The
+				// four-character floor is what keeps `::` out: it is two characters, so a lone
+				// `::` after an item still opens a literal block. A transition separated by a
+				// blank line is out of reach for a different reason -- `lines_[i + 1]` is then
+				// BLANK, not ADORNMENT.
 				if (line.kind == LineKind::ENUM && i + 1 < to && lines_[i + 1].kind == LineKind::ADORNMENT) {
-					// raw_text keeps the marker the scanner stripped; pandoc's heading text is
+					// raw_text keeps the marker the scanner stripped; the heading text is
 					// `1. Table of Contents`, number included.
 					const std::string &title = line.raw_text.empty() ? line.text : line.raw_text;
-					if (lines_[i + 1].text.size() >= title.size()) {
+					if (lines_[i + 1].text.size() >= RST_MIN_SECTION_ADORNMENT) {
 						para.push_back(title);
 						continue;
 					}

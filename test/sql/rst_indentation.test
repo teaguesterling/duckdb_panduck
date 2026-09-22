@@ -412,15 +412,24 @@ FROM read_rst_blocks('test/fixtures/footnotes.rst');
 9	8	1
 
 # ---------------------------------------------------------------------------------------
-# AN ENUMERATED SECTION TITLE IS A HEADING (#84). `1. Table of Contents` under an underline
-# was read as a one-item ordered list plus an `hr`: the heading lost, the number discarded,
-# the rule invented. Measured on duckeye's fixture, panduck found 2 headings where pandoc
-# found 4 -- lost structure, so doc_toc could not see the section.
+# AN ENUMERATED SECTION TITLE IS A HEADING (#84, #87). `1. Table of Contents` under an
+# underline was read as a one-item ordered list plus an `hr`: the heading lost, the number
+# discarded, the rule invented. Measured on duckeye's fixture, panduck found 2 headings
+# where pandoc found 4 -- lost structure, so doc_toc could not see the section.
 #
-# WHAT QUALIFIES was measured against pandoc, not assumed: only ENUM, and only when the
-# adornment run is at least as long as the title. The two `unchanged` records below are the
-# shapes pandoc does NOT make titles; they are pinned so a later change cannot quietly
-# convert them.
+# WHAT QUALIFIES IS THE RUN'S OWN LENGTH, measured against docutils 0.20.1 -- the RST
+# reference implementation. #84 recorded a pandoc-derived rule here, "only ENUM, and only
+# when the run is at least as long as the title", and BOTH halves were wrong:
+#
+#   run of 2 or 3 characters -> paragraph, NOT a title. This is the floor that keeps `::`
+#                               opening a literal block: it is two characters.
+#   run of 4 or more         -> TITLE, however short it is against the text. docutils
+#                               warns "Title underline too short" and makes the section.
+#
+# The title's own length changes nothing but that warning. pandoc instead needs the run to
+# reach the title's length, so pandoc reads a 4-dash run under an 18-character title as
+# prose where docutils reads a section. panduck follows docutils (#87), which also recovers
+# the `1.` that the list reading discarded.
 # ---------------------------------------------------------------------------------------
 
 query III
@@ -452,7 +461,8 @@ SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_str
 2	list_item	another list item
 
 # CONTROL: a list item followed by a lone `::` still opens a literal block -- `::` is an
-# adornment run to the scanner, and is shorter than any title it could underline.
+# adornment run to the scanner, and two characters is below docutils' four-character floor
+# for a section adornment.
 query III
 SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
   E'- item\n\n::\n\n   code\n') ORDER BY element_order;
@@ -461,18 +471,48 @@ SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_str
 2	list_item	item
 1	code	code
 
-# UNCHANGED, and deliberately so: pandoc reads a bulleted line under an underline as a
-# paragraph, not a title. panduck still emits list + item + hr here; the spurious hr
-# predates #84 and is tracked separately. Pinned so the shape cannot drift unnoticed.
+# UNCHANGED, and NOT a defect: a bulleted line under an underline is a bullet list followed
+# by a TRANSITION in docutils -- `bullet_list, list_item, transition, paragraph`, which is
+# exactly panduck's `list, list_item, hr, paragraph`. pandoc is the outlier, reading the
+# construct as a heading whose title text is `- Bulleted Title`, dash included. #87 was
+# filed calling this `hr` invented; the reference implementation shows it is real. Pinned
+# so the shape cannot drift unnoticed.
 query I
 SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
   E'- Bulleted Title\n----------------\n\nBody.\n');
 ----
 list,list_item,hr,paragraph
 
-# UNCHANGED for the same reason: an underline SHORTER than the title is not a title.
-query I
-SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
-  E'1. Short Underline\n----\n\nBody.\n');
+# THE MARKER SURVIVES A SHORT UNDERLINE (#87). Four characters is above docutils' floor, so
+# this is a section title even though the run is far shorter than the text. The list reading
+# discarded the `1.` outright -- the one shape where panduck matched NEITHER reference and
+# broke the "discard nothing" rule in README.md.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'1. Short Underline\n----\n\nBody.\n') ORDER BY element_order;
 ----
-list,list_item,hr,paragraph
+1	heading	1. Short Underline
+1	paragraph	Body.
+
+# CONTROL, BELOW THE FLOOR: a 3-character run is not an adornment docutils accepts, so the
+# enumerated list stands. panduck still emits an `hr` and still drops the `1.` here, where
+# docutils reads one paragraph. That residue is much narrower than #87 was; it is recorded
+# rather than fixed, so a later change to it cannot pass unnoticed.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'1. item\n---\n\nBody.\n') ORDER BY element_order;
+----
+1	list	<none>
+2	list_item	item
+1	hr	<none>
+1	paragraph	Body.
+
+# CONTROL: `::` after an ENUMERATED item still opens a literal block. Two characters is
+# below the floor, which is precisely why the heading test cannot swallow it.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'1. item\n::\n\n   code\n') ORDER BY element_order;
+----
+1	list	<none>
+2	list_item	item
+1	code	code

@@ -40,7 +40,7 @@ require panduck
 # hypothesis, not a measurement -- see #34 -- and the honest state today is that this
 # statement is decoration whose comment used to claim otherwise.
 statement ok
-INSTALL webbed;
+INSTALL webbed FROM community;
 
 # panduck_glob is the one primitive this feature needs in C++. DuckDB's own glob is a TABLE
 # function, and dispatch cannot use it: a table function's arguments must be literals, so
@@ -414,7 +414,7 @@ STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "
 # problem (panduck's submodule pin vs. whatever build is actually installed).
 # ---------------------------------------------------------------------------
 statement ok
-INSTALL duck_block_utils;
+INSTALL duck_block_utils FROM community;
 
 statement ok
 LOAD duck_block_utils;

@@ -100,6 +100,65 @@ SELECT attributes['id'] FROM read_mediawiki_blocks_string(
 heading_with_bold
 
 # ---------------------------------------------------------------------------
+# THE IDENTIFIER RULE IS PANDOC'S (#85). The separator is this format's convention -- an
+# underscore, where textile and rst use a hyphen -- but four of the records below were
+# WRONG before #85, and the separator was never the reason. Measured against pandoc 3.1.3:
+#
+#   strip everything up to the FIRST LETTER   `2019 Annual Report` -> `annual_report`
+#   nothing survives -> the literal `section` `123`                -> `section`
+#   a trailing connector is KEPT              `End With Hyphen-`   -> `end_with_hyphen_`
+#   `-` maps to the separator, `_` is literal `Mix-_-Mix`          -> `mix___mix`
+#
+# The old slugifier kept leading digits, trimmed the trailing connector, and had no
+# fallback at all for a title with no letters in it.
+
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== 1. Real Title ==') WHERE element_type = 'heading';
+----
+real_title
+
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== 2019 Annual Report ==') WHERE element_type = 'heading';
+----
+annual_report
+
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== 123 ==') WHERE element_type = 'heading';
+----
+section
+
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== End With Hyphen- ==') WHERE element_type = 'heading';
+----
+end_with_hyphen_
+
+# A HYPHEN BECOMES THE SEPARATOR and an underscore stays literal, so a run of mixed
+# connectors is preserved one-for-one rather than collapsed.
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== Title-With-Hyphens ==') WHERE element_type = 'heading';
+----
+title_with_hyphens
+
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== Title_With_Underscores ==') WHERE element_type = 'heading';
+----
+title_with_underscores
+
+# CONTROL, unchanged by #85: a RUN of spaces collapses to a single separator, where a run
+# of connectors does not.
+query I
+SELECT attributes['id'] FROM read_mediawiki_blocks_string(
+  E'== A  B   C ==') WHERE element_type = 'heading';
+----
+a_b_c
+
+# ---------------------------------------------------------------------------
 # LIST NESTING IS THE MARKER RUN'S LENGTH, not indentation -- `#*` is a bullet list inside
 # an ordered one.
 query IIII

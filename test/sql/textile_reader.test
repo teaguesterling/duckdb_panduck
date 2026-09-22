@@ -177,6 +177,68 @@ SELECT content, attributes['heading_level'], attributes['id'] FROM read_textile_
 ----
 Third Level Heading	3	third-level-heading
 
+# THE IDENTIFIER RULE IS PANDOC'S (#85). The hyphen above is this format's convention; the
+# records below are cases where the slugifier was simply WRONG, which the convention never
+# explained. Measured against pandoc 3.1.3:
+#
+#   strip everything up to the FIRST LETTER   `2019 Annual Report` -> `annual-report`
+#   nothing survives -> the literal `section` `123`                -> `section`
+#   a trailing connector is KEPT              `End With Hyphen-`   -> `end-with-hyphen-`
+#   `_` is literal, `-` is the separator      `Title_With_Under..` -> `title_with_under..`
+#
+# The old slugifier kept leading digits, folded `_` into `-`, trimmed the trailing
+# connector, and had no fallback for a title with no letters in it.
+
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. 1. Real Title')
+WHERE element_type = 'heading';
+----
+real-title
+
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. 2019 Annual Report')
+WHERE element_type = 'heading';
+----
+annual-report
+
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. 123')
+WHERE element_type = 'heading';
+----
+section
+
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. End With Hyphen-')
+WHERE element_type = 'heading';
+----
+end-with-hyphen-
+
+# THESE TWO HEADINGS HAVE `content = NULL`, and that is a separate defect (#90): panduck's
+# textile reader reads `_With_` as emphasis and `-With-` as strikethrough INTRA-WORD, where
+# pandoc reads one literal string. The id is unaffected because it is derived from the raw
+# line rather than the parsed inlines -- so these ids match pandoc exactly while the inline
+# parse does not. Asserted on the id alone, deliberately, so #90 can be fixed without
+# touching them.
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. Title_With_Underscores')
+WHERE element_type = 'heading';
+----
+title_with_underscores
+
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. Title-With-Hyphens')
+WHERE element_type = 'heading';
+----
+title-with-hyphens
+
+# CONTROL, unchanged by #85: a RUN of spaces collapses to one separator, where a run of
+# connectors does not.
+query I
+SELECT attributes['id'] FROM read_textile_blocks_string(E'h1. A  B   C')
+WHERE element_type = 'heading';
+----
+a-b-c
+
 # `###.` is a comment and not content -- and it must not be mistaken for an ordered list,
 # since `#` opens one.
 query I

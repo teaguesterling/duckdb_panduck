@@ -1,7 +1,18 @@
 #pragma once
 
-// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils
-// v3.3.0]
+// clang-format off
+//
+// THE SWEEP MUST NOT TOUCH THIS FILE. Everything from the title line down is a
+// VENDORED COPY that has to stay byte-identical to the header at the stamped sha;
+// `make format` reflowed it in 0.5.4 and broke exactly that (30 commits of drift,
+// 780 local lines against upstream's 710) plus the provenance stamp itself, which
+// wrapped onto two lines and stopped parsing. Measured with a paired control: a
+// guarded region survives clang-format while an unguarded line beside it is
+// reformatted, so this marker is what holds. There is no per-file exclusion
+// available -- format.py's ignored_files lives in the duckdb submodule, which is
+// not ours and does not survive a bump.
+
+// Vendored at upstream commit: 95a84e6 (SPEC_VERSION 1.4)  [duck_block_utils v3.3.0]
 //
 // 1.3 -> 1.4 (#54) CHANGES EXACTLY TWO CODE LINES, verified by diff over the
 // whole file: SPEC_VERSION "1.3" -> "1.4", and a new PREDICATE_REVISION =
@@ -82,6 +93,7 @@
 // the whole reason that column exists. Refreshed to 1.2 in the same change -- a
 // LABEL-ONLY regeneration, verified: no parquet moved.
 // ============================================================================
+
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
 // Header-only and link-free ON PURPOSE. Sibling extensions (panduck, webbed,
@@ -107,28 +119,25 @@
 // ---------------------------------------------------------------------------
 // VENDORING THIS FILE
 //
-// WHAT ELSE IS VENDORABLE, and where. `vendor/README.md` upstream is the index;
-// this header is the one vendorable file that does NOT live there, because four
-// extensions already pull it from `src/include/` and moving it to buy tidiness
-// would break their tooling for no gain. The others:
+// WHAT ELSE IS VENDORABLE, and where. `vendor/README.md` upstream is the index; this
+// header is the one vendorable file that does NOT live there, because four extensions
+// already pull it from `src/include/` and moving it to buy tidiness would break their
+// tooling for no gain. The others:
 //
-//     vendor/duck_block_conformance.sql   validity, error detail, declared kind
-//     /
-//                                         type / encoding lists -- pure DuckDB
-//                                         SQL
+//     vendor/duck_block_conformance.sql   validity, error detail, declared kind /
+//                                         type / encoding lists -- pure DuckDB SQL
 //     vendor/duck_block_normalize.hpp     the content rule as a transform
 //
-// PATHS MOVE. `duck_block_conformance.sql` lived at `conformance/` until
-// 2026-09-01. A consumer re-syncing by URL got a 404 -- and duckdb_markdown
-// pointed out how that fails: `curl -sS -o file URL` writes GitHub's 404 page
-// INTO the vendored file, and `curl -sSf` leaves the stale copy in place while
-// the consumer believes they re-synced. Either way they keep validating against
-// an old vocabulary and nothing says so.
+// PATHS MOVE. `duck_block_conformance.sql` lived at `conformance/` until 2026-09-01.
+// A consumer re-syncing by URL got a 404 -- and duckdb_markdown pointed out how that
+// fails: `curl -sS -o file URL` writes GitHub's 404 page INTO the vendored file, and
+// `curl -sSf` leaves the stale copy in place while the consumer believes they
+// re-synced. Either way they keep validating against an old vocabulary and nothing
+// says so.
 //
-// So CHECK THE HTTP STATUS and fail loudly on anything but 200, the same way
-// you would refuse to print OK from an undatable fetch (below). A vendored file
-// that silently did not update is the failure this whole block exists to
-// prevent.
+// So CHECK THE HTTP STATUS and fail loudly on anything but 200, the same way you
+// would refuse to print OK from an undatable fetch (below). A vendored file that
+// silently did not update is the failure this whole block exists to prevent.
 //
 // Copy it. Do NOT add duck_block_utils as a submodule: the DuckDB extension CI
 // templates check out with submodules: 'recursive' and this repo carries its
@@ -159,15 +168,14 @@
 //      Fetch upstream and compare BY NAME AND VALUE -- parse both sides, do
 //      not diff the text:
 //
-//      DO NOT fetch the /main/ raw url directly. raw.githubusercontent.com
-//      serves branch urls from a CDN that is only EVENTUALLY consistent with
-//      the branch, so a check running shortly after an upstream push compares
-//      against the PREVIOUS version, finds no difference, and reports a clean
-//      bill of health. That window is precisely when a drift check matters
-//      most, and the failure is in the reassuring direction, which is the
-//      direction nobody re-checks. (Found by duckdb_markdown, whose check
-//      reported "in sync" against a copy two spec versions old; it only
-//      surfaced because a human said otherwise.)
+//      DO NOT fetch the /main/ raw url directly. raw.githubusercontent.com serves
+//      branch urls from a CDN that is only EVENTUALLY consistent with the branch,
+//      so a check running shortly after an upstream push compares against the
+//      PREVIOUS version, finds no difference, and reports a clean bill of health.
+//      That window is precisely when a drift check matters most, and the failure
+//      is in the reassuring direction, which is the direction nobody re-checks.
+//      (Found by duckdb_markdown, whose check reported "in sync" against a copy
+//      two spec versions old; it only surfaced because a human said otherwise.)
 //
 //      Resolve the branch to a commit sha first, then fetch the SHA-PINNED url,
 //      which is immutable and therefore cannot be stale:
@@ -178,9 +186,9 @@
 //
 //      Print the sha alongside the verdict, so the output says what it actually
 //      compared against. And when the sha lookup fails -- rate limit, outage,
-//      offline -- falling back to the branch url is fine, but that path must
-//      NEVER print OK: "no drift seen" from a copy you could not date is not a
-//      clean bill of health, and reporting it as one is the same defect again.
+//      offline -- falling back to the branch url is fine, but that path must NEVER
+//      print OK: "no drift seen" from a copy you could not date is not a clean
+//      bill of health, and reporting it as one is the same defect again.
 //
 //      A plain `diff` over this file fires on comment edits and cosmetic churn
 //      -- commit 3957f36 rewrote every idx_t to uint64_t and changed no name
@@ -193,13 +201,12 @@
 //      should report without failing. GAPS is the arm that earns its keep -- it
 //      is what surfaced inline `generic` losing source_type in two extensions
 //      in the same week. Carry an explicit allowlist of intentional gaps, or an
-//      unexplained one and a deliberate one look identical. Filter
-//      NUMERIC-valued constants out when selecting the vocabulary by name
-//      prefix -- otherwise KIND_IDX and the other struct field offsets get
-//      reported as published-but- unhandled types, and a check whose first run
-//      on a new consumer is a false positive has already taught that consumer
-//      to ignore it. (panduck hit exactly this while adopting the arm from this
-//      recommendation.)
+//      unexplained one and a deliberate one look identical. Filter NUMERIC-valued
+//      constants out when selecting the vocabulary by name prefix -- otherwise
+//      KIND_IDX and the other struct field offsets get reported as published-but-
+//      unhandled types, and a check whose first run on a new consumer is a false
+//      positive has already taught that consumer to ignore it. (panduck hit exactly
+//      this while adopting the arm from this recommendation.)
 //
 //      duckdb_markdown has a working implementation of exactly this, which
 //      looks in both a vendored and a submodule location:
@@ -244,36 +251,34 @@ struct DuckBlockVocabulary {
 	static constexpr uint64_t ATTRIBUTES_IDX = 5;
 	static constexpr uint64_t ELEMENT_ORDER_IDX = 6;
 
-	// The one OPTIONAL trailing field. A reader that emits a `filename` column
-	// makes `list(b)` an 8-field struct; consumers accept exactly that shape --
-	// the seven canonical fields, then this -- and nothing else. Optional fields
-	// append in ADOPTION order: a later one takes index 8. Reserving slots ahead
-	// of adoption is what put `source_format` at 7 and `file_path` at 8 for a
-	// type nothing ever produced, and that reservation is why the first real
-	// optional field could not simply take the next index. Those two constants
-	// are gone; `duck_block_ext` itself stays registered, deprecated, for one
-	// release.
+	// The one OPTIONAL trailing field. A reader that emits a `filename` column makes
+	// `list(b)` an 8-field struct; consumers accept exactly that shape -- the seven
+	// canonical fields, then this -- and nothing else. Optional fields append in
+	// ADOPTION order: a later one takes index 8. Reserving slots ahead of adoption is
+	// what put `source_format` at 7 and `file_path` at 8 for a type nothing ever
+	// produced, and that reservation is why the first real optional field could not
+	// simply take the next index. Those two constants are gone; `duck_block_ext`
+	// itself stays registered, deprecated, for one release.
 	static constexpr uint64_t FILENAME_IDX = 7;
 	static constexpr const char *FIELD_FILENAME = "filename";
 
 	// Kind values
 	static constexpr const char *KIND_BLOCK = "block";
 	static constexpr const char *KIND_INLINE = "inline";
-	// Non-prose data attached to a document -- currently its metadata. Consumers
-	// that walk document content filter on KIND_BLOCK and ignore these
-	// automatically, which is what makes the kind additive rather than breaking.
-	// The converse is NOT true: filtering on kind does not give you the body,
-	// because the verbatim `metadata` blob is a block. IsBody() below is the body
-	// predicate (1.3).
+	// Non-prose data attached to a document -- currently its metadata. Consumers that
+	// walk document content filter on KIND_BLOCK and ignore these automatically, which
+	// is what makes the kind additive rather than breaking. The converse is NOT true:
+	// filtering on kind does not give you the body, because the verbatim `metadata`
+	// blob is a block. IsBody() below is the body predicate (1.3).
 	static constexpr const char *KIND_VALUE = "value";
 
 	// ========================================================================
 	// Value type names (kind = 'value')
 	// ========================================================================
-	// Model Pandoc's recursive MetaValue tree. `list` and `map` nest their
-	// children via `level`, exactly as `div` and `figure` do; `inlines` and
-	// `blocks` carry ordinary kind='inline'/'block' children. The map key, where
-	// there is one, is in attributes['key'].
+	// Model Pandoc's recursive MetaValue tree. `list` and `map` nest their children
+	// via `level`, exactly as `div` and `figure` do; `inlines` and `blocks` carry
+	// ordinary kind='inline'/'block' children. The map key, where there is one, is in
+	// attributes['key'].
 	static constexpr const char *VALUE_STRING = "string";
 	static constexpr const char *VALUE_BOOL = "bool";
 	static constexpr const char *VALUE_LIST = "list";
@@ -282,8 +287,7 @@ struct DuckBlockVocabulary {
 	static constexpr const char *VALUE_BLOCKS = "blocks";
 	// Stream metadata, not document metadata: records which duck_block spec a
 	// persisted or exchanged block list was written against. Carries no
-	// attributes['key'], which is what keeps it out of a document's Pandoc
-	// `meta`.
+	// attributes['key'], which is what keeps it out of a document's Pandoc `meta`.
 	static constexpr const char *VALUE_VERSION = "version";
 
 	// The duck_block spec version this build implements, as MAJOR.MINOR.
@@ -297,297 +301,248 @@ struct DuckBlockVocabulary {
 	// Equality goes red on every release including ones that cannot affect you,
 	// and a check that cries wolf gets muted:
 	//
-	//     major(duck_block_spec_version()) == 1   AND   minor(...) >= <what you
-	//     need>
+	//     major(duck_block_spec_version()) == 1   AND   minor(...) >= <what you need>
 	//
 	// (Asked by panduck, who noticed the guidance said "compare against
-	// SPEC_VERSION" without saying compare HOW, and whose readers are untouched
-	// by 2.0 apart from lists.)
+	// SPEC_VERSION" without saying compare HOW, and whose readers are untouched by
+	// 2.0 apart from lists.)
 	//
-	// HONEST HISTORY, because the numbers only mean something if they were
-	// applied consistently and one of these was not.
+	// HONEST HISTORY, because the numbers only mean something if they were applied
+	// consistently and one of these was not.
 	//
-	// TWO NUMBER LINES. Every entry below up to 6.6 is on this repo's INTERNAL
-	// line, retired on 2026-09-10 (last entry). The internal line had its own 1.1
-	// and 1.2, which are NOT the public 1.2 that SPEC_VERSION now carries:
-	// internal 1.2 lacked explicit levels, `plain`, one shape per element_type
-	// and the native table schema; public 1.2 has all of them. A check written
-	// against internal 1.x
-	// (`major == 1 AND minor >= 2`) is satisfied by public 1.2 and is therefore
-	// not discriminating; no consumer in the fleet carries one (checked
-	// 2026-09-10: every vendored copy was on 6.5), which is why the number was
-	// reused rather than skipped. (Zim-Dev's finding, 2026-09-10.)
+	// TWO NUMBER LINES. Every entry below up to 6.6 is on this repo's INTERNAL line,
+	// retired on 2026-09-10 (last entry). The internal line had its own 1.1 and 1.2,
+	// which are NOT the public 1.2 that SPEC_VERSION now carries: internal 1.2 lacked
+	// explicit levels, `plain`, one shape per element_type and the native table
+	// schema; public 1.2 has all of them. A check written against internal 1.x
+	// (`major == 1 AND minor >= 2`) is satisfied by public 1.2 and is therefore not
+	// discriminating; no consumer in the fleet carries one (checked 2026-09-10:
+	// every vendored copy was on 6.5), which is why the number was reused rather
+	// than skipped. (Zim-Dev's finding, 2026-09-10.)
 	//
 	//   -- internal line --
 	//   1.1 -> 1.2  list and blockquote became structural. BREAKING -- it broke
 	//               duckdb_markdown's writer in three places. It should have been
-	//               2.0 and the minor bump was wrong. A consumer pinning "major
-	//               1" would have been broken by a release the numbering promised
-	//               was safe.
-	//   1.2 -> 2.0  one shape per BLOCK element_type. Breaking, numbered
-	//   correctly. 2.0 -> 3.0  every element carries an EXPLICIT level; no NULLs,
-	//   one scale for
+	//               2.0 and the minor bump was wrong. A consumer pinning "major 1"
+	//               would have been broken by a release the numbering promised was
+	//               safe.
+	//   1.2 -> 2.0  one shape per BLOCK element_type. Breaking, numbered correctly.
+	//   2.0 -> 3.0  every element carries an EXPLICIT level; no NULLs, one scale for
 	//               blocks and inlines, and `level` is never semantic. Breaking.
 	//               The NULL-at-top-level convention 1.x and 2.0 documented was
 	//               never approved -- see docs/duck_blocks_spec.md.
-	//   3.0 -> 4.0  `plain` added: Pandoc's Plain constructor, which this reader
-	//   had
-	//               been collapsing onto `paragraph`, losing the tight vs loose
-	//               list distinction. BREAKING by this contract's own rule -- a
-	//               consumer rendering `paragraph` now receives `plain` for a
-	//               tight list item
-	//               -- so a MAJOR bump even though the vocabulary change is
-	//               additive. Also makes `list_type` canonical, `ordered` a
-	//               legacy alias.
+	//   3.0 -> 4.0  `plain` added: Pandoc's Plain constructor, which this reader had
+	//               been collapsing onto `paragraph`, losing the tight vs loose list
+	//               distinction. BREAKING by this contract's own rule -- a consumer
+	//               rendering `paragraph` now receives `plain` for a tight list item
+	//               -- so a MAJOR bump even though the vocabulary change is additive.
+	//               Also makes `list_type` canonical, `ordered` a legacy alias.
 	//   4.0 -> 5.0  `table` emits the NATIVE {headers,rows} schema, with the full
-	//               Pandoc tuple preserved in attributes['pandoc_ast'] so nothing
-	//               is lost; definition lists become `list` with
-	//               list_type='definition' rather than the opaque `deflist`. Both
-	//               previously serialised structure into a field consumers read
-	//               verbatim: tables rendered as NOTHING and deflists rendered
-	//               their own AST, and both poisoned search. Breaking -- a
-	//               consumer parsing either JSON must migrate.
+	//               Pandoc tuple preserved in attributes['pandoc_ast'] so nothing is
+	//               lost; definition lists become `list` with list_type='definition'
+	//               rather than the opaque `deflist`. Both previously serialised
+	//               structure into a field consumers read verbatim: tables rendered
+	//               as NOTHING and deflists rendered their own AST, and both poisoned
+	//               search. Breaking -- a consumer parsing either JSON must migrate.
 	//
 	//   5.0 -> 6.0  `plain` is NARROWED to text that has nowhere else to live. A
-	//               container whose only child is a text run carries that text in
-	//               its own `content` -- v1's content rule, unchanged since v1.0
-	//               -- so
+	//               container whose only child is a text run carries that text in its
+	//               own `content` -- v1's content rule, unchanged since v1.0 -- so
 	//               `<li>text</li>` is `list_item(content='text')`, not
-	//               `list_item > plain('text')`. 5.0 shipped the second, which
-	//               meant a container with a single text child had TWO legal
-	//               shapes depending on which producer built it, and removing
-	//               that ambiguity is the thing every version since 2.0 has been
-	//               for.
+	//               `list_item > plain('text')`. 5.0 shipped the second, which meant a
+	//               container with a single text child had TWO legal shapes depending
+	//               on which producer built it, and removing that ambiguity is the
+	//               thing every version since 2.0 has been for.
 	//
-	//               `plain` still exists and is still required, in exactly two
-	//               places:
-	//                 * beside block siblings -- `section > plain('Lead') +
-	//                 heading`,
-	//                   where the container's content cannot hold the run because
-	//                   the run is not the only child;
-	//                 * at the TOP LEVEL, where the document root has no content
-	//                 field.
+	//               `plain` still exists and is still required, in exactly two places:
+	//                 * beside block siblings -- `section > plain('Lead') + heading`,
+	//                   where the container's content cannot hold the run because the
+	//                   run is not the only child;
+	//                 * at the TOP LEVEL, where the document root has no content field.
 	//
 	//               Tight-vs-loose list items are NOT lost by this and need no
 	//               attribute: content on the item is Pandoc's `Plain` (tight), a
 	//               `paragraph` child is `Para` (loose). Measured on the exporter
 	//               before the change, not assumed.
 	//
-	//               Breaking for a consumer that walks for a `plain` child; a
-	//               consumer that already read the container's `content` -- which
-	//               the rule has required since v1 -- needs no change.
+	//               Breaking for a consumer that walks for a `plain` child; a consumer
+	//               that already read the container's `content` -- which the rule has
+	//               required since v1 -- needs no change.
 	//
-	//   6.0 -> 6.1  ADDITIVE. `duck_blocks_normalize(blocks)` applies 6.0's
-	//   content
-	//               rule to a finished block vector, so a producer can emit the
-	//               naive shape and fix it up afterwards instead of implementing
-	//               the rule.
+	//   6.0 -> 6.1  ADDITIVE. `duck_blocks_normalize(blocks)` applies 6.0's content
+	//               rule to a finished block vector, so a producer can emit the naive
+	//               shape and fix it up afterwards instead of implementing the rule.
 	//
-	//               Needed because the rule is SIBLING-DEPENDENT: whether a text
-	//               run becomes its container's content or stays a `plain`
-	//               depends on what FOLLOWS it, which a streaming reader does not
-	//               know when it reaches the run. Raised by the panduck session,
-	//               whose EPUB and LaTeX readers both emit as they walk; it is
-	//               true of any streaming reader of any format, so the answer
-	//               should not be four private lookaheads that drift. Nothing is
-	//               removed or renamed -- a consumer on 6.0 is unaffected.
-	//
-	//   6.1 -> 6.2  ADDITIVE, three clarifications that were load-bearing and
-	//   unstated.
-	//               `metadata` gains attributes['role'], with 'frontmatter'
-	//               declared -- one type plus a role rather than minting
-	//               `frontmatter` as its own element_type, which is this
-	//               vocabulary's own rule applied to a case three producers had
-	//               each guessed differently.
-	//
-	//               Value elements after the blocks is now a CONTRACT, not the
-	//               "convenience" the spec called it: two producers asked where
-	//               they go, which is a question a convenience cannot answer.
-	//               With it, the rule that a consumer must end an inline run at
-	//               any NON-INLINE element -- getting that wrong made this repo's
-	//               exporter emit a document whose body had been replaced by its
-	//               title.
-	//
-	//               A document with NO blocks -- a .toml file read as pure
-	//               metadata -- is conformant, and stated rather than left to be
-	//               inferred from nothing objecting.
-	//
-	//               Nothing renamed, nothing removed; a consumer on 6.1 is
+	//               Needed because the rule is SIBLING-DEPENDENT: whether a text run
+	//               becomes its container's content or stays a `plain` depends on what
+	//               FOLLOWS it, which a streaming reader does not know when it reaches
+	//               the run. Raised by the panduck session, whose EPUB and LaTeX
+	//               readers both emit as they walk; it is true of any streaming reader
+	//               of any format, so the answer should not be four private lookaheads
+	//               that drift. Nothing is removed or renamed -- a consumer on 6.0 is
 	//               unaffected.
 	//
+	//   6.1 -> 6.2  ADDITIVE, three clarifications that were load-bearing and unstated.
+	//               `metadata` gains attributes['role'], with 'frontmatter' declared --
+	//               one type plus a role rather than minting `frontmatter` as its own
+	//               element_type, which is this vocabulary's own rule applied to a case
+	//               three producers had each guessed differently.
+	//
+	//               Value elements after the blocks is now a CONTRACT, not the
+	//               "convenience" the spec called it: two producers asked where they go,
+	//               which is a question a convenience cannot answer. With it, the rule
+	//               that a consumer must end an inline run at any NON-INLINE element --
+	//               getting that wrong made this repo's exporter emit a document whose
+	//               body had been replaced by its title.
+	//
+	//               A document with NO blocks -- a .toml file read as pure metadata --
+	//               is conformant, and stated rather than left to be inferred from
+	//               nothing objecting.
+	//
+	//               Nothing renamed, nothing removed; a consumer on 6.1 is unaffected.
+	//
 	//   6.3 -> 6.4  ADDITIVE for the shape, with ONE REMOVAL and ONE DEPRECATION.
-	//               duck_block gains an optional trailing 8th field, `filename
-	//               VARCHAR`, so a reader can say which file each row came from
-	//               without breaking the `list(b)` idiom. Consumers MUST accept
-	//               both the 7-field and the 8-field shape; producers MAY emit
-	//               the 8th, opt-in behind `filename := true`, DuckDB core's own
-	//               convention. It is TRAILING ONLY and the widened shape is
-	//               exactly one type: a differently named or differently placed
-	//               extra field stays a binder error. Functions that RETURN
-	//               blocks return the 7-field shape: provenance lives on the
-	//               reader's rows and survives GROUP BY filename, not
+	//               duck_block gains an optional trailing 8th field, `filename VARCHAR`,
+	//               so a reader can say which file each row came from without breaking
+	//               the `list(b)` idiom. Consumers MUST accept both the 7-field and the
+	//               8-field shape; producers MAY emit the 8th, opt-in behind
+	//               `filename := true`, DuckDB core's own convention. It is TRAILING
+	//               ONLY and the widened shape is exactly one type: a differently
+	//               named or differently placed extra field stays a binder error.
+	//               Functions that RETURN blocks return the 7-field shape: provenance
+	//               lives on the reader's rows and survives GROUP BY filename, not
 	//               duck_blocks_merge.
 	//
-	//               ROLLOUT ORDER, which is why the rule is stated: land
-	//               acceptance in every consumer BEFORE any reader emits, or
-	//               every `duck_blocks_toc(list(b))` in the field breaks with the
-	//               binder error the day the reader ships.
+	//               ROLLOUT ORDER, which is why the rule is stated: land acceptance in
+	//               every consumer BEFORE any reader emits, or every
+	//               `duck_blocks_toc(list(b))` in the field breaks with the binder
+	//               error the day the reader ships.
 	//
-	//               REMOVED: SOURCE_FORMAT_IDX (7) and FILE_PATH_IDX (8), the
-	//               offsets of a `duck_block_ext` type no function ever produced
-	//               or consumed. `filename` at 7 would otherwise contradict a
-	//               published constant. DEPRECATED: the `duck_block_ext` catalog
-	//               type stays registered for one release because a user's own
-	//               `CAST(x AS duck_block_ext)` is invisible to any grep of ours;
-	//               it goes in 6.5.
+	//               REMOVED: SOURCE_FORMAT_IDX (7) and FILE_PATH_IDX (8), the offsets
+	//               of a `duck_block_ext` type no function ever produced or consumed.
+	//               `filename` at 7 would otherwise contradict a published constant.
+	//               DEPRECATED: the `duck_block_ext` catalog type stays registered
+	//               for one release because a user's own `CAST(x AS duck_block_ext)`
+	//               is invisible to any grep of ours; it goes in 6.5.
 	//
 	//               A consumer on 6.3 that never referenced the two offsets is
 	//               unaffected until a reader it depends on starts emitting.
 	//
-	//   6.4 -> 6.5  BREAKING on the FUNCTION SURFACE, nothing in the struct
-	//   shape.
-	//               Retrieval returns blocks, and a suffix names what the
-	//               ORIGINAL returned, so nobody is stranded:
+	//   6.4 -> 6.5  BREAKING on the FUNCTION SURFACE, nothing in the struct shape.
+	//               Retrieval returns blocks, and a suffix names what the ORIGINAL
+	//               returned, so nobody is stranded:
 	//
 	//               * duck_blocks_get_section and duck_blocks_get_pages return
-	//                 LIST(duck_block) instead of VARCHAR;
-	//                 duck_blocks_sections_like's third column is `blocks`
-	//                 LIST(duck_block) instead of `content` VARCHAR, rows
-	//                 unchanged; named parameters removed entirely (output_format
-	//                 was the only one, on all three); page_rows gains a `blocks`
-	//                 column beside its existing four. The originals live on as
-	//                 duck_blocks_get_section_text, duck_blocks_get_pages_text,
-	//                 duck_blocks_sections_like_text -- defined as
-	//                 duck_blocks_to_text over the blocks form, which is
-	//                 byte-identical to the old default because that is literally
-	//                 what the old default computed.
+	//                 LIST(duck_block) instead of VARCHAR; duck_blocks_sections_like's
+	//                 third column is `blocks` LIST(duck_block) instead of `content`
+	//                 VARCHAR, rows unchanged; named parameters removed entirely
+	//                 (output_format was the only one, on all three); page_rows gains
+	//                 a `blocks` column beside its existing four. The originals live
+	//                 on as duck_blocks_get_section_text, duck_blocks_get_pages_text,
+	//                 duck_blocks_sections_like_text -- defined as duck_blocks_to_text
+	//                 over the blocks form, which is byte-identical to the old default
+	//                 because that is literally what the old default computed.
 	//               * duck_blocks_headings, _toc, _code_blocks, _links return
-	//                 LIST(duck_block); today's projections live on,
-	//                 byte-for-byte and permanently, as
-	//                 duck_blocks_headings_structs, _toc_structs,
-	//                 _code_blocks_structs, _links_structs. toc_rows and
-	//                 page_rows keep their row shapes.
-	//               * ATTR_OUTLINE and ATTR_INDENT: the first attributes a
-	//               function here
-	//                 COMPUTES rather than copies. Only on the output of the
-	//                 heading constructions.
-	//               * RECOVERY CONTRACT, now normative: element_order is dense
-	//               from 0
-	//                 over the list a reader EMITS, synthetic markers included.
-	//                 Every projection or construction FROM a document carries it
-	//                 through unrenumbered, with gaps -- it is the join key back
-	//                 to the source and between the blocks and _structs forms.
-	//                 Only functions that build a standalone document (assemble,
-	//                 merge, reorder) renumber.
-	//               * Restated, because producers asked: `level` is never NULL (a
-	//               flat
-	//                 format emits 1 everywhere); `filename` is opt-in and
-	//                 boolean-only.
+	//                 LIST(duck_block); today's projections live on, byte-for-byte and
+	//                 permanently, as duck_blocks_headings_structs, _toc_structs,
+	//                 _code_blocks_structs, _links_structs. toc_rows and page_rows keep
+	//                 their row shapes.
+	//               * ATTR_OUTLINE and ATTR_INDENT: the first attributes a function here
+	//                 COMPUTES rather than copies. Only on the output of the heading
+	//                 constructions.
+	//               * RECOVERY CONTRACT, now normative: element_order is dense from 0
+	//                 over the list a reader EMITS, synthetic markers included. Every
+	//                 projection or construction FROM a document carries it through
+	//                 unrenumbered, with gaps -- it is the join key back to the source
+	//                 and between the blocks and _structs forms. Only functions that
+	//                 build a standalone document (assemble, merge, reorder) renumber.
+	//               * Restated, because producers asked: `level` is never NULL (a flat
+	//                 format emits 1 everywhere); `filename` is opt-in and boolean-only.
 	//
-	//               Migration: a caller reading a projection field off
-	//               duck_blocks_toc (panduck's doc_toc) renames to
-	//               duck_blocks_toc_structs; a caller wanting text renames to the
-	//               _text sibling. Failure to migrate is a binder error, never a
-	//               wrong answer.
+	//               Migration: a caller reading a projection field off duck_blocks_toc
+	//               (panduck's doc_toc) renames to duck_blocks_toc_structs; a caller
+	//               wanting text renames to the _text sibling. Failure to migrate is a
+	//               binder error, never a wrong answer.
 	//
-	//   6.5 -> 6.6  ADDITIVE for consumers; producers gain two obligations, named
-	//   here.
-	//               Issue #29 (duckeye): every validation rule was a predicate on
-	//               ONE element and the one-shape rule bound only this repo,
-	//               while the divergences consumers hit are properties of a LIST
-	//               and run between repos. Four things:
-	//               * Fragments are legal input. ImplicitParentOf() below
-	//               declares the
-	//                 wrapper a fragment gets (list_item -> list, caption ->
-	//                 figure, inline -> plain). duck_blocks_to_pandoc_ast used to
-	//                 return [] for an orphan inline run that
-	//                 duck_blocks_validate called valid.
-	//               * List-level validation (field = 'list'): element_order dense
-	//               from 0,
-	//                 shallowest level 1, no level jump, required ancestors
-	//                 present.
-	//               * duck_blocks_repair(blocks): the deterministic fixes for
-	//               those rules,
-	//                 idempotent, never touching an existing element's content,
-	//                 attributes or element_type. Composes with
-	//                 duck_blocks_normalize.
-	//               * ONE shape per element_type binds EVERY producer. First
-	//               instance: a
-	//                 tight list item carries content (Pandoc Plain); a loose one
-	//                 has a paragraph child (Para). markdown emitted loose for
-	//                 both (markdown#60) and starts element_order at 1
-	//                 (markdown#59); both are producer bugs under this note, not
-	//                 new rules.
-	//               A consumer on 6.5 is unaffected. A producer that vendored
-	//               `plain` and never emitted it has been non-conformant
-	//               since 4.0; this note names it.
+	//   6.5 -> 6.6  ADDITIVE for consumers; producers gain two obligations, named here.
+	//               Issue #29 (duckeye): every validation rule was a predicate on ONE
+	//               element and the one-shape rule bound only this repo, while the
+	//               divergences consumers hit are properties of a LIST and run between
+	//               repos. Four things:
+	//               * Fragments are legal input. ImplicitParentOf() below declares the
+	//                 wrapper a fragment gets (list_item -> list, caption -> figure,
+	//                 inline -> plain). duck_blocks_to_pandoc_ast used to return [] for an
+	//                 orphan inline run that duck_blocks_validate called valid.
+	//               * List-level validation (field = 'list'): element_order dense from 0,
+	//                 shallowest level 1, no level jump, required ancestors present.
+	//               * duck_blocks_repair(blocks): the deterministic fixes for those rules,
+	//                 idempotent, never touching an existing element's content, attributes
+	//                 or element_type. Composes with duck_blocks_normalize.
+	//               * ONE shape per element_type binds EVERY producer. First instance: a
+	//                 tight list item carries content (Pandoc Plain); a loose one has a
+	//                 paragraph child (Para). markdown emitted loose for both (markdown#60)
+	//                 and starts element_order at 1 (markdown#59); both are producer bugs
+	//                 under this note, not new rules.
+	//               A consumer on 6.5 is unaffected. A producer that vendored `plain` and
+	//               never emitted it has been non-conformant since 4.0; this note names it.
 	//
-	//   internal 6.6 -> public 1.2  RENUMBERED, NO SHAPE CHANGE. Teague,
-	//   2026-09-10: "I don't want to
-	//               keep numbering up into the 6.6s; this should be at most 1.2;
-	//               stop with the internal numbering." The 6.x line was this
-	//               repo's internal count of spec revisions, one per ruling, and
-	//               it had climbed to a number that says "sixth major redesign"
-	//               about a vocabulary whose public name has been duck_blocks 1.1
-	//               throughout. The public name is now the number: 1.2 is 6.6
-	//               with a different label. Nothing renamed, removed, or reshaped
-	//               between them.
+	//   internal 6.6 -> public 1.2  RENUMBERED, NO SHAPE CHANGE. Teague, 2026-09-10: "I don't want to
+	//               keep numbering up into the 6.6s; this should be at most 1.2; stop
+	//               with the internal numbering." The 6.x line was this repo's internal
+	//               count of spec revisions, one per ruling, and it had climbed to a
+	//               number that says "sixth major redesign" about a vocabulary whose
+	//               public name has been duck_blocks 1.1 throughout. The public name
+	//               is now the number: 1.2 is 6.6 with a different label. Nothing
+	//               renamed, removed, or reshaped between them.
 	//
-	//               RECORDED, NOT QUIET, for the same reason the mis-numbered 1.1
-	//               -> 1.2 above is recorded: every consumer compares major
-	//               equality plus a minor floor (panduck's check implements
-	//               exactly that rule), so a major going DOWN from 6 to 1 reads
-	//               as a breaking change to a rule that is working correctly.
-	//               SPEC_VERSION_SUPERSEDES below names the last number of the
-	//               retired line so a check can accept either side of the
-	//               renumbering; a consumer re-vendoring this header updates its
-	//               major-equality constant from 6 to 1 once and is done. The
-	//               next breaking change is 2.0; the next additive one is 1.3.
+	//               RECORDED, NOT QUIET, for the same reason the mis-numbered 1.1 -> 1.2
+	//               above is recorded: every consumer compares major equality plus a
+	//               minor floor (panduck's check implements exactly that rule), so a
+	//               major going DOWN from 6 to 1 reads as a breaking change to a rule
+	//               that is working correctly. SPEC_VERSION_SUPERSEDES below names the
+	//               last number of the retired line so a check can accept either side
+	//               of the renumbering; a consumer re-vendoring this header updates its
+	//               major-equality constant from 6 to 1 once and is done. The next
+	//               breaking change is 2.0; the next additive one is 1.3.
 	//
 	//   1.2 -> 1.3  `IsBody(kind, element_type)`: the document's BODY is kind IN
 	//               (block, inline) AND element_type <> metadata. Additive: a new
-	//               predicate stating a rule the prose implied but never wrote
-	//               down, so every consumer wrote its own. It changes
-	//               duck_blocks_to_text's OUTPUT for a document carrying a
-	//               frontmatter or tailmatter blob: the blob no longer renders as
-	//               prose. That is a fix to the reference tool, not a shape
-	//               change; a consumer that copied to_text's behaviour was
-	//               reproducing a leak (duckeye and markdown sessions,
-	//               2026-09-11).
+	//               predicate stating a rule the prose implied but never wrote down,
+	//               so every consumer wrote its own. It changes duck_blocks_to_text's
+	//               OUTPUT for a document carrying a frontmatter or tailmatter blob:
+	//               the blob no longer renders as prose. That is a fix to the
+	//               reference tool, not a shape change; a consumer that copied
+	//               to_text's behaviour was reproducing a leak (duckeye and markdown
+	//               sessions, 2026-09-11).
 	//
-	//   1.3 -> 1.4  BODY IS A SUBTREE PROPERTY. 1.3's per-row IsBody() said a
-	//   value
+	//   1.3 -> 1.4  BODY IS A SUBTREE PROPERTY. 1.3's per-row IsBody() said a value
 	//               container is not body and then said its inline child text IS:
 	//               Pandoc-derived readers (docx, odt, org, epub, rtf, tex) emit
-	//               metadata as kind='value' rows whose text lives in
-	//               kind='inline' children, so a row filter leaked "Test Author"
-	//               into body while duck_blocks_to_text, which walks the tree,
-	//               stayed clean (panduck #54 fixture, 2026-09-14). The
-	//               definition is now: a row is body iff kind IN (block, inline),
-	//               element_type <> metadata, AND no ancestor by level is a value
-	//               or metadata row. IsBody() is kept, unchanged, as the
-	//               NECESSARY per-row test; duck_blocks_body(blocks) applies the
-	//               subtree rule to a list. The value-tree level contract is
-	//               stated (descendants strictly deeper than their root) and
-	//               validated (L6). PREDICATE_REVISION added (see below).
-	//               Additive.
+	//               metadata as kind='value' rows whose text lives in kind='inline'
+	//               children, so a row filter leaked "Test Author" into body while
+	//               duck_blocks_to_text, which walks the tree, stayed clean (panduck
+	//               #54 fixture, 2026-09-14). The definition is now: a row is body iff
+	//               kind IN (block, inline), element_type <> metadata, AND no ancestor
+	//               by level is a value or metadata row. IsBody() is kept, unchanged,
+	//               as the NECESSARY per-row test; duck_blocks_body(blocks) applies the
+	//               subtree rule to a list. The value-tree level contract is stated
+	//               (descendants strictly deeper than their root) and validated (L6).
+	//               PREDICATE_REVISION added (see below). Additive.
 	//
 	// The rule above is what will be followed from here.
 	static constexpr const char *SPEC_VERSION = "1.4";
-	// The last number of the internal 6.x line that 1.2 replaces. A consumer
-	// check that reads MAJOR from SPEC_VERSION treats this line's major as
-	// equivalent to the current one for the one release it takes to re-vendor.
-	// Removed at 2.0.
+	// The last number of the internal 6.x line that 1.2 replaces. A consumer check
+	// that reads MAJOR from SPEC_VERSION treats this line's major as equivalent to
+	// the current one for the one release it takes to re-vendor. Removed at 2.0.
 	static constexpr const char *SPEC_VERSION_SUPERSEDES = "6.6";
-	// The SPEC_VERSION at which any constexpr PREDICATE in this header
-	// (ImplicitParentOf, RequiresAncestor, IsBody) last changed its answers.
-	// Consumer drift checks compare constants by name and value and cannot see a
-	// predicate's body (markdown measured 95 constants before and after IsBody
-	// landed), so a predicate edit would read as "in sync" everywhere. This
-	// constant changes value when a predicate does, which is the one kind of
-	// change those checks are built to see. Rules: a predicate body change is at
-	// least a MINOR bump with a history entry naming the predicate and its old
-	// and new rule; a change that flips an existing answer is MAJOR.
+	// The SPEC_VERSION at which any constexpr PREDICATE in this header (ImplicitParentOf,
+	// RequiresAncestor, IsBody) last changed its answers. Consumer drift checks compare
+	// constants by name and value and cannot see a predicate's body (markdown measured
+	// 95 constants before and after IsBody landed), so a predicate edit would read as
+	// "in sync" everywhere. This constant changes value when a predicate does, which is
+	// the one kind of change those checks are built to see. Rules: a predicate body
+	// change is at least a MINOR bump with a history entry naming the predicate and its
+	// old and new rule; a change that flips an existing answer is MAJOR.
 	static constexpr const char *PREDICATE_REVISION = "1.3";
 
 	// ========================================================================
@@ -600,11 +555,10 @@ struct DuckBlockVocabulary {
 	// `<dd>text</dd>`, `<figcaption>text</figcaption>`.
 	//
 	// This existed in Pandoc all along and this reader collapsed it onto
-	// `paragraph`, which is how the TIGHT vs LOOSE list distinction was being
-	// lost
+	// `paragraph`, which is how the TIGHT vs LOOSE list distinction was being lost
 	// -- and lost independently in webbed, by a different mechanism, with neither
-	// reader aware. Modelling it as its own type rather than an attribute keeps
-	// the mapping honest: it is a constructor we were failing to represent, not a
+	// reader aware. Modelling it as its own type rather than an attribute keeps the
+	// mapping honest: it is a constructor we were failing to represent, not a
 	// variation we were failing to annotate.
 	static constexpr const char *TYPE_PLAIN = "plain";
 	static constexpr const char *TYPE_CODE = "code";
@@ -618,14 +572,14 @@ struct DuckBlockVocabulary {
 	static constexpr const char *TYPE_RAW = "raw";
 	static constexpr const char *TYPE_DIV = "div";
 	// A SEMANTIC sectioning container, distinct from `div`. HTML's own spec calls
-	// div "an element of last resort", so mapping <section>/<article>/<aside>
-	// onto it would make element_type say something false while the truth hid in
-	// an attribute. Which kind of section lives in attributes['role'] -- section,
-	// article, aside, nav, header, footer, main -- following the convention
-	// already set by heading+heading_level, list+list_type and quoted+quote_type
-	// rather than minting one type per variant. Pandoc has no Section
-	// constructor, so this exports as a Div whose class is the role; that is
-	// pandoc's nearest honest equivalent.
+	// div "an element of last resort", so mapping <section>/<article>/<aside> onto
+	// it would make element_type say something false while the truth hid in an
+	// attribute. Which kind of section lives in attributes['role'] -- section,
+	// article, aside, nav, header, footer, main -- following the convention already
+	// set by heading+heading_level, list+list_type and quoted+quote_type rather
+	// than minting one type per variant.
+	// Pandoc has no Section constructor, so this exports as a Div whose class is
+	// the role; that is pandoc's nearest honest equivalent.
 	static constexpr const char *TYPE_SECTION = "section";
 	// A physical pagination boundary -- a MARKER, not a container. Like `hr` it
 	// carries no content and owns no children; element_order already groups
@@ -653,8 +607,8 @@ struct DuckBlockVocabulary {
 	// the exporter and a sibling's vendored copy agree. Empty string = none.
 	// Constexpr and std-free so the header stays <cstdint>-only.
 	// ========================================================================
-	// Single-return recursion, not a loop: the extension compiles as C++11, where
-	// a constexpr body must be one return statement. (The standalone header probe
+	// Single-return recursion, not a loop: the extension compiles as C++11, where a
+	// constexpr body must be one return statement. (The standalone header probe
 	// compiles with a newer standard and cannot catch a C++14-only body.)
 	static constexpr bool SameName(const char *a, const char *b) {
 		return *a == *b && (*a == '\0' || SameName(a + 1, b + 1));
@@ -668,9 +622,8 @@ struct DuckBlockVocabulary {
 	}
 
 	// Does an ancestor of block type `ancestor_type` satisfy this element's
-	// requirement? Only meaningful when ImplicitParentOf() is non-empty. An
-	// inline needs any non-inline (block or value) above it, which callers check
-	// by kind.
+	// requirement? Only meaningful when ImplicitParentOf() is non-empty. An inline
+	// needs any non-inline (block or value) above it, which callers check by kind.
 	static constexpr bool RequiresAncestor(const char *element_type, const char *kind, const char *ancestor_type) {
 		return SameName(kind, KIND_INLINE) ? true
 		       : SameName(element_type, TYPE_LIST_ITEM)
@@ -680,36 +633,33 @@ struct DuckBlockVocabulary {
 		           : false;
 	}
 
-	// Is this element part of the document's BODY -- what a text renderer, an
-	// indexer or an embedder should see? NOT expressible as a kind filter: the
-	// verbatim `metadata` blob is kind='block' because it is content-shaped (it
-	// has a source position and a level), but it is no more body than the
-	// kind='value' tree is. Found when duckeye's text renderer printed a markdown
-	// file's frontmatter above its first heading while the same metadata from a
-	// .docx (kind='value') stayed out, and duck_blocks_to_text did the same
-	// (markdown and duckeye sessions, 2026-09-11): two conformant producers,
-	// consumers diverging, the #29 shape again. `raw` IS body -- document content
-	// in its source format -- and merely has no text rendering, which is a
-	// renderer's decision, not this predicate's.
+	// Is this element part of the document's BODY -- what a text renderer, an indexer
+	// or an embedder should see? NOT expressible as a kind filter: the verbatim
+	// `metadata` blob is kind='block' because it is content-shaped (it has a source
+	// position and a level), but it is no more body than the kind='value' tree is.
+	// Found when duckeye's text renderer printed a markdown file's frontmatter above
+	// its first heading while the same metadata from a .docx (kind='value') stayed
+	// out, and duck_blocks_to_text did the same (markdown and duckeye sessions,
+	// 2026-09-11): two conformant producers, consumers diverging, the #29 shape again.
+	// `raw` IS body -- document content in its source format -- and merely has no
+	// text rendering, which is a renderer's decision, not this predicate's.
 	//
-	// NECESSARY, NOT SUFFICIENT (1.4). This is a per-row test and cannot see an
-	// ancestor: the inline leaves of a kind='value' metadata tree answer TRUE
-	// here. Body is a SUBTREE property: a row is body iff this predicate holds
-	// AND no ancestor by level is a value or metadata row. Filter a LIST with
-	// duck_blocks_body(blocks), which applies both; use this alone only where the
-	// row is already known to be under a block. The value-tree contract that
-	// makes the walk correct: a value tree's descendants sit strictly deeper than
-	// their root (validated as L6).
+	// NECESSARY, NOT SUFFICIENT (1.4). This is a per-row test and cannot see an ancestor:
+	// the inline leaves of a kind='value' metadata tree answer TRUE here. Body is a
+	// SUBTREE property: a row is body iff this predicate holds AND no ancestor by level
+	// is a value or metadata row. Filter a LIST with duck_blocks_body(blocks), which
+	// applies both; use this alone only where the row is already known to be under a
+	// block. The value-tree contract that makes the walk correct: a value tree's
+	// descendants sit strictly deeper than their root (validated as L6).
 	static constexpr bool IsBody(const char *kind, const char *element_type) {
 		return (SameName(kind, KIND_BLOCK) || SameName(kind, KIND_INLINE)) && !SameName(element_type, TYPE_METADATA);
 	}
 	// A structurally-valid element whose type is not in the standard vocabulary.
-	// Distinct from TYPE_RAW, which is literal content in a *named* format; this
-	// is a structured element we cannot name. Format-neutral on purpose: any
-	// reader (pandoc, html, sitting_duck) can use it. The originating type name
-	// is preserved in attributes['source_type']. Shares its string with
-	// INLINE_GENERIC; `kind` disambiguates, as it already does for
-	// code/image/raw.
+	// Distinct from TYPE_RAW, which is literal content in a *named* format; this is a
+	// structured element we cannot name. Format-neutral on purpose: any reader
+	// (pandoc, html, sitting_duck) can use it. The originating type name is preserved
+	// in attributes['source_type']. Shares its string with INLINE_GENERIC; `kind`
+	// disambiguates, as it already does for code/image/raw.
 	static constexpr const char *TYPE_GENERIC = "generic";
 
 	// ========================================================================
@@ -754,24 +704,22 @@ struct DuckBlockVocabulary {
 	static constexpr const char *ENCODING_LATEX = "latex";
 	static constexpr const char *ENCODING_MARKDOWN = "markdown";
 	// TOML is a distinct syntax with no equivalent in the set above. Emitting a
-	// verbatim .toml blob as 'text' discards the one fact a consumer needs in
-	// order to parse it, which is the opposite of what a verbatim blob is for.
-	// Asked for by the panduck session rather than minted by them -- the
-	// behaviour the spec asks for.
+	// verbatim .toml blob as 'text' discards the one fact a consumer needs in order to
+	// parse it, which is the opposite of what a verbatim blob is for. Asked for by the
+	// panduck session rather than minted by them -- the behaviour the spec asks for.
 	static constexpr const char *ENCODING_TOML = "toml";
 
 	// ========================================================================
 	// Attribute NAMES
 	//
-	// These were bare string literals until 2026-09-01 -- `"role"` appeared in
-	// six places in this repo's own source and in every consumer's, and a drift
-	// check that compares CONSTANTS by name and value could see none of it. A
-	// misspelled `"roles"` produces an element that is valid, conformant,
-	// lint-clean and wrong.
+	// These were bare string literals until 2026-09-01 -- `"role"` appeared in six
+	// places in this repo's own source and in every consumer's, and a drift check that
+	// compares CONSTANTS by name and value could see none of it. A misspelled `"roles"`
+	// produces an element that is valid, conformant, lint-clean and wrong.
 	//
 	// Raised by duckdb_markdown, and the argument is the one that decided
-	// `metadata`+role over minting a `frontmatter` type in the first place: if
-	// the ROLE carries the meaning, the role needs the enforcement the type has.
+	// `metadata`+role over minting a `frontmatter` type in the first place: if the ROLE
+	// carries the meaning, the role needs the enforcement the type has.
 	// ========================================================================
 	static constexpr const char *ATTR_ROLE = "role";
 	static constexpr const char *ATTR_KEY = "key";
@@ -782,9 +730,8 @@ struct DuckBlockVocabulary {
 	// COMPUTED attributes -- set only by duck_block_utils' heading constructions
 	// (duck_blocks_headings / duck_blocks_toc), never emitted by a reader as if
 	// sourced. `outline` is the heading's position in the outline ("1.2.1"):
-	// positions, not the heading's own digit, so h1 -> h3 -> h2 reads
-	// 1, 1.1, 1.2. `indent` is heading level minus the document's minimum heading
-	// level.
+	// positions, not the heading's own digit, so h1 -> h3 -> h2 reads 1, 1.1, 1.2.
+	// `indent` is heading level minus the document's minimum heading level.
 	static constexpr const char *ATTR_OUTLINE = "outline";
 	static constexpr const char *ATTR_INDENT = "indent";
 
@@ -793,57 +740,52 @@ struct DuckBlockVocabulary {
 	// ========================================================================
 	// `metadata` -- which verbatim blob this is
 	static constexpr const char *ROLE_FRONTMATTER = "frontmatter"; // has a document body after it
-	// The author put the blob at the END on purpose. Added in 6.3 because the
-	// spec already named `tailmatter` in its position rules while the vocabulary
-	// declared no such constant -- so a producer following the prose had to
-	// invent a literal, which is the drift the vendoring exists to catch.
-	// Requested by the webbed session, who declined to invent it locally for
-	// exactly that reason.
+	// The author put the blob at the END on purpose. Added in 6.3 because the spec
+	// already named `tailmatter` in its position rules while the vocabulary declared no
+	// such constant -- so a producer following the prose had to invent a literal, which
+	// is the drift the vendoring exists to catch. Requested by the webbed session, who
+	// declined to invent it locally for exactly that reason.
 	//
-	// Without it, a blob the author deliberately placed last is indistinguishable
-	// from metadata the FORMAT supplied with no position at all: both appended,
-	// both roleless.
+	// Without it, a blob the author deliberately placed last is indistinguishable from
+	// metadata the FORMAT supplied with no position at all: both appended, both roleless.
 	static constexpr const char *ROLE_TAILMATTER = "tailmatter";
 	static constexpr const char *ROLE_DOCUMENT = "document"; // the blob IS the whole document
 
 	// ========================================================================
 	// `list_type` values -- the attribute is ATTR_LIST_TYPE
 	//
-	// The KEY got a constant and the VALUES did not, which duckdb_markdown named
-	// as the shape that keeps recurring: "the key gets a constant, the value it
-	// is compared against does not." Their writer branches on `list_type ==
-	// "definition"` to choose the definition-list rendering, so a value rename
-	// upstream turns every definition list into a bullet list, silently, with
-	// every check green.
+	// The KEY got a constant and the VALUES did not, which duckdb_markdown named as the
+	// shape that keeps recurring: "the key gets a constant, the value it is compared
+	// against does not." Their writer branches on `list_type == "definition"` to choose
+	// the definition-list rendering, so a value rename upstream turns every definition
+	// list into a bullet list, silently, with every check green.
 	//
-	// WHY `list_type` AND NOT THE OLDER `attributes['ordered']`. A boolean
-	// answers "ordered or not" and cannot answer "which KIND of list", so it had
-	// no way to say `definition` -- and definition lists arrived the same day the
-	// question was settled, needing zero new element_types because `list_type`
-	// could carry them. A `navlist`, or anything else with list semantics, lands
-	// the same way.
+	// WHY `list_type` AND NOT THE OLDER `attributes['ordered']`. A boolean answers
+	// "ordered or not" and cannot answer "which KIND of list", so it had no way to say
+	// `definition` -- and definition lists arrived the same day the question was
+	// settled, needing zero new element_types because `list_type` could carry them.
+	// A `navlist`, or anything else with list semantics, lands the same way.
 	//
 	// That is the general rule and it is worth more than this instance: WHEN
-	// COLLAPSING TWO NAMES FOR ONE FACT, KEEP THE ONE THAT CAN STILL EXPRESS THE
-	// FACT WHEN IT GROWS. The v1-fidelity argument said keep `ordered`; it
-	// optimised for matching the past and never asked what the next value would
-	// need.
+	// COLLAPSING TWO NAMES FOR ONE FACT, KEEP THE ONE THAT CAN STILL EXPRESS THE FACT
+	// WHEN IT GROWS. The v1-fidelity argument said keep `ordered`; it optimised for
+	// matching the past and never asked what the next value would need.
 	//
-	// `attributes['ordered']` = 'true'/'false' remains a LEGACY ALIAS. Producers
-	// may emit both -- this one does -- and CONSUMERS MUST TOLERATE IT, because
-	// data written before the rule exists and does not rewrite itself. Read
-	// `list_type` first and fall back.
+	// `attributes['ordered']` = 'true'/'false' remains a LEGACY ALIAS. Producers may
+	// emit both -- this one does -- and CONSUMERS MUST TOLERATE IT, because data
+	// written before the rule exists and does not rewrite itself. Read `list_type`
+	// first and fall back.
 	//
 	// Recorded here rather than only in the spec because a consumer reading these
-	// constants is exactly the reader who needs it, and would otherwise not learn
-	// the alias exists at all. (duckeye's point: a reason like this belongs
-	// beside the constant, not only in the thread that produced it.)
+	// constants is exactly the reader who needs it, and would otherwise not learn the
+	// alias exists at all. (duckeye's point: a reason like this belongs beside the
+	// constant, not only in the thread that produced it.)
 	// ========================================================================
 	static constexpr const char *LIST_TYPE_BULLET = "bullet";
 	static constexpr const char *LIST_TYPE_ORDERED = "ordered";
 	static constexpr const char *LIST_TYPE_DEFINITION = "definition";
-	// The legacy boolean. Declared so a consumer tolerating it names the
-	// attribute rather than spelling it, and so a drift check can see it at all.
+	// The legacy boolean. Declared so a consumer tolerating it names the attribute
+	// rather than spelling it, and so a drift check can see it at all.
 	static constexpr const char *ATTR_ORDERED_LEGACY = "ordered";
 
 	// `list_item` in a definition list

@@ -5,6 +5,7 @@
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
 #include "mediawiki_scanner.hpp"
+#include "slugify.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -50,33 +51,11 @@ std::string Trim(const std::string &s) {
 	return s.substr(b, e - b + 1);
 }
 
-//! MediaWiki's heading anchor: lowercased, spaces to underscores, markup
-//! stripped. Measured against pandoc, which slugifies the RENDERED text -- so
-//! `== Heading with
-//! '''bold''' ==` anchors as `heading_with_bold`, with the quotes gone rather
-//! than encoded.
-std::string Slugify(const std::string &text) {
-	std::string out;
-	bool prev_us = false;
-	for (char c : text) {
-		if (std::isalnum(static_cast<unsigned char>(c))) {
-			out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-			prev_us = false;
-		} else if (c == ' ' || c == '-' || c == '_') {
-			if (!out.empty() && !prev_us) {
-				out += '_';
-				prev_us = true;
-			}
-		}
-		// Everything else -- the quote marks of '''bold''', brackets of [[link]] --
-		// is dropped rather than encoded, which is what makes the anchor match
-		// pandoc's.
-	}
-	while (!out.empty() && out.back() == '_') {
-		out.pop_back();
-	}
-	return out;
-}
+// The heading anchor moved to slugify.hpp, shared with rst and textile (#85). What stays
+// HERE is the argument: this reader slugifies PlainText(...) rather than the raw line, so
+// the quote marks of '''bold''' and the brackets of [[link]] contribute no characters and
+// the anchor matches pandoc's. The separator -- an underscore, where textile and rst use a
+// hyphen -- is this format's convention and is passed to the shared function.
 
 //! Strip wiki markup down to its text, for slugs and for table cells. Not a
 //! parser: it removes the delimiters that carry no text of their own.
@@ -470,7 +449,7 @@ public:
 				b.element_type = DuckBlockTypes::TYPE_HEADING;
 				b.level = 1;
 				b.attributes[DuckBlockTypes::ATTR_HEADING_LEVEL] = std::to_string(ln.level);
-				auto id = Slugify(PlainText(ln.text));
+				auto id = HeadingSlug(PlainText(ln.text), '_');
 				if (!id.empty()) {
 					b.attributes["id"] = id;
 				}

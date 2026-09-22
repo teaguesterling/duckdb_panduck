@@ -26,6 +26,7 @@ struct RstBlock {
 	std::string language;
 	std::string source_type; //!< div only: the directive name it came from
 	std::string encoding;
+	std::string id; //!< heading only: the pandoc-style anchor slug (#85)
 	std::string list_start, number_style, number_delim;
 	int heading_level = 0;
 	int level = 1;

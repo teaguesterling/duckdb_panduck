@@ -44,6 +44,82 @@ SELECT element_type, content FROM read_rst_blocks_string(E'Title\n=====\n');
 heading	Title
 
 # ---------------------------------------------------------------------------
+# HEADINGS CARRY A SLUGIFIED id (#85). RST emitted none at all, so `doc_render(..., 'html')`
+# produced `<h1>Title</h1>` where pandoc produces `<h1 id="title">`. That is not cosmetic:
+# doc_section matches on `content = section OR attributes['id'] = section`, so a consumer
+# searching by anchor found nothing. The renderer was never the problem -- webbed emits the
+# id whenever the block carries one, which textile already proved.
+#
+# The rule is pandoc's, measured rather than assumed, and shared with textile and mediawiki
+# (mediawiki differs only in using `_` as its separator):
+#
+#   alphanumerics    lowercased
+#   a RUN of spaces  one separator
+#   `-`              the separator; `_` stays literal; runs of either are NOT collapsed
+#   anything else    dropped, and never becomes a separator
+#   leading chars    skipped up to the FIRST LETTER
+#   nothing left     the literal `section`
+
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(E'Title\n=====\n')
+WHERE element_type = 'heading';
+----
+title
+
+# THE SLUG COMES FROM THE RENDERED TEXT, not the source: `**Bold** Title` slugs the
+# flattened title, so the emphasis delimiters contribute nothing -- the same rule the
+# mediawiki reader records for `'''bold'''`.
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(E'**Bold** Title\n==============\n')
+WHERE element_type = 'heading';
+----
+bold-title
+
+# AN ENUMERATED SECTION TITLE (#84, #87) keeps its marker in `content` and DROPS it from
+# the id, because the rule strips up to the first letter. pandoc agrees on both halves.
+query II
+SELECT content, attributes['id'] FROM read_rst_blocks_string(
+  E'1. Table of Contents\n--------------------\n')
+WHERE element_type = 'heading';
+----
+1. Table of Contents	table-of-contents
+
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(E'2019 Annual Report\n==================\n')
+WHERE element_type = 'heading';
+----
+annual-report
+
+# NOTHING SURVIVES the strip-to-first-letter rule, so pandoc names the section `section`.
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(E'123\n===\n')
+WHERE element_type = 'heading';
+----
+section
+
+# `_` IS LITERAL and `-` is the separator, and neither collapses in a run.
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(
+  E'Title_With_Underscores\n======================\n')
+WHERE element_type = 'heading';
+----
+title_with_underscores
+
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(
+  E'Title-With-Hyphens\n==================\n')
+WHERE element_type = 'heading';
+----
+title-with-hyphens
+
+# A RUN OF SPACES collapses to a single separator, where a run of connectors does not.
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(E'A  B   C\n========\n')
+WHERE element_type = 'heading';
+----
+a-b-c
+
+# ---------------------------------------------------------------------------
 # A FIELD LIST IS NOT METADATA. Measured: pandoc emits a DefinitionList and an EMPTY meta.
 # RST is the only one of panduck's seven formats with no document metadata at all.
 #

@@ -7,6 +7,7 @@
 #include "block_json.hpp"
 #include "duck_block_types.hpp"
 #include "rst_scanner.hpp"
+#include "slugify.hpp"
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
@@ -458,6 +459,17 @@ private:
 						b.content = all;
 						b.inlines = std::move(runs);
 					}
+					// THE ANCHOR (#85). RST emitted none, so doc_render produced `<h1>Title</h1>`
+					// where pandoc produces `<h1 id="title">`, and doc_section -- which matches
+					// `content = section OR attributes['id'] = section` -- could not find a
+					// heading by anchor. webbed's renderer needed no change; it emits the id
+					// whenever the block carries one, which textile already demonstrated.
+					//
+					// Derived from `content`, the FLATTENED title in both branches above, so
+					// `**Bold** Title` slugs as `bold-title` and the delimiters contribute
+					// nothing. slugify.hpp holds the rule and why the separator is its only
+					// parameter.
+					b.id = HeadingSlug(b.content, '-');
 					blocks_.push_back(std::move(b));
 					continue;
 				}
@@ -804,6 +816,9 @@ void BuildRows(const std::string &src, std::vector<RstRow> &rows) {
 		}
 		if (!block.language.empty()) {
 			row.attributes["language"] = block.language;
+		}
+		if (!block.id.empty()) {
+			row.attributes["id"] = block.id;
 		}
 		if (!block.list_type.empty()) {
 			// BOTH SPELLINGS, as every other panduck reader emits: `ordered` is the

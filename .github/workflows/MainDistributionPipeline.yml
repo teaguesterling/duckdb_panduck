@@ -112,7 +112,7 @@ jobs:
     # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
-      DUCKDB_VERSION: v1.5.5
+      DUCKDB_VERSION: v1.5.6
       DUCKDB_NEXT: v2.0-cyanoptera
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
@@ -227,18 +227,18 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.5
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.6
     with:
-      duckdb_version: v1.5.5
-      ci_tools_version: v1.5.5
+      duckdb_version: v1.5.6
+      ci_tools_version: v1.5.6
       extension_name: panduck
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.5
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.6
     with:
-      duckdb_version: v1.5.5
-      ci_tools_version: v1.5.5
+      duckdb_version: v1.5.6
+      ci_tools_version: v1.5.6
       extension_name: panduck
       format_checks: 'format'
 
@@ -324,10 +324,10 @@ jobs:
       # Unzip into its own directory: the archive contains a file named `duckdb`, and
       # the checkout already has a `duckdb/` SUBMODULE directory. Extracting in place
       # makes unzip prompt to overwrite it, which on a runner reads EOF and exits 1.
-      - name: Install DuckDB CLI v1.5.5
+      - name: Install DuckDB CLI v1.5.6
         run: |
           curl -sSL -o duckdb.zip \
-            https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
+            https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
           unzip -q -o duckdb.zip -d duckdb-cli
           chmod +x duckdb-cli/duckdb
           test -x duckdb-cli/duckdb || { echo "duckdb CLI not where expected"; exit 1; }
@@ -336,7 +336,7 @@ jobs:
       - name: Download the panduck extension built above
         uses: actions/download-artifact@v4
         with:
-          name: panduck-v1.5.5-extension-linux_amd64
+          name: panduck-v1.5.6-extension-linux_amd64
           path: ext
 
       - name: Differential validation
@@ -389,10 +389,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install DuckDB CLI v1.5.5
+      - name: Install DuckDB CLI v1.5.6
         run: |
           curl -sSL -o duckdb.zip \
-            https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
+            https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
           unzip -q -o duckdb.zip -d duckdb-cli
           chmod +x duckdb-cli/duckdb
           ./duckdb-cli/duckdb --version
@@ -400,7 +400,7 @@ jobs:
       - name: Download the panduck extension built above
         uses: actions/download-artifact@v4
         with:
-          name: panduck-v1.5.5-extension-linux_amd64
+          name: panduck-v1.5.6-extension-linux_amd64
           path: ext
 
       # The script FAILS rather than skips when a reader is missing -- a skip would report

@@ -97,6 +97,66 @@ void SetNullHandling(FUNC &fn, FunctionNullHandling value) {
 	SetNullHandlingCompat(fn, value, 0);
 }
 
+//! Declare an optional NAMED parameter across the v1.5.6 / v2.0 boundary.
+//!
+//! v1.5.6 declares them by writing into `SimpleNamedParameterFunction`'s
+//! `named_parameters` map. v2.0 deleted that base class outright -- TableFunction
+//! is now `BaseTableFunction, SimpleFunction`, neither of which carries the map --
+//! and replaced it with a signature built from Python-style parameter kinds.
+//!
+//! WHY "**kwargs" RATHER THAN A KEYWORD-ONLY PARAMETER, which is the reading that
+//! looks right and is not. v1.5's map means "a set of optional, type-checked names;
+//! reject anything else", and `AddKeywordOnly(name, type)` is NOT that: a parameter
+//! with no default is REQUIRED on v2.0 -- function_binder.cpp throws "Missing value
+//! for parameter %s in function call to %s" -- so porting that way would make
+//! `options :=` mandatory and break every existing caller. A typed "**kwargs" IS
+//! that set, which is how upstream migrated this same construct in read_csv.cpp:
+//! the bag is conventionally named "options" and each former map entry becomes one
+//! `.Add(key, type)` inside it.
+//!
+//! Either kind would still reach the bind the same way -- function_binder.cpp
+//! documents that "only keyword-only and **kwargs arguments are handed back in
+//! named_parameters", so `input.named_parameters.find("options")` in
+//! reader_registry.cpp keeps working, and caller syntax is unchanged.
+//!
+//! The probe is `GetSignature()`, a MEMBER, not a header -- see the class note on
+//! SetNullHandling above for why a header probe flips on a backport. It does assume
+//! GetSignature and WithTypedKwargs arrive together, which held when this was
+//! written; a tree with one and not the other would fail loudly at the call below
+//! rather than silently take the wrong branch.
+template <typename FUNC>
+auto AddNamedParameterCompat(FUNC &fn, const char *name, LogicalType type, int) -> decltype(fn.GetSignature(), void()) {
+	// Captured by value: `configure` is stored as a std::function and may outlive
+	// this call.
+	auto declared = std::move(type);
+	auto add = [name, declared](auto &options) {
+		options.Add(name, declared);
+	};
+	auto &signature = fn.GetSignature();
+	if (signature.GetTypedKwargs()) {
+		// ExtendTypedKwargs throws if there is no bag yet, and a second
+		// WithTypedKwargs would REPLACE the first -- so branching keeps this safe
+		// to call more than once per function.
+		signature.ExtendTypedKwargs(add);
+	} else {
+		signature.WithTypedKwargs("options", add);
+	}
+}
+
+template <typename FUNC>
+void AddNamedParameterCompat(FUNC &fn, const char *name, LogicalType type, long) {
+	fn.named_parameters[name] = std::move(type);
+}
+
+//! Call this rather than either spelling: `AddNamedParameter(fn, "options", type)`.
+//!
+//! The grep that finds an unconverted line is the `named_parameters =` arm of the
+//! assignment grep documented on SetNullHandling above.
+template <typename FUNC>
+void AddNamedParameter(FUNC &fn, const char *name, LogicalType type) {
+	AddNamedParameterCompat(fn, name, std::move(type), 0);
+}
+
 //! A scalar macro in a form that does not depend on DuckDB's struct layout.
 //!
 //! v1.5.5's DefaultMacro is {schema, name, parameters[8], named_parameters[8],

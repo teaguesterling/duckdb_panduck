@@ -3104,7 +3104,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 
 	TableFunction reg_doc("panduck_register_doc_reader", {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar},
 	                      RegisterScan, RegisterBind<DOC_KIND>, RegisterGlobalState::Init);
-	reg_doc.named_parameters["options"] = option_list;
+	panduck::AddNamedParameter(reg_doc, "options", option_list);
 	RegisterTableWithDesc(loader, reg_doc, {"format", "function_name", "extensions"},
 	                      "Register a custom document block reader for a file format or extension.",
 	                      {"SELECT * FROM panduck_register_doc_reader('custom', 'read_custom', "
@@ -3128,7 +3128,7 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	TableFunction reg_tbl("panduck_register_table_reader",
 	                      {LogicalType::VARCHAR, LogicalType::VARCHAR, list_of_varchar}, RegisterScan,
 	                      RegisterBind<TABLE_KIND>, RegisterGlobalState::Init);
-	reg_tbl.named_parameters["options"] = option_list;
+	panduck::AddNamedParameter(reg_tbl, "options", option_list);
 	RegisterTableWithDesc(loader, reg_tbl, {"format", "function_name", "extensions"},
 	                      "Register a custom table reader for a file format or extension.",
 	                      {"SELECT * FROM panduck_register_table_reader('custom', "

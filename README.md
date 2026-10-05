@@ -362,6 +362,7 @@ went unverified".
 - [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration
 - [The doc_ namespace](docs/doc_namespace.md) — path-taking sugar over `db_*`
 - [Validation](docs/validation.md) — how the pandoc-compatibility claim is tested
+- [Roadmap](docs/roadmap.md) — what is left now that the `planned` list is empty
 
 ## Related
 

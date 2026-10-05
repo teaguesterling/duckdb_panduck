@@ -23,6 +23,7 @@ SELECT level, title FROM doc_toc('report.docx');  -- table of contents, by path
 | [Dispatch](dispatch.md) | The derived registry and runtime reader registration |
 | [The doc_ namespace](doc_namespace.md) | Path-taking sugar over `db_*` |
 | [Validation](validation.md) | How the pandoc-compatibility claim is tested |
+| [Roadmap](roadmap.md) | What is left now that the `planned` list is empty |
 
 ## Status
 

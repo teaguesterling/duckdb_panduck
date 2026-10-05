@@ -257,6 +257,36 @@ jobs:
       - name: Scan src/ for single-arrow lambdas
         run: python3 scripts/check_lambda_syntax.py
 
+  # THE libpanduck SEAM (#104): the format engine must not name DuckDB.
+  #
+  # TWO CHECKS, BECAUSE THE COMPILER CANNOT BE THE ONLY ONE. panduck's CMakeLists
+  # applies include_directories() directory-wide and duckdb's own paths arrive from
+  # the parent scope, so a target declared there inherits them -- a stray
+  # `#include "duckdb.hpp"` under libpanduck/ would compile perfectly in the
+  # extension build. Configuring libpanduck STANDALONE is the real enforcement,
+  # because that project never puts duckdb on the include path; the grep is the
+  # fast signal that names the offending line.
+  #
+  # BOTH ANSWERS PINNED before this job was written, rather than only the passing
+  # one: with `#include "duckdb.hpp"` added to libpanduck/src/panduck.cpp the
+  # standalone build fails with `fatal error: duckdb.hpp: No such file` AND the
+  # guard reports the leak; with it removed, both pass. A detector tested only on
+  # the side we expect to pass is half-checked.
+  #
+  # No submodules, no extension build, no network: the vocabulary header is a
+  # tracked file, so this is seconds.
+  libpanduck-seam:
+    name: libpanduck names no DuckDB
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan libpanduck/ for DuckDB
+        run: python3 scripts/check_libpanduck_seam.py
+      - name: Build libpanduck standalone
+        run: |
+          cmake -S libpanduck -B build/libpanduck
+          cmake --build build/libpanduck
+
   # Panduck deliberately does not link pandoc, so nothing in the build above would
   # notice if pandoc changed its AST underneath us. This job installs a real pandoc and
   # diffs its emitted constructor set against src/pandoc_ast_map.cpp.

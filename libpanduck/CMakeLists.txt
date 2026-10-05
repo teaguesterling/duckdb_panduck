@@ -8,8 +8,8 @@ project(libpanduck CXX)
 # there would inherit them and "no DuckDB in libpanduck" could not be enforced
 # by the compiler. Configuring THIS project on its own is the enforcement: it
 # never adds duckdb to the include path, so a stray `#include "duckdb.hpp"`
-# fails here while still compiling fine in the extension build. CI runs it as a
-# compile check; scripts/check_libpanduck_seam.py is the fast local signal.
+# fails here while still compiling fine in the extension build.
+# scripts/check_libpanduck_seam.py is the fast local signal.
 #
 # No install rules, no versioning, no release artifact. Those belong to L3, and
 # only once the contract has stopped moving (split-after-stability).
@@ -19,23 +19,61 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # The duck_block vocabulary is a VENDORED BYTE-EXACT COPY owned by panduck
 # (src/include/duck_block_vocabulary.hpp, see docs/architecture.md). It includes
-# only <cstdint>, so the engine can use it unchanged. Pointed at rather than
+# only <cstdint>, so the engine uses it unchanged. Pointed at rather than
 # copied: a second copy would be a second thing to keep byte-exact.
 set(PANDUCK_VOCABULARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/include"
     CACHE PATH "Directory holding duck_block_vocabulary.hpp")
 
-# yyjson is the one third-party dependency the ipynb core has. In the extension
-# build it resolves to duckdb's vendored copy; standalone it must be supplied.
-# An OPEN CONTRACT QUESTION, recorded rather than decided: whether libpanduck
-# should depend on a system/vcpkg yyjson or carry its own. Until that is
-# settled, point this at a yyjson include dir to configure standalone.
-set(PANDUCK_YYJSON_INCLUDE_DIR "" CACHE PATH "Directory holding yyjson.hpp")
+# FORMAT MODULES ARE COMPILE-TIME OPTIONS. A composition may carry fewer modules
+# than the engine supports: the DuckDB extension delegates markdown, HTML and
+# PDF to sibling extensions rather than building them, while a standalone
+# consumer would want them built in. The provider is a property of the
+# composition, not of the format (docs/roadmap.md, Phase 4).
 
-add_library(panduck STATIC
-    src/ipynb.cpp)
+# MEASURED, so the next person does not retry it: DuckDB's vendored yyjson is
+# NOT reusable outside duckdb. Its own header does
+#   #include "duckdb/common/fast_mem.hpp"      (yyjson.hpp:45)
+# so pointing this at duckdb/third_party/yyjson/include configures fine and then
+# fails to compile. libpanduck therefore needs ITS OWN yyjson -- a system or
+# vcpkg one -- and that is a real dependency decision, not a path setting.
+#
+# It is deliberately NOT taken here: vcpkg.json drives every platform build of
+# the shipped extension including Wasm, and adding a dependency to it during the
+# v2.0 migration is not a side effect to smuggle into a seam commit. Until it is
+# decided, the ipynb module is off by default in the standalone build; the
+# extension build is unaffected, since it compiles these sources itself with
+# duckdb's yyjson already on the include path.
+set(PANDUCK_YYJSON_INCLUDE_DIR "" CACHE PATH
+    "Directory holding a STANDALONE yyjson (not duckdb's vendored copy)")
+
+if(PANDUCK_YYJSON_INCLUDE_DIR)
+  set(_ipynb_default ON)
+else()
+  set(_ipynb_default OFF)
+endif()
+option(PANDUCK_WITH_IPYNB "Build the ipynb format module (requires a standalone yyjson)"
+       ${_ipynb_default})
+
+# Always present, so the target is never empty and the standalone build always
+# has something to prove: panduck.cpp reaches the vendored vocabulary and
+# nothing else, so compiling it here demonstrates that header really is
+# portable -- one of the two concessions in panduck/vocabulary.hpp.
+set(PANDUCK_SOURCES src/panduck.cpp)
+
+if(PANDUCK_WITH_IPYNB)
+  list(APPEND PANDUCK_SOURCES src/ipynb.cpp)
+endif()
+
+add_library(panduck STATIC ${PANDUCK_SOURCES})
 
 target_include_directories(panduck PUBLIC include)
 target_include_directories(panduck PRIVATE "${PANDUCK_VOCABULARY_DIR}")
-if(PANDUCK_YYJSON_INCLUDE_DIR)
-  target_include_directories(panduck PRIVATE "${PANDUCK_YYJSON_INCLUDE_DIR}")
+
+if(PANDUCK_WITH_IPYNB)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_IPYNB)
+  if(PANDUCK_YYJSON_INCLUDE_DIR)
+    target_include_directories(panduck PRIVATE "${PANDUCK_YYJSON_INCLUDE_DIR}")
+  endif()
 endif()
+
+message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}")

@@ -316,10 +316,79 @@ Read that way, libpanduck is less an extraction than a *re-homing*: the layer th
 above pugixml, miniz, the sibling extensions and the hand-written readers, with the DuckDB
 binding becoming one consumer of it rather than its container.
 
-**Do not start it before Phase 2.** Building the API while fidelity policy is still a pile of
-per-case rulings bakes those rulings into a contract that then has to be supported — and if the
-answer to "what does this emit" is "whatever the wrapped library does", that has to be a
-documented choice rather than an accident. Ship something whose behaviour is a *parameter*.
+### The shape: a sub-extension API and a results format
+
+Adopting the model in `sitting_duck/docs/planning/v2-architecture.md` (RFC, tracking its #87),
+which refactors a monolithic extension into an engine (`sitting_duckling`), a module source
+tree, and *compositions*. Distilled, it is two deliverables — **a sub-extension API** and **a
+results format** — and panduck starts ahead on the second:
+
+| deliverable | sitting_duck | panduck |
+|---|---|---|
+| results format | taxonomy spec, still to be built as a versioned artifact | **already exists**: `duck_block`, versioned by `duck_block_utils` (`SPEC_VERSION`), vendored byte-exact |
+| sub-extension API | module ABI + conformance kit | the new work |
+
+| identity | ships |
+|---|---|
+| **libpanduck** | the engine: vocabulary types, dispatch, fidelity policy — plus the format modules whose parsers depend only on its own dependencies |
+| **panduck** | the batteries-included composition for DuckDB: table functions, the `doc_*` macros, the `COPY` surface — delegating to sibling extensions wherever they are the better answer |
+
+**Module placement rule** (mirror of sitting_duck's, which is a rule rather than a judgment
+call): a format module lives in libpanduck **iff its parser depends only on the host engine's
+own dependencies** — no DuckDB, no sibling extension.
+
+So `markdown` (cmark), `xml` (pugixml, already linked) and `pdf` can live in libpanduck while
+the panduck extension still delegates those to `duckdb_markdown`, `duckdb_webbed` and the `pdf`
+extension — because inside a DuckDB session those are the better answer, and outside one they
+are unavailable. **The provider is a property of the composition, not of the format.** That is
+what makes "libpanduck supports more formats than panduck exposes" coherent rather than
+duplicative, and it is the reason format support belongs behind **build-time flags**
+(`option(LIBPANDUCK_WITH_MARKDOWN …)`) rather than in separate repos — sitting_duck's "packs
+are build outputs, not repos".
+
+**Two of the four doors already exist in embryo**, which is why this is less new than it reads:
+
+| door | panduck status |
+|---|---|
+| compiled-in (build flag per module) | the new work |
+| runtime registration | **shipped** — `panduck_register_doc_reader` / `_register_table_reader` + the registry table |
+| pack extension (`INSTALL panduck_<format>`) | later, only if demand pulls it |
+
+**Conformance.** sitting_duck's rule is that a module either passes the conformance kit or it
+is not a module. panduck has one in embryo already — the differential validator against a real
+pandoc, `check-writeback`, `check-wordloss` — and formalising it is what makes swapping a
+hand-written reader for a wrapped library checkable instead of scary.
+
+### Milestones, and a correction
+
+**Split-after-stability**, taken verbatim from sitting_duck: the repo split happens only once
+the contract has stopped moving (measured: no API-breaking change for a full milestone).
+Splitting earlier makes every interface iteration a multi-repo dance during exactly the phase
+when the interface churns most.
+
+- **L1 — contract in-tree. No files move.** A DuckDB-free row struct as the engine's currency
+  (today eleven per-format structs convert to rows in the DuckDB layer), the module interface,
+  and the conformance kit assembled from the validators that already exist.
+- **L2 — in-tree layout.** A `libpanduck/` target that **does not include DuckDB headers**, so
+  the boundary is compiler-enforced rather than conventional. Move parse cores one at a time.
+  This is cheaper than it sounds: measured across the eleven readers, ~10,500 lines contain
+  **~195 that touch DuckDB** — each reader is already a pure `Parse*` core returning
+  `std::vector<XBlock>` plus a table-function tail. `duck_block_types.hpp` needs splitting
+  along the same line, since it mixes portable constants with `Value`-returning helpers.
+- **L3 — repo split**, only after L1's contract has stopped moving.
+- **L4 — new format modules behind build flags**: markdown, xml, pdf — supported by libpanduck,
+  not necessarily exposed by panduck.
+
+**Correcting an earlier draft of this document:** it said "do not start libpanduck before
+Phase 2". That is wrong as stated. The fidelity objection applies to **releasing a stable API**,
+not to establishing the boundary — an in-tree seam publishes nothing. L1 and L2 can start now,
+and there is a positive reason to: every DuckDB breakage this project has absorbed
+(`named_parameters`, `SetValue`, and `ExecuteWithNulls` in a sibling) lived in that 2%. Code
+behind the seam cannot break on a DuckDB API change, so the seam is a *mitigation* for the v2.0
+migration rather than a competitor to it.
+
+Phase 2 still gates **L3 and L4**: a wrapped library imposes its own fidelity, and that has to
+be a documented parameter rather than an accident of which library got linked.
 
 ---
 
@@ -337,7 +406,14 @@ Phase 0  ──►  Phase 1  ──►  Phase 2  ──────────�
 ```
 
 Phase 0 is forced and timed externally. Phase 1 is unblocked today. Phase 2 is the one that
-stops future work from being decided case by case. Phase 4 should wait for Phase 2 on purpose.
+stops future work from being decided case by case.
+
+**Phase 4 splits across that line rather than sitting behind it.** Its first two milestones —
+the in-tree contract (L1) and the compiler-enforced `libpanduck/` boundary (L2) — can start
+immediately and *reduce* Phase 0's exposure, since every DuckDB break this project has absorbed
+lived in the 2% of reader code that touches DuckDB. Only L3 (the repo split) and L4 (new format
+modules behind build flags) wait for Phase 2, because a wrapped library's fidelity has to be a
+parameter before it is a dependency.
 
 **Phase 3 runs in parallel rather than in sequence.** 3a touches the registration and dispatch
 layer, not the reader or fidelity code, so it does not contend with Phases 1 and 2. 3b is the

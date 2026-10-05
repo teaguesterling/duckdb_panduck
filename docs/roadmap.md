@@ -28,6 +28,43 @@ What remains is depth, and the direction comes from the sentence panduck already
 Everything below serves that sentence. Anything that does not is out of scope, however
 appealing.
 
+## The governing principle: a unified API over other libraries
+
+**panduck's product is the API, not the parsing.** One vocabulary (`duck_block`), one dispatch
+surface, one fidelity policy — across many formats, in both directions. Everything underneath
+that is an implementation detail and should be *somebody else's library* wherever a capable one
+exists.
+
+This is already how much of panduck works, and the pattern should be stated rather than
+rediscovered per format:
+
+| concern | delegated to |
+|---|---|
+| XML parsing | pugixml |
+| zip containers | miniz |
+| markdown / HTML / plain output | `duckdb_markdown`, `duckdb_webbed`, `duck_block_utils` |
+| PDF | the `pdf` extension |
+| the vocabulary itself | `duck_block_utils`, vendored |
+
+**The eleven hand-written readers are not a counter-example, they are the exception the rule
+predicts.** They exist because no in-process library covered those formats with
+pandoc-compatible semantics — the same absence that justifies panduck at all. They are
+replaceable: if a usable library appears for a format, that reader becomes an adapter, and the
+differential validator is the safety net that makes the swap checkable rather than scary.
+
+Three consequences worth stating, because they constrain every phase below:
+
+- **Delegation is the default; hand-writing is what you do when nothing exists.** Not the
+  reverse.
+- **A wrapper inherits its library's fidelity**, which may not be panduck's. That is an
+  argument for Phase 2 (compat mode) *preceding* heavy delegation: without a fidelity
+  parameter, each wrapped library silently imposes its own answer.
+- **Delegation must degrade, not break.** `doc_render` already errors with "needs the markdown
+  extension" rather than failing obscurely, and the architecture doc notes panduck works with
+  `duck_block_utils` absent except for convenience wrappers. Optional dependencies stay
+  optional — and in a fleet where the DuckDB ABI is exact-version, every added sibling
+  dependency is also a version-skew surface.
+
 ## The two directions are not symmetric
 
 This is the structural fact that shapes most of what follows.
@@ -198,14 +235,18 @@ odt, org, pandoc, rst, rtf, textile`) plus the render targets:
 |---|---|---|---|
 | **native, built** | pandoc json | panduck | done |
 | **delegated** | `md`, `html`, `text` | markdown / webbed / duck_block_utils | done — reuse, do not reimplement |
-| **native text serialiser** | `rst`, `org`, `textile`, `mediawiki`, `latex`, `ipynb` | panduck | moderate — no container, and the mapping is the inverse of a reader panduck owns |
+| **native text serialiser** | `rst`, `org`, `textile`, `mediawiki`, `latex`, `ipynb` | panduck *only if no library exists* | moderate — no container, and the mapping is the inverse of a reader panduck owns |
 | **native container** | `docx`, `odt`, `epub` | panduck + `ZipWriter` | highest — needs zip writing and per-format scaffolding |
 
-Two rules that follow, and matter more than the table:
+Three rules that follow, and matter more than the table:
 
-- **Delegation is the default, not the fallback.** Where a sibling already emits a format, the
-  row points at it. Claiming `md` or `html` natively would duplicate `duckdb_markdown` and
-  `duckdb_webbed` and create two sources of truth for one format.
+- **Delegation is the default, not the fallback** — this is the governing principle applied to
+  the write direction. Where a sibling already emits a format, the row points at it. Claiming
+  `md` or `html` natively would duplicate `duckdb_markdown` and `duckdb_webbed` and create two
+  sources of truth for one format.
+- **"Native" in the third row means _not yet delegated_.** Before writing a serialiser for any
+  of those formats, survey for a usable library; write one only where nothing exists, exactly
+  as the eleven readers came about. The row records today's answer, not a commitment.
 - **A row may change kind without changing the surface.** If a library or sibling later emits
   docx, that row becomes delegated and no caller notices. This is why the dispatch layer (3a)
   is worth building before any emitter work.
@@ -261,14 +302,24 @@ symmetry — not part of this phase.
 toml/yaml blob which is terminal. A post-parse helper completes the model and makes the
 distinction visible rather than implicit.
 
-**libpanduck** — parsers and emitters usable without DuckDB. This is the strategic endgame,
-and panduck's own founding rationale is the argument for it: there is no libpandoc, upstream
-has never shipped a C shared library, and jgm/pandoc#6611 has been open since 2020. panduck is
-quietly becoming the thing that gap needs.
+**libpanduck** — the same unified API, usable without DuckDB. panduck's founding rationale is
+the argument for it: there is no libpandoc, upstream has never shipped a C shared library, and
+jgm/pandoc#6611 has been open since 2020.
 
-**Do not start it before Phase 2.** Extracting a library while fidelity policy is still a pile
-of per-case rulings bakes those rulings into an API that then has to be supported. Extract
-something whose behaviour is a *parameter*.
+**What it is, per the governing principle above: a unified API _over format libraries_ — not
+an extraction of panduck's own parsers.** The valuable, portable part is the vocabulary, the
+dispatch, and the fidelity policy. The parsers are the part most likely to be replaced by
+somebody else's library, one format at a time, and a library whose identity is "panduck's
+parsers" would make each such replacement a breaking change instead of an internal one.
+
+Read that way, libpanduck is less an extraction than a *re-homing*: the layer that already sits
+above pugixml, miniz, the sibling extensions and the hand-written readers, with the DuckDB
+binding becoming one consumer of it rather than its container.
+
+**Do not start it before Phase 2.** Building the API while fidelity policy is still a pile of
+per-case rulings bakes those rulings into a contract that then has to be supported — and if the
+answer to "what does this emit" is "whatever the wrapped library does", that has to be a
+documented choice rather than an accident. Ship something whose behaviour is a *parameter*.
 
 ---
 

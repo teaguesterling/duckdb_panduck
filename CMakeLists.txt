@@ -120,6 +120,10 @@ endif()
 # through a submodule include path -- see src/include/duck_block_types.hpp for why, and
 # for how to re-sync it against upstream.
 include_directories(src/include)
+# libpanduck: the format engine, with no DuckDB in it (issue #104).
+# Built into the extension here; libpanduck/CMakeLists.txt builds it standalone
+# in CI, which is what actually proves the seam holds.
+include_directories(libpanduck/include)
 # DuckDB vendors yyjson as its own target, so .ipynb parses with NO new dependency.
 include_directories(duckdb/third_party/yyjson/include)
 
@@ -141,6 +145,7 @@ set(EXTENSION_SOURCES
     src/textile_scanner.cpp
     src/rst_scanner.cpp
     src/ipynb_reader.cpp
+    libpanduck/src/ipynb.cpp
     src/pandoc_block_convert.cpp
     src/pandoc_inline_convert.cpp
     src/pandoc_reader.cpp

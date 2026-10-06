@@ -1,5 +1,7 @@
 #pragma once
 
+#include "panduck/block.hpp"
+
 #include <string>
 #include <vector>
 
@@ -38,7 +40,19 @@ struct IpynbBlock {
 
 //! Parse a Jupyter notebook into blocks. Never throws on malformed JSON: a
 //! notebook that does not parse yields no blocks rather than failing the query.
+//!
+//! The format-shaped intermediate. Callers that just want duck_block rows want
+//! ReadIpynb instead.
 std::vector<IpynbBlock> ParseIpynbString(const std::string &src);
+
+//! Read a Jupyter notebook as duck_block rows. THE MODULE'S PUBLIC SHAPE, and
+//! the one every format module should share: source in, vocabulary rows out.
+//!
+//! The flattening used to live in the DuckDB half of this reader, which is
+//! where it accidentally ended up rather than where it belongs -- it names no
+//! DuckDB type, only vocabulary constants. Moving it here is what lets a
+//! non-DuckDB consumer get rows at all.
+std::vector<Block> ReadIpynb(const std::string &src);
 
 } // namespace ipynb
 } // namespace panduck

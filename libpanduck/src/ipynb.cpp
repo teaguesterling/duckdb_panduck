@@ -299,5 +299,69 @@ std::vector<IpynbBlock> ParseIpynbString(const std::string &src) {
 	return builder.Build(src);
 }
 
+std::vector<Block> ReadIpynb(const std::string &src) {
+	std::vector<Block> rows;
+	int32_t order = 0;
+	for (auto &block : ParseIpynbString(src)) {
+		Block row;
+		row.kind = block.kind.empty() ? DuckBlockVocabulary::KIND_BLOCK : block.kind;
+		row.element_type = block.element_type;
+		row.content = block.content;
+		// ENCODING IS SET EXPLICITLY, not defaulted. The row struct this replaced
+		// defaulted the field to ENCODING_TEXT and the loop only overrode it when
+		// the block carried one; panduck::Block defaults it to empty, because a
+		// shared vocabulary type should not carry one format's default. Writing it
+		// here keeps the emitted rows identical -- a silent blanking of encoding on
+		// every ipynb row is exactly what a careless move would have produced.
+		row.encoding = block.encoding.empty() ? DuckBlockVocabulary::ENCODING_TEXT : block.encoding;
+		row.element_order = order++;
+		if (!block.key.empty()) {
+			row.attributes[DuckBlockVocabulary::ATTR_KEY] = block.key;
+		}
+		if (!block.raw_format.empty()) {
+			row.attributes["format"] = block.raw_format;
+		}
+		if (!block.source_type.empty()) {
+			// A div's cell or output kind, or a metadata field's original path. On
+			// metadata it is what keeps a format-derived field distinguishable from a
+			// pandoc-derived one, which is the condition attached to exceeding the
+			// reference.
+			row.attributes[DuckBlockVocabulary::ATTR_SOURCE_TYPE] = block.source_type;
+		}
+		if (!block.language.empty()) {
+			row.attributes["language"] = block.language;
+		}
+		// NO heading, role or list branches here, unlike every other reader: a
+		// notebook's block structure is cells, code and raw content. Carrying
+		// fields the format cannot produce would be dead weight that reads as an
+		// oversight.
+		const int32_t block_level = block.level > 0 ? block.level : 1;
+		row.level = block_level;
+		rows.push_back(std::move(row));
+
+		for (auto &inl : block.inlines) {
+			Block child;
+			child.kind = DuckBlockVocabulary::KIND_INLINE;
+			child.element_type = inl.element_type;
+			child.content = inl.content;
+			// Same reason as above: the old struct's default supplied this.
+			child.encoding = DuckBlockVocabulary::ENCODING_TEXT;
+			child.level = inl.level > 0 ? inl.level : block_level + 1;
+			child.element_order = order++;
+			// No href branch: the only inlines this reader emits are the metadata
+			// values' text runs. Markdown cells are held raw, so their links never
+			// become inlines here -- they are still inside the raw content until
+			// expand_embedded parses it. That helper LANDED (#39):
+			// read_panduck_doc(src, expand_embedded := true), and the same parameter
+			// on doc_toc/doc_section/doc_search_sections/doc_container. It parses in
+			// the SQL layer where delegation lives, so this reader keeps the
+			// independence the comment above defends -- the default is still one raw
+			// block.
+			rows.push_back(std::move(child));
+		}
+	}
+	return rows;
+}
+
 } // namespace ipynb
 } // namespace panduck

@@ -46,7 +46,25 @@ set(PANDUCK_VOCABULARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/include"
 set(PANDUCK_YYJSON_INCLUDE_DIR "" CACHE PATH
     "Directory holding a STANDALONE yyjson (not duckdb's vendored copy)")
 
-if(PANDUCK_YYJSON_INCLUDE_DIR)
+# yyjson is now a vcpkg dependency (vcpkg.json), which is what lets the ipynb
+# module build standalone at all.
+#
+# TODO, and deliberately not done here: the EXTENSION build does not need it --
+# it already compiles these sources with duckdb's vendored yyjson on the include
+# path. So either
+#   (a) drop yyjson from vcpkg.json once libpanduck links its own copy by some
+#       other route, or
+#   (b) make the dependency conditional, so an extension build links duckdb's
+#       and only a standalone build pulls vcpkg's.
+# Carrying both costs a dependency on every platform build (Wasm included) for a
+# target that only the standalone configure uses. Left as one manifest entry for
+# now because the alternative is build-system surgery during the v2.0 migration.
+find_package(yyjson CONFIG QUIET)
+if(yyjson_FOUND AND NOT PANDUCK_YYJSON_INCLUDE_DIR)
+  message(STATUS "libpanduck: using vcpkg/system yyjson")
+endif()
+
+if(PANDUCK_YYJSON_INCLUDE_DIR OR yyjson_FOUND)
   set(_ipynb_default ON)
 else()
   set(_ipynb_default OFF)
@@ -73,6 +91,8 @@ if(PANDUCK_WITH_IPYNB)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_IPYNB)
   if(PANDUCK_YYJSON_INCLUDE_DIR)
     target_include_directories(panduck PRIVATE "${PANDUCK_YYJSON_INCLUDE_DIR}")
+  elseif(yyjson_FOUND)
+    target_link_libraries(panduck PRIVATE yyjson::yyjson)
   endif()
 endif()
 

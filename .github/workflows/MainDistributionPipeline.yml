@@ -287,6 +287,27 @@ jobs:
           cmake -S libpanduck -B build/libpanduck
           cmake --build build/libpanduck
 
+      # THE SEAM GETTING TEETH (#104, L2). The two steps above prove libpanduck
+      # names no DuckDB and COMPILES with no duckdb on the include path. Neither
+      # proves a module WORKS without DuckDB: until this step, every assertion
+      # about ReadOrg, ReadRst, ReadLatex, ReadMediaWiki, ReadTextile and
+      # ReadIpynb ran through SQL in test/sql/*.test, i.e. through DuckDB.
+      #
+      # This runs the vocabulary rows through a process with no DuckDB in it at
+      # all. The centrepiece is that `encoding` is non-empty on every row:
+      # ::panduck::Block defaults it to "" while the per-reader row structs L1
+      # deleted defaulted it to ENCODING_TEXT, so a flatten that forgets to
+      # assign it blanks every row with no compile error and -- before this --
+      # no failing test.
+      #
+      # No -D flags, matching the build above, so this takes the DEFAULTS:
+      # latex, mediawiki, org, rst and textile. ipynb is OFF here because it
+      # needs a standalone yyjson (see libpanduck/CMakeLists.txt). The runner
+      # prints the number of checks it EXECUTED and exits non-zero if that is
+      # zero, so a configure that switched every module off could not pass.
+      - name: Run libpanduck standalone tests
+        run: ctest --test-dir build/libpanduck --output-on-failure --verbose
+
   # Panduck deliberately does not link pandoc, so nothing in the build above would
   # notice if pandoc changed its AST underneath us. This job installs a real pandoc and
   # diffs its emitted constructor set against src/pandoc_ast_map.cpp.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "panduck/rst.hpp"
+
 #include "duckdb.hpp"
 
 #include <string>
@@ -11,33 +13,21 @@ class ExtensionLoader;
 
 namespace rst {
 
-struct RstInline {
-	std::string element_type;
-	std::string content;
-	std::string href;
-	int level = 2;
-};
-
-struct RstBlock {
-	std::string element_type;
-	std::string content;
-	std::string list_type;
-	std::string role;
-	std::string language;
-	std::string source_type; //!< div only: the directive name it came from
-	std::string encoding;
-	std::string id; //!< heading only: the pandoc-style anchor slug (#85)
-	std::string list_start, number_style, number_delim;
-	int heading_level = 0;
-	int level = 1;
-	std::vector<RstInline> inlines;
-};
-
-//! Parse reStructuredText into blocks. Never throws: malformed input degrades.
-//! RST HAS NO DOCUMENT METADATA -- a field list is a definition list, measured
-//! against pandoc -- so this reader emits no kind='value' rows and the struct
-//! carries no key.
-std::vector<RstBlock> ParseRstString(const std::string &src);
+// THE PARSE CORE AND FLATTENING LIVE IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/rst.hpp and libpanduck/src/rst.cpp, which name no
+// DuckDB type. Only the table function, its binds and its registration stay on
+// this side of the seam.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Enumerate the moved header's surface with a pattern covering
+// enum/using/constexpr as well as struct and function -- the first textile
+// scanner shim missed `LineKind` exactly that way. Alphabetised for
+// clang-format.
+using ::panduck::rst::ParseRstString;
+using ::panduck::rst::ReadRst;
+using ::panduck::rst::RstBlock;
+using ::panduck::rst::RstInline;
 
 void RegisterRstReader(ExtensionLoader &loader);
 

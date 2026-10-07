@@ -1,8 +1,8 @@
-#include "org_scanner.hpp"
+#include "panduck/org_scanner.hpp"
 
 #include <cctype>
 
-namespace duckdb {
+namespace panduck {
 namespace org {
 namespace {
 
@@ -254,4 +254,4 @@ std::vector<Line> ScanOrg(const std::string &src) {
 }
 
 } // namespace org
-} // namespace duckdb
+} // namespace panduck

@@ -1,10 +1,10 @@
-#include "mediawiki_scanner.hpp"
+#include "panduck/mediawiki_scanner.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 
-namespace duckdb {
+namespace panduck {
 namespace mediawiki {
 
 namespace {
@@ -375,4 +375,4 @@ std::vector<Line> ScanMediaWiki(const std::string &src) {
 }
 
 } // namespace mediawiki
-} // namespace duckdb
+} // namespace panduck

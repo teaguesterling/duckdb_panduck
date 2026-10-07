@@ -1,9 +1,9 @@
-#include "rst_scanner.hpp"
+#include "panduck/rst_scanner.hpp"
 
 #include <cctype>
 #include <cstdlib>
 
-namespace duckdb {
+namespace panduck {
 namespace rst {
 namespace {
 
@@ -229,4 +229,4 @@ std::vector<Line> ScanRst(const std::string &src) {
 }
 
 } // namespace rst
-} // namespace duckdb
+} // namespace panduck

@@ -1,52 +1,29 @@
 #pragma once
 
-#include <string>
-#include <vector>
+#include "panduck/org_scanner.hpp"
 
 namespace duckdb {
 namespace org {
 
-//! What a single line of Org source IS, decided by its prefix alone.
-//!
-//! Org's block structure is entirely line-prefixed -- `*`, `-`, `|`, `#+` --
-//! which is why this reader scans lines where the LaTeX reader tokenizes
-//! characters. Only INLINE markup is character-level, and that is a separate
-//! pass over a line's text.
-enum class LineKind {
-	BLANK,        //!< empty or whitespace-only: a paragraph and list separator
-	HEADING,      //!< `* text` .. `****** text`, stars at column 0
-	KEYWORD,      //!< `#+KEY: value` -- metadata and block options
-	BLOCK_BEGIN,  //!< `#+BEGIN_SRC python`, `#+BEGIN_QUOTE`, ...
-	BLOCK_END,    //!< `#+END_SRC`
-	LIST_ITEM,    //!< `- x`, `+ x`, `1. x`, `1) x`, and `- term :: definition`
-	TABLE_ROW,    //!< `| a | b |`
-	TABLE_RULE,   //!< `|---+---|` -- the separator that promotes the row above it
-	HRULE,        //!< five or more dashes alone on a line
-	COMMENT,      //!< `# text` -- a comment, and NOT `#+KEY:`
-	DRAWER_BEGIN, //!< `:PROPERTIES:` -- opens a drawer whose contents are not
-	              //!< prose
-	DRAWER_END,   //!< `:END:`
-	TEXT,         //!< anything else: paragraph content
-};
-
-//! One classified line. `text` is the line's CONTENT with its marker removed,
-//! so a consumer never re-parses the prefix.
-struct Line {
-	LineKind kind = LineKind::TEXT;
-	std::string text;        //!< content after the marker
-	std::string key;         //!< KEYWORD: the key, upper-cased. BLOCK_*: the block name.
-	std::string raw;         //!< KEYWORD: the line VERBATIM. `raw` content must not be
-	                         //!< reconstructed from an upper-cased key.
-	std::string term;        //!< LIST_ITEM: the part before ` :: `, when there is one
-	int level = 0;           //!< HEADING: star count. LIST_ITEM: indent columns.
-	bool ordered = false;    //!< LIST_ITEM: `1.` / `1)` rather than `-` / `+`
-	int start = 1;           //!< LIST_ITEM, ordered: the number the source wrote
-	bool definition = false; //!< LIST_ITEM: had a ` :: `, so `term` is populated
-};
-
-//! Classify every line of an Org document. Never fails: an unrecognised line is
-//! TEXT.
-std::vector<Line> ScanOrg(const std::string &src);
+// THE SCANNER LIVES IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/org_scanner.hpp and libpanduck/src/org_scanner.cpp.
+// It never named a DuckDB type -- it sat in `namespace duckdb` by convention
+// only -- so the move was a namespace swap and this shim keeps every existing
+// `duckdb::org::Line` spelling resolving.
+//
+// ENUMERATE THE MOVED HEADER'S SURFACE WITH A PATTERN THAT COVERS
+// enum/using/constexpr, not just struct and function. The first cut of the
+// textile_scanner shim missed `enum class LineKind` because the grep matched
+// only `^std::|^struct` -- 26 build errors reading "'LineKind' has not been
+// declared". Org's scanner has the same shape, so the same three names:
+// the enum, the struct, the entry point.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Alphabetised because clang-format requires it.
+using ::panduck::org::Line;
+using ::panduck::org::LineKind;
+using ::panduck::org::ScanOrg;
 
 } // namespace org
 } // namespace duckdb

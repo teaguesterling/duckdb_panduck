@@ -375,6 +375,15 @@ when the interface churns most.
   **~195 that touch DuckDB** — each reader is already a pure `Parse*` core returning
   `std::vector<XBlock>` plus a table-function tail. `duck_block_types.hpp` needs splitting
   along the same line, since it mixes portable constants with `Value`-returning helpers.
+
+  **Status:** five readers are behind the seam — ipynb, textile, org, rst and mediawiki —
+  each reduced to a DuckDB tail of 118–128 lines, plus four companion scanners and the
+  shared `block_json` / `slugify` helpers. The `duck_block_types.hpp` split turned out not
+  to be needed: `DuckBlockTypes` declares exactly one constant of its own
+  (`FRONTMATTER_MIME_TYPE`) and inherits the rest from `DuckBlockVocabulary`, so aliasing
+  the vocabulary once in `panduck/vocabulary.hpp` was sufficient and the `Value`-returning
+  helpers simply stay on the DuckDB side. See [libpanduck](libpanduck.md) for the module
+  contract, the enforcement mechanisms and the traps a move has to clear.
 - **L3 — repo split**, only after L1's contract has stopped moving.
 - **L4 — new format modules behind build flags**: markdown, xml, pdf — supported by libpanduck,
   not necessarily exposed by panduck.

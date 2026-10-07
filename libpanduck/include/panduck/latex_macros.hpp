@@ -2,14 +2,23 @@
 
 // This table IS the LaTeX reader's scope boundary: every macro and environment
 // panduck claims to understand is listed here, and nothing the reader emits
-// comes from a mapping invented ad hoc in latex_reader.cpp. Deliberately NOT
-// exposed as a table function: a static table in a source file is already
+// comes from a mapping invented ad hoc in libpanduck/src/latex.cpp. Deliberately
+// NOT exposed as a table function: a static table in a source file is already
 // enumerable by reading it, and every entry that matters is exercised by the
 // reader's own tests.
+//
+// Moved behind the libpanduck seam (issue #104, L2) as a WHOLE FILE, header and
+// source together, and with NO SHIM left at src/include/latex_macros.hpp. Unlike
+// the tokenizer and the reader, the macro table had exactly one call site in the
+// extension -- the parse core, which moved with it -- so a re-export would be a
+// shim nothing includes. Deleting the old path instead makes a stale
+// `#include "latex_macros.hpp"` a build error rather than something that
+// silently resolves because src/include is on the extension's include path and
+// not on the standalone build's.
 
 #include <string>
 
-namespace duckdb {
+namespace panduck {
 namespace latex {
 
 //! What the reader does with a macro or environment it recognises.
@@ -33,7 +42,7 @@ struct MacroEntry {
 	const char *expansion;    //!< literal replacement text for TEXT; for environments
 	                          //!< this field instead carries the list type
 	                          //!< ("bullet"/"ordered"/"definition"; use
-	                          //!< DuckBlockTypes::LIST_TYPE_*) -- see the environment table
+	                          //!< DuckBlockVocabulary::LIST_TYPE_*) -- see the environment table
 	                          //!< below for why that reuse is intentional
 };
 
@@ -53,4 +62,4 @@ const MacroEntry *LookupMacro(const std::string &name);
 const MacroEntry *LookupEnvironment(const std::string &name);
 
 } // namespace latex
-} // namespace duckdb
+} // namespace panduck

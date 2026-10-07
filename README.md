@@ -362,6 +362,7 @@ went unverified".
 - [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration
 - [The doc_ namespace](docs/doc_namespace.md) — path-taking sugar over `db_*`
 - [Validation](docs/validation.md) — how the pandoc-compatibility claim is tested
+- [libpanduck](docs/libpanduck.md) — the DuckDB-free format engine: the seam, the module contract, and how to move a reader behind it
 - [Roadmap](docs/roadmap.md) — what is left now that the `planned` list is empty
 
 ## Related

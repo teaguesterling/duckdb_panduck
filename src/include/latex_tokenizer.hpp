@@ -22,8 +22,12 @@ namespace latex {
 // because the grep used to enumerate the moved header's surface matched only
 // `^std::|^struct` -- 26 build errors reading "'LineKind' has not been
 // declared". Enumerate with a pattern covering enum/using/constexpr/class as
-// well as struct and function signatures. This header exports FOUR names: the
-// enum, the struct, the entry point, and the two free helpers.
+// well as struct and function signatures. This header exports FIVE names: the
+// enum, the struct, the entry point, and the two free helpers -- which is five,
+// not the four an earlier draft of this very comment claimed while listing all
+// five below it. Undercounting a moved header's surface is the mistake this
+// paragraph exists to warn about, so it is worth noting that the warning itself
+// got the count wrong first.
 //
 // Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
 // to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to

@@ -33,8 +33,8 @@ caught a real defect the other two could not see:
 | mechanism | proves | cannot see |
 |---|---|---|
 | `scripts/check_libpanduck_seam.py` | no DuckDB **name** appears | a type arriving transitively |
-| `cmake -S libpanduck` (standalone project) | the engine **compiles** with no duckdb on the include path | whether the output is correct |
-| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB | — |
+| `cmake -S libpanduck` (standalone project) | the engine **compiles** with no duckdb on the include path, **at C++11** | whether the output is correct |
+| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB | behaviour the fixtures do not reach |
 
 The middle one is why the standalone CMake project exists at all. panduck's own
 `CMakeLists.txt` applies DuckDB's include paths **directory-wide**, so a child
@@ -90,29 +90,78 @@ than panduck exposes" coherent rather than contradictory.
 
 | module | reader before | DuckDB tail now | option | standalone default |
 |---|---|---|---|---|
-| ipynb | 453 | **128** | `PANDUCK_WITH_IPYNB` | off — needs a standalone yyjson |
+| ipynb | 453 | **128** | `PANDUCK_WITH_IPYNB` | off — see the yyjson gap below |
 | textile | 708 | **118** | `PANDUCK_WITH_TEXTILE` | on |
 | org | 672 | **123** | `PANDUCK_WITH_ORG` | on |
 | rst | 996 | **125** | `PANDUCK_WITH_RST` | on |
 | mediawiki | 911 | **124** | `PANDUCK_WITH_MEDIAWIKI` | on |
+| latex | 1,780 | **151** | `PANDUCK_WITH_LATEX` | on |
 
 Four companion scanners moved whole (textile 290, org 257, rst 232, mediawiki
-378 lines), along with the shared helpers `block_json.hpp` and `slugify.hpp`.
+378 lines), along with latex's tokenizer and macro table and the shared helpers
+`block_json.hpp` and `slugify.hpp`.
 
-**That every tail landed between 118 and 128 lines is the useful number here.**
-Five readers written at different times, by different hands, over different
-formats, each reduce to the same ~120 lines of DuckDB: a bind pair, a scan, a
+**That five of six tails landed between 118 and 128 lines is the useful number
+here.** Readers written at different times, by different hands, over different
+formats each reduce to the same ~120 lines of DuckDB: a bind pair, a scan, a
 column list and a registration. The seam is a real structural boundary that was
 already there, not a line fitted per reader.
 
+latex's 151 is the exception and it prices one thing: latex reads through
+DuckDB's `FileSystem` rather than `std::ifstream`, and that bind stays in the
+tail. latex is also the only module that is **three files behind one option** —
+the reader cannot work without its tokenizer or its macro table — and the only
+one whose companion file had to be *split* rather than moved, because
+`panduck_latex_tokens()` is a table function living at the bottom of an otherwise
+DuckDB-free tokenizer.
+
 Not yet moved:
 
-- **latex** (1,780 + a 465-line tokenizer + a 217-line macro table) — the
-  tokenizer has a table function at the bottom, so it splits rather than moves.
 - **docx, epub, odt, rtf** — their flatten must first be extracted from their
   `Bind` functions.
 - **pandoc** (177, plus a 3,522-line DuckDB-saturated converter) — needs #107
   and the compatibility-mode decision first.
+
+## The standalone test suite
+
+`libpanduck/test/` is a dependency-free, C++11, assert-based runner wired into
+`ctest` — no gtest, no Catch2, because adding a framework to prove libpanduck has
+almost no dependencies would be self-defeating. **112 checks across five modules
+on the default configure**, which is exactly what CI runs; 134 across six with
+ipynb forced on locally.
+
+Each module asserts: it returns rows at all through the DuckDB-free entry point;
+an exact row count for its fixture (so a silently dropped construct fails here
+rather than passing a shape check on a shorter list); the vocabulary shape —
+`kind` non-empty, **`encoding` non-empty**, `level >= 1`, `element_order`
+sequential from 0; a heading's content, level and `heading_level`; an inline
+child's content and encoding; the list type; and one format-specific fact. Every
+expectation goes through `DuckBlockVocabulary::` constants rather than string
+literals, so the tests track the vocabulary.
+
+The runner prints a per-module and total check count and exits non-zero if it ran
+*zero* checks. A runner that prints only "OK" is indistinguishable from one that
+ran nothing, and this project has had six false greens of exactly that shape.
+
+**The `encoding` check was verified by mutation, not by assertion.** A copy of
+the tree outside the repo, with its own build directory, had
+`libpanduck/src/org.cpp`'s `child.encoding = ENCODING_TEXT;` deleted — the exact
+trap, in the exact row class it favours. Two independent checks fired, naming the
+offending row and its contents, and the process exited non-zero.
+
+### Known divergence: empty input
+
+All six readers return **zero rows** for `""`, and for `"\n\n"`. The recorded
+ruling is that an empty document is a `Doc` row plus a `Text` row whose content
+is the empty string, with NULL reserved for absent. The tests assert the
+*observed* behaviour with a comment, rather than asserting the ruling and
+failing — changing a reader is a separate per-reader change with its own test.
+
+Two things make this one decision rather than six bugs: it is uniform
+six-for-six, so the readers share a convention that predates the ruling; and it
+is **user-visible, not an artifact of the new entry points** — the DuckDB tails
+pass `ReadX`'s vector straight through, so `read_org_blocks_string('')` returns
+no rows today.
 
 ## Moving a reader behind the seam
 
@@ -185,6 +234,45 @@ helpers in `panduck_duckdb_compat.hpp`, not to the library. Always write
 understood. (`panduck::BindNames` in a bind signature is correct as written —
 that one really is the compat alias.)
 
+**5. C++11 aggregates — invisible to the extension build by construction.** In
+C++11 a class with a brace-or-equal-initializer for a non-static data member is
+**not an aggregate** (`[dcl.init.aggr]/1`; N3653 relaxed this for C++14). latex's
+`Token` has `bool display_math = false;`, so all 22 `Token{kind, text, dm}`
+brace-initialisation sites were ill-formed the moment the file moved behind a
+C++11 seam. The extension compiles at C++17, where it is perfectly legal, so
+*nothing in the extension build could ever see it*; the standalone configure
+reported 22 errors.
+
+This is a stronger justification for the standalone project than trap 3 was.
+`<cstring>` was a header-graph accident; this is a **language-version**
+difference, and only a build pinned to the engine's actual standard can find it.
+The fix was a defaulted constructor plus a three-argument one reproducing the old
+initialisation exactly — not dropping the `= false` to restore aggregate status,
+which would have left `display_math` indeterminate at the two
+default-construction sites: a real behaviour change dressed up as the smaller
+edit.
+
+**This is latent everywhere behind the seam.** `LatexInline`'s `int level = 2`,
+`MwInline`'s and `RstBlock`'s defaults make those non-aggregates too; they simply
+are not brace-initialised today. The standalone configure therefore has to stay
+in CI permanently, not be run once per move — it is the only thing that knows
+libpanduck is C++11.
+
+**6. Vocabulary constants cannot be bound to a reference at C++11.**
+`duck_block_vocabulary.hpp` declares `static constexpr const char *` members with
+no out-of-line definition. Reading one is fine — an lvalue-to-rvalue conversion
+in a constant expression does not odr-use the member, which is why every
+`row.kind = DuckBlockVocabulary::KIND_BLOCK;` links. Binding one to a
+**reference** does odr-use it, and yields `undefined reference to
+duckdb::DuckBlockVocabulary::ENCODING_TEXT`. C++17 made such members implicitly
+inline, which is why nothing upstream has hit it.
+
+The vendored header must stay byte-exact, so the fix belongs at the call site:
+the test harness's `Vocab()` takes `const char *` **by value**. Any standalone
+C++11 consumer passing a vocabulary constant to a function taking
+`const std::string &` will meet the same link error — worth raising with
+duck_block_utils, whose call it is.
+
 **And a meta-trap: the stale-artifact false green.** Six times in this project a
 gate reported `TEST_EXIT=0` while the build had actually failed, so the suite ran
 the *previous* binary; twice, `format-fix` modified sources after the build being
@@ -208,14 +296,54 @@ would take the real leaks with it. A vocabulary intended for consumers outside
 DuckDB would be more useful in a neutral namespace, or offered in both; that is
 upstream's call, since the copy here must stay byte-exact.
 
-**2. yyjson.** DuckDB's vendored copy is not reusable outside DuckDB — its
-header includes `duckdb/common/fast_mem.hpp`, so pointing at it configures fine
-and then fails to compile. libpanduck needs its own, currently a `vcpkg.json`
-entry, and that entry costs a dependency on every platform build (Wasm included)
-for a target only the standalone configure uses. To resolve: either drop it once
-libpanduck links its own copy another way, or make it conditional so the
-extension build keeps using DuckDB's. Until then `PANDUCK_WITH_IPYNB` defaults
-off in the standalone build.
+**2. yyjson — and ipynb cannot build standalone at all today.** DuckDB's
+vendored copy is not reusable outside DuckDB: its header includes
+`duckdb/common/fast_mem.hpp`, so pointing at it configures fine and then fails to
+compile. But the gap is larger than a missing dependency, and three blockers
+stack:
+
+- `libpanduck/src/ipynb.cpp` includes `"yyjson.hpp"` — DuckDB's *wrapper* name.
+  vcpkg ships `yyjson.h`.
+- it does `using namespace duckdb_yyjson`, so it depends on DuckDB's
+  **namespaced build** of the library, not merely on yyjson. A system yyjson puts
+  those symbols at global scope.
+- `PANDUCK_YYJSON_INCLUDE_DIR` adds an include directory but links no library.
+
+So `-DPANDUCK_WITH_IPYNB=ON` does not work standalone, and **CI does not execute
+`libpanduck/test/test_ipynb.cpp`** — it was verified through an out-of-repo shim.
+Resolving this is a source change to `ipynb.cpp` plus a real dependency decision,
+not a flag flip. Separately, the `vcpkg.json` entry costs a dependency on every
+platform build (Wasm included) for a target only the standalone configure uses;
+either drop it once libpanduck links its own copy another way, or make it
+conditional so the extension build keeps using DuckDB's.
+
+## Gaps in the guards themselves
+
+Recorded because a guard everyone trusts is worse than no guard. None of these
+is a defect in the engine; each is a way the *checking* is weaker than it reads.
+
+- **`libpanduck/` is outside the format gate.** `extension-ci-tools`' makefile
+  runs `format.py --all --check --directories src test`, so `make format-check`
+  returns 0 regardless of what `libpanduck/` looks like — and has since the first
+  seam move. Moved files have been clang-formatted by hand to compensate;
+  `libpanduck/src/rst.cpp:567` still carries an over-120-column line from its own
+  `DuckBlockVocabulary::` rename. Adding `libpanduck` to those `--directories` is
+  a one-line fix, and belongs in its own commit.
+- **`check_duck_block_vocabulary.py` narrows every time a reader moves.** Its
+  `SCAN_GLOBS` is `src/*.cpp` + `src/include/*.hpp`, so each move removes
+  constants from its view — latex's macro table alone took 36 references out of
+  it. Run as a before/after control on that move the report was byte-identical,
+  so no gap has actually opened, but the evidence base shrinks monotonically
+  while the check's caveat stays the same sentence. Extending the globs to
+  `libpanduck/src/*.cpp` and matching `DuckBlockVocabulary::` would restore it.
+- **`panduck::HasModule()` answers false for every module inside the extension.**
+  The root `CMakeLists.txt` compiles the libpanduck sources directly and defines
+  no `PANDUCK_WITH_*`, so the `#ifdef`-guarded branches are all inactive there.
+  It has no callers today, so nothing is broken — but it is a public function
+  that will be wrong the first time someone trusts it.
+- **`PANDUCK_VOCABULARY_DIR` is PRIVATE on the `panduck` target** while
+  `panduck/vocabulary.hpp` is public, so a consumer must repeat the path. An L3
+  interface question rather than a bug.
 
 ## Why the repo has not split
 

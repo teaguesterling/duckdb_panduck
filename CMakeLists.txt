@@ -132,9 +132,10 @@ set(EXTENSION_SOURCES
     src/docx_reader.cpp
     src/panduck_extension.cpp
     src/epub_reader.cpp
-    src/latex_macros.cpp
     src/latex_reader.cpp
     src/latex_tokenizer.cpp
+    libpanduck/src/latex_macros.cpp
+    libpanduck/src/latex_tokenizer.cpp
     src/odt_reader.cpp
     src/mediawiki_reader.cpp
     libpanduck/src/mediawiki_scanner.cpp
@@ -146,6 +147,7 @@ set(EXTENSION_SOURCES
     libpanduck/src/rst_scanner.cpp
     src/ipynb_reader.cpp
     libpanduck/src/ipynb.cpp
+    libpanduck/src/latex.cpp
     libpanduck/src/mediawiki.cpp
     libpanduck/src/org.cpp
     libpanduck/src/rst.cpp

@@ -72,6 +72,12 @@ endif()
 option(PANDUCK_WITH_IPYNB "Build the ipynb format module (requires a standalone yyjson)"
        ${_ipynb_default})
 
+# latex is ONE MODULE IN THREE FILES -- parse core, tokenizer, macro table -- and
+# all three sit behind this one option because the reader cannot work without
+# either of the others. Like org, rst, textile and mediawiki it needs no
+# third-party dependency, so unlike ipynb it defaults ON.
+option(PANDUCK_WITH_LATEX "Build the latex format module (core, tokenizer and macro table)" ON)
+
 # mediawiki, like org, rst and textile, needs no third-party dependency -- its
 # scanner and parser are plain C++ over the vocabulary -- so unlike ipynb it
 # defaults ON.
@@ -94,6 +100,10 @@ option(PANDUCK_WITH_TEXTILE "Build the textile format module" ON)
 # nothing else, so compiling it here demonstrates that header really is
 # portable -- one of the two concessions in panduck/vocabulary.hpp.
 set(PANDUCK_SOURCES src/panduck.cpp)
+
+if(PANDUCK_WITH_LATEX)
+  list(APPEND PANDUCK_SOURCES src/latex.cpp src/latex_tokenizer.cpp src/latex_macros.cpp)
+endif()
 
 if(PANDUCK_WITH_MEDIAWIKI)
   list(APPEND PANDUCK_SOURCES src/mediawiki.cpp src/mediawiki_scanner.cpp)
@@ -119,6 +129,10 @@ add_library(panduck STATIC ${PANDUCK_SOURCES})
 
 target_include_directories(panduck PUBLIC include)
 target_include_directories(panduck PRIVATE "${PANDUCK_VOCABULARY_DIR}")
+
+if(PANDUCK_WITH_LATEX)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_LATEX)
+endif()
 
 if(PANDUCK_WITH_MEDIAWIKI)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_MEDIAWIKI)
@@ -146,5 +160,6 @@ if(PANDUCK_WITH_IPYNB)
 endif()
 
 message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
+               " latex=${PANDUCK_WITH_LATEX}"
                " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
                " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}")

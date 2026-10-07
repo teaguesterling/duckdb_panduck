@@ -1,5 +1,24 @@
 #include "panduck/panduck.hpp"
 
+// HEADER-ONLY PIECES OF THE ENGINE ARE INCLUDED HERE ON PURPOSE, even though
+// this file does not need all of them.
+//
+// A header nothing compiles is a header nobody has proved portable. Before
+// this, slugify.hpp and block_json.hpp lived under libpanduck/ and were reached
+// only through the shims in src/include/, i.e. compiled solely by the EXTENSION
+// build, with duckdb on the include path. The only thing asserting they were
+// DuckDB-free was the seam script's regex scan -- which cannot catch a type that
+// arrives transitively.
+//
+// Including them in the one translation unit the standalone build always
+// compiles turns that claim into a compile. If any of these ever reaches for a
+// DuckDB type, `cmake -S libpanduck` fails, which is the whole point of the
+// standalone project existing.
+//
+// Flagged by the subagent that performed the move; it was right.
+#include "panduck/block.hpp"
+#include "panduck/block_json.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 
 #include <cstring>

@@ -72,6 +72,10 @@ endif()
 option(PANDUCK_WITH_IPYNB "Build the ipynb format module (requires a standalone yyjson)"
        ${_ipynb_default})
 
+# rst, like org and textile, needs no third-party dependency -- its scanner and
+# parser are plain C++ over the vocabulary -- so unlike ipynb it defaults ON.
+option(PANDUCK_WITH_RST "Build the rst format module" ON)
+
 # org, like textile, needs no third-party dependency -- its scanner and parser
 # are plain C++ over the vocabulary -- so unlike ipynb it defaults ON.
 option(PANDUCK_WITH_ORG "Build the org format module" ON)
@@ -88,6 +92,10 @@ set(PANDUCK_SOURCES src/panduck.cpp)
 
 if(PANDUCK_WITH_ORG)
   list(APPEND PANDUCK_SOURCES src/org.cpp src/org_scanner.cpp)
+endif()
+
+if(PANDUCK_WITH_RST)
+  list(APPEND PANDUCK_SOURCES src/rst.cpp src/rst_scanner.cpp)
 endif()
 
 if(PANDUCK_WITH_TEXTILE)
@@ -107,6 +115,10 @@ if(PANDUCK_WITH_ORG)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_ORG)
 endif()
 
+if(PANDUCK_WITH_RST)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_RST)
+endif()
+
 if(PANDUCK_WITH_TEXTILE)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_TEXTILE)
 endif()
@@ -121,4 +133,4 @@ if(PANDUCK_WITH_IPYNB)
 endif()
 
 message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB} org=${PANDUCK_WITH_ORG}"
-               " textile=${PANDUCK_WITH_TEXTILE}")
+               " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}")

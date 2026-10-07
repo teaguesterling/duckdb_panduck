@@ -139,13 +139,14 @@ set(EXTENSION_SOURCES
     src/mediawiki_reader.cpp
     src/mediawiki_scanner.cpp
     src/org_reader.cpp
-    src/org_scanner.cpp
+    libpanduck/src/org_scanner.cpp
     src/rst_reader.cpp
     src/textile_reader.cpp
     libpanduck/src/textile_scanner.cpp
     src/rst_scanner.cpp
     src/ipynb_reader.cpp
     libpanduck/src/ipynb.cpp
+    libpanduck/src/org.cpp
     libpanduck/src/textile.cpp
     src/pandoc_block_convert.cpp
     src/pandoc_inline_convert.cpp

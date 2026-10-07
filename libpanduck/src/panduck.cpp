@@ -33,8 +33,23 @@ bool HasModule(const char *name) {
 	if (name == nullptr) {
 		return false;
 	}
+	// ONE GUARDED BRANCH PER MODULE, and the list has to be extended by hand with
+	// every move -- textile went behind the seam without one, so HasModule
+	// answered false for a module that was compiled in. Nothing fails when this
+	// drifts, which is exactly why it drifts: the answer is only wrong, never
+	// broken. Adding textile's missing branch here alongside org's.
 #ifdef PANDUCK_WITH_IPYNB
 	if (std::strcmp(name, "ipynb") == 0) {
+		return true;
+	}
+#endif
+#ifdef PANDUCK_WITH_ORG
+	if (std::strcmp(name, "org") == 0) {
+		return true;
+	}
+#endif
+#ifdef PANDUCK_WITH_TEXTILE
+	if (std::strcmp(name, "textile") == 0) {
 		return true;
 	}
 #endif

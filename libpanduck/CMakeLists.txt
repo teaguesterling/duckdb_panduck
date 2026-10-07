@@ -72,11 +72,19 @@ endif()
 option(PANDUCK_WITH_IPYNB "Build the ipynb format module (requires a standalone yyjson)"
        ${_ipynb_default})
 
+# textile needs no third-party dependency -- its scanner and parser are plain
+# C++ over the vocabulary -- so unlike ipynb it defaults ON.
+option(PANDUCK_WITH_TEXTILE "Build the textile format module" ON)
+
 # Always present, so the target is never empty and the standalone build always
 # has something to prove: panduck.cpp reaches the vendored vocabulary and
 # nothing else, so compiling it here demonstrates that header really is
 # portable -- one of the two concessions in panduck/vocabulary.hpp.
 set(PANDUCK_SOURCES src/panduck.cpp)
+
+if(PANDUCK_WITH_TEXTILE)
+  list(APPEND PANDUCK_SOURCES src/textile.cpp src/textile_scanner.cpp)
+endif()
 
 if(PANDUCK_WITH_IPYNB)
   list(APPEND PANDUCK_SOURCES src/ipynb.cpp)
@@ -87,6 +95,10 @@ add_library(panduck STATIC ${PANDUCK_SOURCES})
 target_include_directories(panduck PUBLIC include)
 target_include_directories(panduck PRIVATE "${PANDUCK_VOCABULARY_DIR}")
 
+if(PANDUCK_WITH_TEXTILE)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_TEXTILE)
+endif()
+
 if(PANDUCK_WITH_IPYNB)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_IPYNB)
   if(PANDUCK_YYJSON_INCLUDE_DIR)
@@ -96,4 +108,4 @@ if(PANDUCK_WITH_IPYNB)
   endif()
 endif()
 
-message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}")
+message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB} textile=${PANDUCK_WITH_TEXTILE}")

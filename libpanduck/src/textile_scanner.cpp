@@ -1,10 +1,10 @@
-#include "textile_scanner.hpp"
+#include "panduck/textile_scanner.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
 
-namespace duckdb {
+namespace panduck {
 namespace textile {
 
 namespace {
@@ -287,4 +287,4 @@ std::vector<Line> ScanTextile(const std::string &src) {
 }
 
 } // namespace textile
-} // namespace duckdb
+} // namespace panduck

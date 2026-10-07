@@ -72,6 +72,11 @@ endif()
 option(PANDUCK_WITH_IPYNB "Build the ipynb format module (requires a standalone yyjson)"
        ${_ipynb_default})
 
+# mediawiki, like org, rst and textile, needs no third-party dependency -- its
+# scanner and parser are plain C++ over the vocabulary -- so unlike ipynb it
+# defaults ON.
+option(PANDUCK_WITH_MEDIAWIKI "Build the mediawiki format module" ON)
+
 # rst, like org and textile, needs no third-party dependency -- its scanner and
 # parser are plain C++ over the vocabulary -- so unlike ipynb it defaults ON.
 option(PANDUCK_WITH_RST "Build the rst format module" ON)
@@ -89,6 +94,10 @@ option(PANDUCK_WITH_TEXTILE "Build the textile format module" ON)
 # nothing else, so compiling it here demonstrates that header really is
 # portable -- one of the two concessions in panduck/vocabulary.hpp.
 set(PANDUCK_SOURCES src/panduck.cpp)
+
+if(PANDUCK_WITH_MEDIAWIKI)
+  list(APPEND PANDUCK_SOURCES src/mediawiki.cpp src/mediawiki_scanner.cpp)
+endif()
 
 if(PANDUCK_WITH_ORG)
   list(APPEND PANDUCK_SOURCES src/org.cpp src/org_scanner.cpp)
@@ -111,6 +120,10 @@ add_library(panduck STATIC ${PANDUCK_SOURCES})
 target_include_directories(panduck PUBLIC include)
 target_include_directories(panduck PRIVATE "${PANDUCK_VOCABULARY_DIR}")
 
+if(PANDUCK_WITH_MEDIAWIKI)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_MEDIAWIKI)
+endif()
+
 if(PANDUCK_WITH_ORG)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_ORG)
 endif()
@@ -132,5 +145,6 @@ if(PANDUCK_WITH_IPYNB)
   endif()
 endif()
 
-message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB} org=${PANDUCK_WITH_ORG}"
+message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
+               " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
                " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}")

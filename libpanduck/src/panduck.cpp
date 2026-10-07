@@ -43,6 +43,11 @@ bool HasModule(const char *name) {
 		return true;
 	}
 #endif
+#ifdef PANDUCK_WITH_MEDIAWIKI
+	if (std::strcmp(name, "mediawiki") == 0) {
+		return true;
+	}
+#endif
 #ifdef PANDUCK_WITH_ORG
 	if (std::strcmp(name, "org") == 0) {
 		return true;

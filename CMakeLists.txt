@@ -137,7 +137,7 @@ set(EXTENSION_SOURCES
     src/latex_tokenizer.cpp
     src/odt_reader.cpp
     src/mediawiki_reader.cpp
-    src/mediawiki_scanner.cpp
+    libpanduck/src/mediawiki_scanner.cpp
     src/org_reader.cpp
     libpanduck/src/org_scanner.cpp
     src/rst_reader.cpp
@@ -146,6 +146,7 @@ set(EXTENSION_SOURCES
     libpanduck/src/rst_scanner.cpp
     src/ipynb_reader.cpp
     libpanduck/src/ipynb.cpp
+    libpanduck/src/mediawiki.cpp
     libpanduck/src/org.cpp
     libpanduck/src/rst.cpp
     libpanduck/src/textile.cpp

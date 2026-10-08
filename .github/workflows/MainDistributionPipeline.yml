@@ -283,8 +283,20 @@ jobs:
         with:
           submodules: true
           fetch-depth: 1
-      - name: Install clang-format and cmake-format
-        run: pip install clang-format cmake-format
+      # EXACT VERSIONS, because format.py enforces them and exits -1 otherwise
+      # (duckdb/scripts/format.py:22-50):
+      #   black >= 24        -- checked even though nothing here is Python; the
+      #                         version gate runs before any --directories filtering
+      #   clang-format 11.x  -- an unpinned `pip install clang-format` gets a modern
+      #                         major and is REJECTED, not merely different. 11.0.1 is
+      #                         what the repo formats with locally.
+      #   cmake-format       -- unpinned; format.py only checks it runs
+      # Found by reading format.py rather than by watching this job fail: the first
+      # draft of this step installed `clang-format cmake-format` unpinned and no
+      # black, which would have failed on the version gate and looked like a
+      # formatting problem.
+      - name: Install the formatters format.py requires
+        run: pip install "black>=24" clang_format==11.0.1 cmake-format
       - name: Check libpanduck formatting
         run: make format-check-libpanduck
 

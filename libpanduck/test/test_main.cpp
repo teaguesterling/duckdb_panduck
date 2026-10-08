@@ -50,6 +50,8 @@ void RunModule(const char *name, TestEntry entry) {
 } // namespace
 
 int main() {
+	// First, and unguarded: the engine's identity is present in every configure.
+	RunModule("engine", &::panduck_test::RunEngineTests);
 #ifdef PANDUCK_WITH_IPYNB
 	RunModule("ipynb", &::panduck_test::RunIpynbTests);
 #endif

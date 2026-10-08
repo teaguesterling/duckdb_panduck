@@ -11,6 +11,12 @@
 
 namespace panduck_test {
 
+// NOT guarded: the engine's identity (SpecVersion, HasModule) is always compiled,
+// so this is the one entry point that exists in every configure -- including one
+// with every format module switched off, which is exactly the configure where the
+// runner's "zero checks is an error" rule would otherwise be the only thing running.
+void RunEngineTests();
+
 #ifdef PANDUCK_WITH_IPYNB
 void RunIpynbTests();
 #endif

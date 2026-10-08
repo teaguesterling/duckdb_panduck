@@ -182,7 +182,10 @@ option(PANDUCK_BUILD_TESTS "Build libpanduck's standalone tests" ON)
 if(PANDUCK_BUILD_TESTS)
   enable_testing()
 
-  set(PANDUCK_TEST_SOURCES test/panduck_test.cpp test/test_main.cpp)
+  # test_engine.cpp is unconditional, like the engine's own translation unit: it
+  # covers SpecVersion() and HasModule(), which exist in every configure. It is also
+  # what keeps this target meaningful with every format module switched off.
+  set(PANDUCK_TEST_SOURCES test/panduck_test.cpp test/test_main.cpp test/test_engine.cpp)
 
   # Per-module test files follow their module's option, exactly as the sources
   # do -- a test referencing a module that was not built must not break the

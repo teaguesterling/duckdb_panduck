@@ -35,11 +35,38 @@ namespace panduck {
 //! document be a Doc row, a Text row holding `""`, whereas null is null? -- and
 //! it was written down here as his answer to it. Nobody decided anything.
 //!
-//! And the vocabulary cannot say that sentence. Measured against
-//! src/include/duck_block_vocabulary.hpp: `KIND_*` is exactly `block`, `inline`,
-//! `value`, and of the 25 `TYPE_*` constants none is a document, body, root or
-//! text element. No reader emits a document-level row even for a NON-empty
-//! document. "A Doc row plus a Text row" was never expressible here.
+//! CORRECTED AGAIN, SAME DAY, and this one is the more instructive error. An
+//! earlier version of this very paragraph said the vocabulary "cannot say that
+//! sentence" -- that `KIND_*` is only `block`/`inline`/`value` and none of the 25
+//! `TYPE_*` constants is a document or root, so "a Doc row" was never
+//! expressible. All of that is true of THIS FILE'S NEIGHBOUR and false of the
+//! spec.
+//!
+//! `src/include/duck_block_vocabulary.hpp` is a vendored copy stamped at upstream
+//! `95a84e6` = duck_block_utils **v3.3.0**, and upstream is on **v3.5.0**. In
+//! v3.4.0 (2026-09-16) upstream added
+//!
+//!     static constexpr const char *TYPE_DOCUMENT = "document";
+//!
+//! and legalised `level = 0` for exactly that row and nothing else. So the
+//! question asked on 2026-10-05 was WELL FOUNDED -- it was about a document root
+//! that had existed upstream for three weeks. The gap was panduck's, not the
+//! question's.
+//!
+//! WHY THE STALENESS WAS INVISIBLE, which is the part worth carrying: upstream
+//! declined to bump the version for that amendment, deliberately ("add it to 1.4,
+//! we don't need to churn versions any more"), and recorded the consequence in
+//! the header itself -- "two builds can both say SPEC_VERSION 1.4 and differ on
+//! whether they accept a level-0 root, and a consumer cannot tell them apart from
+//! the version alone." Three dbu releases all say 1.4. Reading `SPEC_VERSION`
+//! here and matching it against upstream's therefore proves nothing, and that is
+//! documented, not accidental. Upstream also prescribes the remedy: "a consumer
+//! that needs to know tests for TYPE_DOCUMENT's presence in its vendored copy."
+//!
+//! The lesson for anyone measuring this repo against the spec: a vendored copy is
+//! not the spec, and a version string that two different vocabularies share is
+//! not a comparator. Re-vendoring is tracked separately from the semantics
+//! question.
 //!
 //! WHAT IS ACTUALLY TRUE, measured against build/release on 2026-10-08. Where
 //! `content` is JSON the distinction already survives, because JSON forces the

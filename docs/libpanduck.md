@@ -161,17 +161,36 @@ All six readers return **zero rows** for `""`, and for `"\n\n"`. This subsection
 used to call that a *known divergence* from a recorded ruling — that an empty
 document is a `Doc` row plus a `Text` row whose content is the empty string, with
 NULL reserved for absent. There was no ruling: Teague asked that as a question on
-2026-10-05 and it was written into `block.hpp` as his answer, in terms (`Doc`
-row, `Text` row) that no `KIND_*` or `TYPE_*` constant in the vocabulary
-provides. So there is nothing here to diverge from.
+2026-10-05 and it was written into `block.hpp` as his answer. So there is nothing
+here to diverge *from* — but the question itself was well founded, and a first
+attempt at this correction got that backwards.
 
-The question is open upstream, where the vocabulary is owned —
-[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60),
-where the empty-document case is question 4, since answering it needs a
-document-level concept the vocabulary does not currently have. The tests assert
-the *observed* behaviour with a comment, which was the right call for a different
-reason than the one given: not "the ruling is not worth a failing test" but
-"there is no ruling to assert".
+**The `Doc` row is real, and panduck simply cannot see it.** That first attempt
+said the vocabulary provides no document or root type, measured against
+`src/include/duck_block_vocabulary.hpp`. That file is a vendored copy stamped at
+upstream `95a84e6` = duck_block_utils **v3.3.0**; upstream is on **v3.5.0**, and
+v3.4.0 (2026-09-16) added `TYPE_DOCUMENT = "document"` and legalised `level = 0`
+for that row alone. The question was about a document root that had existed
+upstream for three weeks.
+
+Worse, the staleness is undetectable by the obvious check. Upstream declined to
+bump the version for that amendment on purpose — *"add it to 1.4, we don't need to
+churn versions any more"* — and wrote the consequence into the header: *"two
+builds can both say SPEC_VERSION 1.4 and differ on whether they accept a level-0
+root, and a consumer cannot tell them apart from the version alone."* Three
+consecutive dbu releases all declare `1.4`. Comparing version strings proves
+nothing here, by design; upstream's prescribed test is whether the vendored copy
+contains `TYPE_DOCUMENT`.
+
+The semantics question is open upstream, where the vocabulary is owned —
+[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60).
+Re-vendoring to v3.5.0 is separate work, and the whole fleet needs it: panduck,
+markdown, webbed and sitting_duck are all stamped at `95a84e6` and all lack
+`TYPE_DOCUMENT`, `ATTR_ID` and `ATTR_NAME`.
+
+The tests assert the *observed* behaviour with a comment, which was the right
+call for a different reason than the one originally given: not "the ruling is not
+worth a failing test" but "there is no ruling to assert".
 
 Two things still make this one convention rather than six bugs: it is uniform
 six-for-six, so the readers share a behaviour that predates the question; and it

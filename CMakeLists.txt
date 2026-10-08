@@ -146,6 +146,11 @@ set(EXTENSION_SOURCES
     libpanduck/src/textile_scanner.cpp
     libpanduck/src/rst_scanner.cpp
     src/ipynb_reader.cpp
+    # The engine's own translation unit -- SpecVersion() and HasModule(). It was
+    # NEVER in this list, so both were absent from the extension artifact entirely
+    # (verified with nm: zero matches for panduck::HasModule). A caller would have
+    # been a LINK error, not a wrong answer.
+    libpanduck/src/panduck.cpp
     libpanduck/src/ipynb.cpp
     libpanduck/src/latex.cpp
     libpanduck/src/mediawiki.cpp
@@ -169,6 +174,38 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz d
 
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
+
+# panduck::HasModule() COULD NOT ANSWER AT ALL IN THIS BUILD (issue #104).
+#
+# The first diagnosis was that it "returns false for every module", on the reasoning
+# that libpanduck/CMakeLists.txt defines PANDUCK_WITH_<NAME> per module and this build
+# defined none of them, compiling out every `#ifdef` branch. That was wrong, and the
+# measurement that corrected it is worth keeping: `nm -C` on the built artifact found
+# ZERO matches for `panduck::HasModule`, because libpanduck/src/panduck.cpp was not in
+# EXTENSION_SOURCES. The function was absent, so a caller would have hit a LINK error
+# rather than a quietly wrong answer.
+#
+# Both halves are fixed: panduck.cpp is now compiled in (see EXTENSION_SOURCES), and
+# these definitions make the module branches real rather than compiled out.
+#
+# Nothing was broken either way, because HasModule still has no callers. That is
+# precisely why it needed fixing now -- a function nobody calls stays wrong until the
+# first person trusts it, and "wrong" here was two defects stacked, not one.
+#
+# These are listed explicitly rather than derived from EXTENSION_SOURCES. A glob over
+# libpanduck/src/*.cpp would also match the companion translation units
+# (latex_tokenizer, latex_macros, *_scanner) and invent module names that do not
+# exist; latex alone is three files behind one option. The mapping from files to
+# modules is a fact about the modules, not about the filenames.
+#
+# ONE LIST PER BUILD IS THE COST OF HAVING TWO BUILDS. When a reader moves behind the
+# seam it must be added here AND in libpanduck/CMakeLists.txt -- the standalone build
+# will not tell you about this one, since it is the extension that is wrong.
+set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST TEXTILE)
+foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
+  target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
+  target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
+endforeach()
 
 install(
   TARGETS ${EXTENSION_NAME}

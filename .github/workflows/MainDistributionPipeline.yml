@@ -257,6 +257,37 @@ jobs:
       - name: Scan src/ for single-arrow lambdas
         run: python3 scripts/check_lambda_syntax.py
 
+  # libpanduck/ IS OUTSIDE THE REPO'S FORMAT GATE, and this job is the fix (#104).
+  #
+  # extension-ci-tools' Code Quality Check runs
+  #   format.py --all --check --directories src test
+  # so it says nothing about libpanduck/ -- and had said nothing since the first file
+  # moved behind the seam. Two files had quietly accumulated over-120-column lines from
+  # their `DuckBlockTypes::` -> `DuckBlockVocabulary::` renames.
+  #
+  # WHY A SEPARATE JOB rather than a step on libpanduck-seam: that job advertises "no
+  # submodules, no extension build, no network", and that is a property worth keeping --
+  # it is the fastest signal in the pipeline. This check needs the OPPOSITE: format.py
+  # lives in duckdb/scripts/ and .clang-format is a SYMLINK into the submodule, so
+  # without it the symlink dangles and clang-format silently falls back to its built-in
+  # style. Measured locally: that dangling symlink has already cost one debugging cycle
+  # on this repo.
+  #
+  # Hence submodules with fetch-depth 1 -- a shallow duckdb is enough for two config
+  # files and a script, and this job never builds anything.
+  libpanduck-format:
+    name: libpanduck formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+      - name: Install clang-format and cmake-format
+        run: pip install clang-format cmake-format
+      - name: Check libpanduck formatting
+        run: make format-check-libpanduck
+
   # THE libpanduck SEAM (#104): the format engine must not name DuckDB.
   #
   # TWO CHECKS, BECAUSE THE COMPILER CANNOT BE THE ONLY ONE. panduck's CMakeLists

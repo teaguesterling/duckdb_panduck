@@ -21,7 +21,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # (src/include/duck_block_vocabulary.hpp, see docs/architecture.md). It includes
 # only <cstdint>, so the engine uses it unchanged. Pointed at rather than
 # copied: a second copy would be a second thing to keep byte-exact.
-set(PANDUCK_VOCABULARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/include"
+set(PANDUCK_VOCABULARY_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/include"
     CACHE PATH "Directory holding duck_block_vocabulary.hpp")
 
 # FORMAT MODULES ARE COMPILE-TIME OPTIONS. A composition may carry fewer modules
@@ -43,8 +44,9 @@ set(PANDUCK_VOCABULARY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/include"
 # decided, the ipynb module is off by default in the standalone build; the
 # extension build is unaffected, since it compiles these sources itself with
 # duckdb's yyjson already on the include path.
-set(PANDUCK_YYJSON_INCLUDE_DIR "" CACHE PATH
-    "Directory holding a STANDALONE yyjson (not duckdb's vendored copy)")
+set(PANDUCK_YYJSON_INCLUDE_DIR
+    ""
+    CACHE PATH "Directory holding a STANDALONE yyjson (not duckdb's vendored copy)")
 
 # yyjson is now a vcpkg dependency (vcpkg.json), which is what lets the ipynb
 # module build standalone at all.
@@ -220,8 +222,9 @@ if(PANDUCK_BUILD_TESTS)
   add_test(NAME panduck_tests COMMAND panduck_tests)
 endif()
 
-message(STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
-               " latex=${PANDUCK_WITH_LATEX}"
-               " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
-               " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}"
-               " (tests=${PANDUCK_BUILD_TESTS})")
+message(
+  STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
+         " latex=${PANDUCK_WITH_LATEX}"
+         " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
+         " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}"
+         " (tests=${PANDUCK_BUILD_TESTS})")

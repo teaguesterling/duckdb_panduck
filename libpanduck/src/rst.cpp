@@ -564,7 +564,8 @@ private:
 				while (j < to && lines_[j].kind == LineKind::FIELD) {
 					const int field_indent = lines_[j].indent;
 					std::string value = lines_[j].text;
-					Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, lines_[j].name, depth + 1, DuckBlockVocabulary::ROLE_TERM);
+					Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, lines_[j].name, depth + 1,
+					     DuckBlockVocabulary::ROLE_TERM);
 					j++;
 					// A FIELD VALUE WRAPS onto indented lines that follow it with no
 					// blank between -- the same value, as pandoc reads it. Before #64

@@ -579,7 +579,6 @@ std::vector<TxBlock> ParseTextileString(const std::string &src) {
 	return builder.Build(src);
 }
 
-
 std::vector<Block> ReadTextile(const std::string &src) {
 	std::vector<Block> rows;
 	int32_t order = 0;

@@ -73,9 +73,15 @@ private copies of that struct (`IpynbRow`, `OrgRow`, `RstRow`, `MwRow`,
 tell an absent field from a present-but-empty one, whichever way the vocabulary
 ends up using that. This paragraph used to justify it differently — "an empty
 document is a `Doc` row plus a `Text` row whose content is the empty string" —
-and that was wrong twice: it was recorded as a ruling when it was a question
-Teague asked, and the vocabulary has no `Doc` or `Text` `element_type` to say it
-with. The emission helper preserves the older behaviour exactly — `HasContent()`
+and that was wrong — though not in the way a first correction claimed. It was
+recorded as a ruling when it was a question Teague asked; that part stands. The
+first correction then added that "the vocabulary has no `Doc` or `Text`
+`element_type` to say it with", which was measured against *panduck's vendored
+copy* and is false of the spec: upstream added `TYPE_DOCUMENT` in
+duck_block_utils v3.4.0, and panduck is stamped at v3.3.0. The question was about
+a document root that already existed. See the open-question section below for the
+measurement and for why a `SPEC_VERSION` comparison cannot detect that gap.
+The emission helper preserves the older behaviour exactly — `HasContent()`
 is "present AND non-empty", so absent and empty both still become SQL NULL.
 Changing any reader to emit a real empty string waits on
 [duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60)

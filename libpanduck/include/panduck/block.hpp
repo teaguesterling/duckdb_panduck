@@ -25,10 +25,46 @@ namespace panduck {
 //! not available. It is deliberately minimal -- absent-or-present and nothing
 //! else -- because that is the whole distinction the vocabulary needs.
 //!
-//! AND WHY THE DISTINCTION MATTERS. An empty document is a Doc row plus a Text
-//! row whose content is the empty string; NULL means the field is absent. Those
-//! are different facts and the row type must be able to tell them apart.
-//! Teague's ruling, 2026-10-05.
+//! AND WHY THE DISTINCTION MATTERS -- CORRECTED 2026-10-08. This comment used to
+//! read "An empty document is a Doc row plus a Text row whose content is the
+//! empty string; NULL means the field is absent. ... Teague's ruling,
+//! 2026-10-05." Both halves of that were wrong, and the error spread from here
+//! to six test files and docs/libpanduck.md before it was caught.
+//!
+//! It was not a ruling. On 2026-10-05 Teague asked a QUESTION -- would an empty
+//! document be a Doc row, a Text row holding `""`, whereas null is null? -- and
+//! it was written down here as his answer to it. Nobody decided anything.
+//!
+//! And the vocabulary cannot say that sentence. Measured against
+//! src/include/duck_block_vocabulary.hpp: `KIND_*` is exactly `block`, `inline`,
+//! `value`, and of the 25 `TYPE_*` constants none is a document, body, root or
+//! text element. No reader emits a document-level row even for a NON-empty
+//! document. "A Doc row plus a Text row" was never expressible here.
+//!
+//! WHAT IS ACTUALLY TRUE, measured against build/release on 2026-10-08. Where
+//! `content` is JSON the distinction already survives, because JSON forces the
+//! choice: org `| a |   | c |` yields `{"headers":[],"rows":[["a","","c"]]}` --
+//! the empty cell is `""`. Where `content` is text it collapses, because every
+//! DuckDB tail emits
+//! `HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR)` and
+//! `std::string` has no null state; the information dies at the emission
+//! boundary. That was an accident of the type, not a decision -- and producers
+//! disagree today because of it: an empty org code block gives NULL, a
+//! declared-but-valueless `#+TITLE:` gives NULL, latex `\section{}` drops the
+//! row entirely, and the pandoc reader gives `''`.
+//!
+//! IT IS OPEN, and duck_block owns it as vocabulary owner:
+//! https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
+//! The candidate rule under discussion there is about APPLICABILITY, not
+//! emptiness: NULL would mean `content` does not apply to this `element_type`
+//! (a `list`, whose children are separate rows), `''` that it applies and is
+//! empty. Teague has indicated he favours that direction; it is not ratified.
+//! The empty-document case needs the document-level concept the vocabulary does
+//! not have, which is question 4 on that issue.
+//!
+//! None of which puts `Nullable<T>` in question. Whichever way #60 lands, the
+//! row type has to be ABLE to tell absent from empty, and it is the only layer
+//! that currently can. The type stays; only the justification above it was wrong.
 template <class T>
 struct Nullable {
 	T value;

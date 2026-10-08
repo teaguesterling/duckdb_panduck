@@ -75,8 +75,11 @@ void RunIpynbTests() {
 	const std::vector<::panduck::Block> broken = ::panduck::ipynb::ReadIpynb("{not json");
 	CHECK_EQ(broken.size(), static_cast<size_t>(0));
 
-	// OBSERVED behaviour on empty input -- diverges from the ruling in
-	// libpanduck/include/panduck/block.hpp; see test_org.cpp for the note.
+	// OBSERVED behaviour on empty input: zero rows. This note used to call that a
+	// divergence from a "ruling" in libpanduck/include/panduck/block.hpp. There
+	// was no ruling, and the question is open upstream where the vocabulary is
+	// owned: https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
+	// See test_org.cpp for the note, block.hpp for the measured detail.
 	const std::vector<::panduck::Block> empty = ::panduck::ipynb::ReadIpynb("");
 	CHECK_EQ(empty.size(), static_cast<size_t>(0));
 

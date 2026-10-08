@@ -34,7 +34,7 @@ caught a real defect the other two could not see:
 |---|---|---|
 | `scripts/check_libpanduck_seam.py` | no DuckDB **name** appears | a type arriving transitively |
 | `cmake -S libpanduck` (standalone project) | the engine **compiles** with no duckdb on the include path, **at C++11** | whether the output is correct |
-| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB | behaviour the fixtures do not reach |
+| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB — 125 checks | behaviour the fixtures do not reach |
 
 The middle one is why the standalone CMake project exists at all. panduck's own
 `CMakeLists.txt` applies DuckDB's include paths **directory-wide**, so a child
@@ -126,9 +126,11 @@ Not yet moved:
 
 `libpanduck/test/` is a dependency-free, C++11, assert-based runner wired into
 `ctest` — no gtest, no Catch2, because adding a framework to prove libpanduck has
-almost no dependencies would be self-defeating. **112 checks across five modules
-on the default configure**, which is exactly what CI runs; 134 across six with
-ipynb forced on locally.
+almost no dependencies would be self-defeating. **125 checks on the default configure** --
+which is exactly what CI runs -- across five format modules plus an always-compiled
+`engine` module covering `SpecVersion()` and `HasModule()`. ipynb's own test file
+adds 22 more but CI never runs them -- see the yyjson gap below -- so that total is
+not quoted here.
 
 Each module asserts: it returns rows at all through the DuckDB-free entry point;
 an exact row count for its fixture (so a silently dropped construct fails here
@@ -317,33 +319,84 @@ platform build (Wasm included) for a target only the standalone configure uses;
 either drop it once libpanduck links its own copy another way, or make it
 conditional so the extension build keeps using DuckDB's.
 
-## Gaps in the guards themselves
+## Gaps in the guards themselves — closed
 
 Recorded because a guard everyone trusts is worse than no guard. None of these
-is a defect in the engine; each is a way the *checking* is weaker than it reads.
+was a defect in the engine; each was a way the *checking* was weaker than it
+read. All four are now fixed, and one of them was misdiagnosed first — which is
+the most useful part of the record.
 
-- **`libpanduck/` is outside the format gate.** `extension-ci-tools`' makefile
-  runs `format.py --all --check --directories src test`, so `make format-check`
-  returns 0 regardless of what `libpanduck/` looks like — and has since the first
-  seam move. Moved files have been clang-formatted by hand to compensate;
-  `libpanduck/src/rst.cpp:567` still carries an over-120-column line from its own
-  `DuckBlockVocabulary::` rename. Adding `libpanduck` to those `--directories` is
-  a one-line fix, and belongs in its own commit.
-- **`check_duck_block_vocabulary.py` narrows every time a reader moves.** Its
-  `SCAN_GLOBS` is `src/*.cpp` + `src/include/*.hpp`, so each move removes
-  constants from its view — latex's macro table alone took 36 references out of
-  it. Run as a before/after control on that move the report was byte-identical,
-  so no gap has actually opened, but the evidence base shrinks monotonically
-  while the check's caveat stays the same sentence. Extending the globs to
-  `libpanduck/src/*.cpp` and matching `DuckBlockVocabulary::` would restore it.
-- **`panduck::HasModule()` answers false for every module inside the extension.**
-  The root `CMakeLists.txt` compiles the libpanduck sources directly and defines
-  no `PANDUCK_WITH_*`, so the `#ifdef`-guarded branches are all inactive there.
-  It has no callers today, so nothing is broken — but it is a public function
-  that will be wrong the first time someone trusts it.
-- **`PANDUCK_VOCABULARY_DIR` is PRIVATE on the `panduck` target** while
-  `panduck/vocabulary.hpp` is public, so a consumer must repeat the path. An L3
-  interface question rather than a bug.
+**`libpanduck/` was outside the format gate.** `extension-ci-tools`' makefile
+runs `format.py --all --check --directories src test`, so `make format-check`
+returned 0 regardless of what `libpanduck/` looked like — and had since the first
+seam move. Two files had quietly accumulated over-120-column lines from their
+`DuckBlockVocabulary::` renames, which is exactly what a format gate is for.
+
+Fixed in panduck's own Makefile rather than upstream's: `extension-ci-tools/` is
+vendored, and a local edit there drifts silently from upstream and resurfaces as
+a mystery on the next sync. `make format-check-libpanduck` and
+`format-fix-libpanduck` mirror the upstream invocation through `--directories`.
+A separate target, not an override — redefining an included makefile's target is
+a last-one-wins game that depends on include order.
+
+CI gets its own `libpanduck formatting` job rather than a step on the seam job,
+because that job advertises "no submodules, no extension build, no network" and
+that is worth keeping: it is the fastest signal in the pipeline. This check needs
+the opposite — `format.py` lives in `duckdb/scripts/` and `.clang-format` is a
+**symlink into the submodule**, which dangles without it and makes clang-format
+fall back silently to its built-in style.
+
+`make check-libpanduck-seam` was also added: the seam scan had no make target at
+all, so a local `make check` never ran it. A guard that exists only in CI is a
+guard you find out about after pushing.
+
+**`check_duck_block_vocabulary.py` was shrinking.** Its `SCAN_GLOBS` was `src/`
+only, so every reader moved behind the seam took its vocabulary references out of
+view — latex's macro table alone removed 36 — while the docstring's "no gap this
+scan can SEE" caveat stayed the same sentence. The globs now include
+`libpanduck/`, and the pattern matches `DuckBlockVocabulary::` as well as
+`DuckBlockTypes::`; matching only the old spelling would have widened the globs
+while measuring the same thing, which is worse than not scanning at all.
+
+Measured both ways, because "the report did not change" has two causes. The GAPS
+report is byte-identical before and after, so nothing was being hidden yet — and
+the new globs really do reach the moved code, 12 files and 50 distinct constants,
+so the unchanged report is coverage holding rather than globs matching nothing.
+
+**`panduck::HasModule()` could not answer at all, and the first diagnosis was
+wrong.** It was recorded here as "answers false for every module inside the
+extension", reasoning that the root `CMakeLists.txt` defines no `PANDUCK_WITH_*`
+so every `#ifdef` branch is compiled out. `nm -C` on the built artifact corrected
+that: **zero** matches for `panduck::HasModule`, because
+`libpanduck/src/panduck.cpp` was never in `EXTENSION_SOURCES`. The function was
+absent, so a caller would have hit a *link error*, not a quietly wrong answer.
+Two defects stacked, and the plausible explanation hid the simpler one.
+
+Both halves are fixed, and the function now has a caller: 13 checks in an
+always-compiled `engine` module in the standalone suite, with **both answers
+pinned** per `#ifdef`/`#else` so no configure leaves an arm unexercised. Neither
+arm is hypothetical — the default configure CI runs has ipynb off, so CI
+exercises the `false` arm for real. Mutation-verified: deleting textile's branch
+in an out-of-repo copy fails with `HasModule("textile") should be true`.
+
+It also means the all-modules-off configure is meaningful. Previously it had
+nothing to run and exited 2 on the runner's own "zero checks is an error" rule;
+now it reports 13 checks and passes.
+
+**`PANDUCK_VOCABULARY_DIR` is PRIVATE on the `panduck` target** while
+`panduck/vocabulary.hpp` is public, so a consumer must repeat the path. Left
+alone deliberately: that is an L3 interface question — what libpanduck's public
+target looks like to someone linking it — not a gap in a guard.
+
+### The pattern worth keeping
+
+Three of these four were invisible because nothing *failed*. A format gate that
+checks the wrong directory, a scan whose evidence base shrinks, and a function
+with no callers all report success indefinitely. The seam's own history says the
+same thing from the other side: of six traps hit while moving readers, three
+would have shipped silently. **A green check is a claim about what it measured,
+not about what you hoped it measured** — which is why each fix here came with a
+measurement that the check now reaches the thing it names.
 
 ## Why the repo has not split
 

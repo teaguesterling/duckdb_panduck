@@ -187,7 +187,23 @@ INTENTIONAL_GAPS = {
 }
 
 # Files whose contents count as "panduck branches on this".
-SCAN_GLOBS = ["src/*.cpp", "src/include/*.hpp"]
+#
+# libpanduck/ IS IN HERE BECAUSE THIS SCAN WAS SHRINKING (issue #104). Every reader
+# moved behind the seam took its vocabulary references out of this scan's view --
+# latex's macro table alone removed 36 of them -- while the docstring's "no gap this
+# scan can SEE" caveat stayed the same sentence. The evidence base was narrowing
+# monotonically and nothing said so. Six readers are now behind the seam, which is
+# most of the vocabulary's consumers.
+#
+# Measured when extending it: the GAPS report is byte-identical before and after, so
+# no constant was named ONLY in moved code and no gap was being hidden yet. The point
+# is that it would have been, silently, at some later move.
+SCAN_GLOBS = [
+    "src/*.cpp",
+    "src/include/*.hpp",
+    "libpanduck/src/*.cpp",
+    "libpanduck/include/panduck/*.hpp",
+]
 
 
 def parse_constants(text):
@@ -523,7 +539,14 @@ def branched_on(root):
                 continue
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
-            named |= set(re.findall(r"DuckBlockTypes::([A-Z_][A-Z0-9_]*)", text))
+            # BOTH SPELLINGS. Code behind the seam cannot name `DuckBlockTypes` --
+            # that class lives in `namespace duckdb` and adds Value-returning helpers
+            # -- so it reaches the same constants through the `DuckBlockVocabulary`
+            # alias in panduck/vocabulary.hpp. Matching only the old spelling would
+            # add the libpanduck globs above and still see nothing in them, which is
+            # a worse failure than not scanning them at all: the scan would look
+            # wider while measuring the same thing.
+            named |= set(re.findall(r"(?:DuckBlockTypes|DuckBlockVocabulary)::([A-Z_][A-Z0-9_]*)", text))
             literal |= set(re.findall(r'"([a-z][a-z0-9_:]*)"', text))
     return named, literal
 

@@ -257,6 +257,49 @@ jobs:
       - name: Scan src/ for single-arrow lambdas
         run: python3 scripts/check_lambda_syntax.py
 
+  # libpanduck/ IS OUTSIDE THE REPO'S FORMAT GATE, and this job is the fix (#104).
+  #
+  # extension-ci-tools' Code Quality Check runs
+  #   format.py --all --check --directories src test
+  # so it says nothing about libpanduck/ -- and had said nothing since the first file
+  # moved behind the seam. Two files had quietly accumulated over-120-column lines from
+  # their `DuckBlockTypes::` -> `DuckBlockVocabulary::` renames.
+  #
+  # WHY A SEPARATE JOB rather than a step on libpanduck-seam: that job advertises "no
+  # submodules, no extension build, no network", and that is a property worth keeping --
+  # it is the fastest signal in the pipeline. This check needs the OPPOSITE: format.py
+  # lives in duckdb/scripts/ and .clang-format is a SYMLINK into the submodule, so
+  # without it the symlink dangles and clang-format silently falls back to its built-in
+  # style. Measured locally: that dangling symlink has already cost one debugging cycle
+  # on this repo.
+  #
+  # Hence submodules with fetch-depth 1 -- a shallow duckdb is enough for two config
+  # files and a script, and this job never builds anything.
+  libpanduck-format:
+    name: libpanduck formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+      # EXACT VERSIONS, because format.py enforces them and exits -1 otherwise
+      # (duckdb/scripts/format.py:22-50):
+      #   black >= 24        -- checked even though nothing here is Python; the
+      #                         version gate runs before any --directories filtering
+      #   clang-format 11.x  -- an unpinned `pip install clang-format` gets a modern
+      #                         major and is REJECTED, not merely different. 11.0.1 is
+      #                         what the repo formats with locally.
+      #   cmake-format       -- unpinned; format.py only checks it runs
+      # Found by reading format.py rather than by watching this job fail: the first
+      # draft of this step installed `clang-format cmake-format` unpinned and no
+      # black, which would have failed on the version gate and looked like a
+      # formatting problem.
+      - name: Install the formatters format.py requires
+        run: pip install "black>=24" clang_format==11.0.1 cmake-format
+      - name: Check libpanduck formatting
+        run: make format-check-libpanduck
+
   # THE libpanduck SEAM (#104): the format engine must not name DuckDB.
   #
   # TWO CHECKS, BECAUSE THE COMPILER CANNOT BE THE ONLY ONE. panduck's CMakeLists

@@ -6,6 +6,45 @@ EXT_CONFIG=${PROJ_DIR}extension_config.cmake
 
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
+
+# THE FORMAT GATE DOES NOT COVER libpanduck/, AND CANNOT BE MADE TO FROM HERE.
+#
+# extension-ci-tools' `format-check` runs
+#   python3 duckdb/scripts/format.py --all --check --directories src test
+# so `make format-check` returns 0 no matter what libpanduck/ looks like -- and had
+# done since the first file moved behind the seam (issue #104, L2). Two files had
+# quietly accumulated over-120-column lines from their `DuckBlockTypes::` ->
+# `DuckBlockVocabulary::` renames, which is exactly what a format gate exists to
+# catch.
+#
+# NOT fixed by editing that makefile: extension-ci-tools/ is VENDORED. A local edit
+# there drifts silently from upstream and resurfaces as a mystery on the next sync.
+# These targets live here instead, where they are panduck's own, and `--directories`
+# takes a list so the upstream invocation is mirrored rather than reimplemented.
+#
+# Deliberately a SEPARATE target rather than a `format-check:` override: redefining a
+# target an included makefile already defines is a warning-and-last-one-wins game, and
+# which one wins depends on include order. An explicit name cannot be ambiguous. The
+# cost is that it must be invoked explicitly -- so `check` below and the
+# libpanduck-seam CI job both call it.
+#
+# NOTE format.py also runs cmake-format over CMakeLists.txt (.txt is in its extension
+# map), so this gate covers libpanduck/CMakeLists.txt too and needs cmake-format on
+# PATH -- `pip install cmake-format`.
+# The seam scan had no make target at all -- CI invoked the script directly, so a
+# local `make check` never ran it. Added here for the same reason as the format gate:
+# a guard that only exists in CI is a guard you find out about after pushing.
+.PHONY: check-libpanduck-seam
+check-libpanduck-seam:
+	python3 scripts/check_libpanduck_seam.py
+
+.PHONY: format-check-libpanduck
+format-check-libpanduck:
+	python3 duckdb/scripts/format.py --all --check --directories libpanduck
+
+.PHONY: format-fix-libpanduck
+format-fix-libpanduck:
+	python3 duckdb/scripts/format.py --all --fix --noconfirm --directories libpanduck
 # Run every independent guard and report ALL of them, then fail if any failed.
 #
 # WRITTEN THIS WAY DELIBERATELY. A recipe of sequential lines stops at the first non-zero
@@ -21,7 +60,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check
 check:
 	@rc=0; \
-	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax check-test-skips test_pandoc_alignment test_roundtrip; do \
+	for c in check-vocabulary check-conformance check-converter check-divergence check-writeback check-wordloss check-body-parity check-lambda-syntax check-test-skips check-libpanduck-seam format-check-libpanduck test_pandoc_alignment test_roundtrip; do \
 	  printf '\n=== %s ===\n' "$$c"; \
 	  $(MAKE) --no-print-directory $$c || rc=1; \
 	done; \

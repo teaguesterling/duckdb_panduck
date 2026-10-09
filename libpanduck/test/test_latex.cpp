@@ -76,8 +76,15 @@ void RunLatexTests() {
 
 	// OBSERVED behaviour on empty input: zero rows. This note used to call that a
 	// divergence from a "ruling" in libpanduck/include/panduck/block.hpp. There
-	// was no ruling, and the question is open upstream where the vocabulary is
-	// owned: https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
+	// was no ruling. And the `content` question is not open either: duck_block
+	// ruled on 2026-09-01 that NULL and '' are the SAME absence and that
+	// producers SHOULD emit NULL, so this reader's behaviour is the preferred
+	// spelling rather than something awaiting a decision.
+	//
+	// What is still open is narrower and is not about `content` at all --
+	// whether an empty document should have a spine, now that TYPE_DOCUMENT
+	// makes a level-0 root expressible:
+	// https://github.com/teaguesterling/duckdb_duck_block_utils/issues/63
 	// See test_org.cpp for the note, block.hpp for the measured detail.
 	const std::vector<::panduck::Block> empty = ::panduck::latex::ReadLatex("");
 	CHECK_EQ(empty.size(), static_cast<size_t>(0));

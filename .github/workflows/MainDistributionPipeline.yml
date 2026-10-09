@@ -537,3 +537,323 @@ jobs:
 
       - name: Check wasm modules for unresolved dependency symbols
         run: test/wasm/run_wasm_checks.sh artifacts
+
+  # THE VENDORED duck_block VOCABULARY vs UPSTREAM'S RELEASE (#38).
+  #
+  # src/include/duck_block_vocabulary.hpp is a COPY of duck_block_utils' published
+  # header, and a copy -- like a submodule pin, which is a copy with a sha attached --
+  # does not notice when upstream moves. The C++ constants catch a RENAME, because
+  # TYPE_HEADING -> TYPE_HEAD breaks the build at every use site. They are blind to a
+  # changed VALUE: TYPE_PAGE = 'page_break' -> 'pagebreak' compiles clean, every test
+  # written against its own string literals keeps passing, and the readers silently
+  # stop emitting a type any consumer recognises. Nothing in C++ catches that; only
+  # this check does.
+  #
+  # IT COMPARES AGAINST THE LATEST RELEASE, NOT main, which is the contract settled with
+  # upstream's consumer check: spec releases are batched, so main can carry constants no
+  # release has yet, and comparing against main reddened an up-to-date copy mid-batch.
+  # DRIFT, EXTRA, SPEC and PROVENANCE fail. BEHIND PASSES -- re-vendor only when panduck
+  # needs a constant, or a changed predicate answer, that a later minor added.
+  #
+  # WHY IT IS BLOCKING FROM THE START, measured rather than assumed (2026-10-08): run on
+  # this tree it exits 0. The copy is two EXTENSION releases back -- stamped 95a84e6 =
+  # v3.3.0 against release v3.5.0 -- and the report lists TYPE_DOCUMENT, ATTR_ID and
+  # ATTR_NAME under BEHIND with spec 1.4 on both sides. By the rule above that is the
+  # aligned state, not a failure, so wiring this as a gate does not red main. The
+  # re-vendor is separate work; this job is what will say when it becomes necessary.
+  #
+  # WHAT IT CANNOT SEE: the GAPS arm counts a constant's VALUE appearing as a bare string
+  # literal anywhere in the scanned sources, not only where it is compared against
+  # duck_block vocabulary, so a short generic value collides with unrelated code and reads
+  # as "handled" -- TYPE_FIGURE collides with a LaTeX environment name, VALUE_LIST with
+  # TYPE_LIST. An empty GAPS section means "no gap this scan can SEE", not "no gap".
+  #
+  # --strict IS LOAD-BEARING, NOT DECORATION. Without it an unreachable upstream prints a
+  # line and returns 0, so a network blip would go green having compared nothing -- the
+  # same false green that --strict on check_word_loss.py exists to prevent. GITHUB_TOKEN
+  # only lifts the unauthenticated API rate limit; the header it reads is public.
+  #
+  # No submodules, no extension build: a tracked header and two HTTPS reads, so seconds.
+  duck-block-vocabulary:
+    name: Vendored duck_block vocabulary matches upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The checker's own classification first: a drift guard that has stopped being able
+      # to tell a value change from cosmetic churn reports the same clean output as one
+      # that can. This asserts, among others, that BEHIND passes and EXTRA/CHANGED fail --
+      # the exact arms the verdict below depends on.
+      - name: Prove the checker can still classify drift
+        run: python3 scripts/check_duck_block_vocabulary.py --self-test
+
+      - name: Compare the vendored header against upstream's latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          python3 scripts/check_duck_block_vocabulary.py --strict
+          rc=$?
+          set -e
+          echo "check_duck_block_vocabulary.py --strict exit=$rc"
+          exit $rc
+
+  # EVERY READER'S OUTPUT AGAINST duck_block's CONFORMANCE MACROS.
+  #
+  # Before this script existed, panduck's suite checked panduck's own behaviour and
+  # NOTHING about duck_block conformance: every conformance claim about this repo came
+  # from a human loading duck_block_utils by hand, once, interactively. Nothing ran in
+  # CI, so nothing would notice a regression -- and until this job the script itself ran
+  # nowhere but a developer's terminal.
+  #
+  # THE MACROS ARE READ FROM UPSTREAM, NOT COPIED HERE, and that is deliberate: upstream
+  # already compares them against its own extension, so a copy in this tree would be a
+  # third party to a two-party agreement, checked by nobody. They are pure SQL, which is
+  # what makes them usable at all -- panduck's duckdb submodule tracks the BRANCH
+  # v1.5-variegata, and one `git submodule update --remote` moves it off-release and makes
+  # the real validator unloadable by INSTALL, by LOAD, by any route. The SQL survives that.
+  # They also carry two checks the real per-element macro cannot express: duplicate
+  # element_order, and level jumping by more than one.
+  #
+  # PINNED TO THE LATEST RELEASE TAG, resolved and PRINTED here rather than tracking main.
+  # Same reasoning as the vocabulary job: the contract with upstream is release-based, and
+  # a job that diffs against a moving branch cannot attribute its own failure. Measured
+  # before wiring: the tag resolves to v3.5.0 and its macro file is byte-identical to the
+  # sibling working tree the local run used, so the local exit 0 is a verdict about the
+  # RELEASE and not about one developer's uncommitted branch.
+  #
+  # THE SELF-TEST IS NOT OPTIONAL and the script runs it unprompted: it feeds itself five
+  # constructed defective documents and FAILS if any is not caught, plus one conforming
+  # control and FAILS if it is rejected. This repo has twice shipped a guard pointed at an
+  # input that could not exercise it; a green run here means the check fired correctly on
+  # known-bad input before it ever looked at a fixture.
+  #
+  # NO REBUILD (~40 min): like roundtrip-validation this downloads the matrix's artifact.
+  # The script resolves build/release/duckdb and build/release/extension/... by DEFAULT and
+  # takes no path flags, so the stock CLI and the artifact are STAGED at those two paths
+  # rather than the script being changed to accept them. It issues `LOAD '<ext>'` with
+  # -unsigned, so a stock CLI of the same version is sufficient -- verified locally against
+  # the v1.5.6 CLI, not inferred from the dev binary, which has panduck linked in.
+  #
+  # WHAT IT CANNOT SEE: conformance of SHAPE and VOCABULARY on the fixtures that exist. It
+  # says nothing about a format with no fixture, and nothing about whether the blocks mean
+  # what the source said -- check_word_loss.py is the audit for that.
+  duck-block-conformance:
+    name: Every reader's output is duck_block conformant
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Unzip into its own directory: the archive contains a file named `duckdb` and the
+      # checkout already has a `duckdb/` SUBMODULE directory, so extracting in place makes
+      # unzip prompt to overwrite it, which on a runner reads EOF and exits 1.
+      - name: Install DuckDB CLI v1.5.6
+        run: |
+          curl -sSL -o duckdb.zip \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
+          unzip -q -o duckdb.zip -d duckdb-cli
+          chmod +x duckdb-cli/duckdb
+          test -x duckdb-cli/duckdb || { echo "duckdb CLI not where expected"; exit 1; }
+          ./duckdb-cli/duckdb --version
+
+      - name: Download the panduck extension built above
+        uses: actions/download-artifact@v4
+        with:
+          name: panduck-v1.5.6-extension-linux_amd64
+          path: ext
+
+      # The script's defaults, satisfied by staging rather than by new flags. Both copies
+      # are asserted present afterwards: a silent cp failure here would otherwise reach the
+      # script as a missing prerequisite, which --strict reports as a FAIL about the build
+      # instead of about this step.
+      - name: Stage the CLI and artifact where the script expects them
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          test -n "$EXT" || { echo "no panduck.duckdb_extension in the downloaded artifact"; exit 1; }
+          echo "extension: $EXT"
+          mkdir -p build/release/extension/panduck
+          cp duckdb-cli/duckdb build/release/duckdb
+          cp "$EXT" build/release/extension/panduck/panduck.duckdb_extension
+          test -x build/release/duckdb || { echo "staging the CLI failed"; exit 1; }
+          test -s build/release/extension/panduck/panduck.duckdb_extension \
+            || { echo "staging the extension failed"; exit 1; }
+
+      # Resolved, not pinned by hand, then PRINTED: a cited version is a timestamp, and a
+      # tag written into this file would expire silently. Failing when the tag cannot be
+      # resolved is the point -- an unresolvable tag must not fall back to main.
+      - name: Fetch the conformance macros at upstream's latest release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          TAG=$(curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/teaguesterling/duckdb_duck_block_utils/releases/latest \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+          rc=$?
+          set -e
+          test "$rc" -eq 0 -a -n "$TAG" \
+            || { echo "could not resolve duck_block_utils' latest release tag"; exit 1; }
+          echo "duck_block_utils release: $TAG"
+          git clone --quiet --depth 1 --branch "$TAG" \
+            https://github.com/teaguesterling/duckdb_duck_block_utils.git upstream-dbu
+          test -f upstream-dbu/vendor/duck_block_conformance.sql \
+            || { echo "no vendor/duck_block_conformance.sql at $TAG"; exit 1; }
+
+      # --strict IS LOAD-BEARING. Without it a missing macro file, a missing CLI or a
+      # missing extension prints a SKIP and returns 0, so this job would go green forever
+      # having validated nothing -- which is how this very script once returned SKIP with
+      # exit 0 while every fixture errored.
+      - name: Are all readers' blocks duck_block conformant?
+        run: |
+          set +e
+          python3 scripts/check_duck_block_conformance.py --strict --upstream upstream-dbu
+          rc=$?
+          set -e
+          echo "check_duck_block_conformance.py --strict exit=$rc"
+          exit $rc
+
+  # THE WRITE DIRECTION: every fixture's blocks must come back out as pandoc JSON that a
+  # REAL pandoc accepts.
+  #
+  # panduck's readers are deliberately MORE faithful than pandoc in places -- richer
+  # attributes, better block types, metadata pandoc does not extract at all -- and this is
+  # the check that keeps "more faithful" from becoming "incompatible". The standing rule it
+  # enforces is: diverge from pandoc's representation wherever the source justifies it,
+  # discard nothing, but whatever is emitted MUST map back to VALID pandoc JSON. Valid, not
+  # identical: losing an attribute pandoc has no field for is fine; emitting a shape pandoc
+  # cannot parse is not.
+  #
+  # WHY A REAL PANDOC AND NOT A SCHEMA. The first defect of this class was a Table whose `c`
+  # field held duck_block's own {"headers":...,"rows":...} projection where pandoc's grammar
+  # demands a six-element array. It is well-formed JSON, it round-trips through DuckDB
+  # perfectly, every in-process assertion about it passes, and pandoc rejects the whole
+  # document with "expected Array but got Object". Nothing short of the real parser sees it,
+  # and it went unnoticed for the entire life of the converter because nothing wrote blocks
+  # back out until the write direction was registered -- and then went unnoticed again,
+  # because the script that catches it ran nowhere but a terminal.
+  #
+  # The script self-tests unprompted: it proves pandoc REJECTS a known-bad AST and ACCEPTS a
+  # conforming one before it trusts any fixture verdict.
+  #
+  # Staged, not rebuilt, for the same reasons as duck-block-conformance above: the script
+  # hardcodes build/release/duckdb and build/release/extension/..., issues `LOAD` with
+  # -unsigned, and needs no flags added to work against the matrix's artifact.
+  #
+  # --require IS LOAD-BEARING: without it a missing pandoc, CLI or extension prints a SKIP
+  # and returns 0, reporting coverage this job is not providing.
+  #
+  # WHAT IT CANNOT SEE: that the pandoc JSON means the same thing as the source. It proves
+  # the mapping is TOTAL -- that pandoc accepts everything panduck emits -- not that it is
+  # faithful.
+  pandoc-writeback:
+    name: Blocks write back as pandoc-valid JSON
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc
+          pandoc --version | head -1
+
+      - name: Install DuckDB CLI v1.5.6
+        run: |
+          curl -sSL -o duckdb.zip \
+            https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
+          unzip -q -o duckdb.zip -d duckdb-cli
+          chmod +x duckdb-cli/duckdb
+          test -x duckdb-cli/duckdb || { echo "duckdb CLI not where expected"; exit 1; }
+          ./duckdb-cli/duckdb --version
+
+      - name: Download the panduck extension built above
+        uses: actions/download-artifact@v4
+        with:
+          name: panduck-v1.5.6-extension-linux_amd64
+          path: ext
+
+      - name: Stage the CLI and artifact where the script expects them
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          test -n "$EXT" || { echo "no panduck.duckdb_extension in the downloaded artifact"; exit 1; }
+          echo "extension: $EXT"
+          mkdir -p build/release/extension/panduck
+          cp duckdb-cli/duckdb build/release/duckdb
+          cp "$EXT" build/release/extension/panduck/panduck.duckdb_extension
+          test -x build/release/duckdb || { echo "staging the CLI failed"; exit 1; }
+          test -s build/release/extension/panduck/panduck.duckdb_extension \
+            || { echo "staging the extension failed"; exit 1; }
+
+      - name: Does a real pandoc accept everything panduck writes?
+        run: |
+          set +e
+          python3 scripts/check_pandoc_writeback.py --require
+          rc=$?
+          set -e
+          echo "check_pandoc_writeback.py --require exit=$rc"
+          exit $rc
+
+  # panduck's COPY OF THE CONVERTER vs duck_block_utils' COPY.
+  #
+  # src/pandoc_block_convert.cpp lives in BOTH repos: panduck's is the moved copy and
+  # upstream keeps theirs until the handoff's step 4 deletes it. Each repo tests its own
+  # copy against its own expectations and each passes, which is NOT the same as the copies
+  # agreeing -- and the difference is where defects live. A hand-run version of this check
+  # found one: coverage of handled pandoc constructors was identical on both sides, but
+  # CheckPandocDepth appeared 8 times upstream and 7 here. That one number was a recursion
+  # bound panduck had lost, where ExtractInlinesTextVal segfaulted on a nested AST at depth
+  # 50,000 and upstream raised a clean error at 128. A Pandoc AST is document-controlled
+  # input, so that was a crash reachable from a file. Neither suite could have found it:
+  # the defect existed only in the RELATIONSHIP.
+  #
+  # NON-BLOCKING, AND THAT IS THE DESIGN RATHER THAN A CONCESSION. Two reasons, both from
+  # the script's own account of itself:
+  #
+  #   It compares against upstream's main, resolved to a sha per run (every other
+  #   upstream-facing gate here is release-based). A merge on a DIFFERENT repo's branch can
+  #   therefore change this verdict with no commit in panduck, and a gate that reds main for
+  #   a change no one here made cannot be acted on by the person who sees it.
+  #
+  #   It reports A SIGNAL TO INVESTIGATE, NOT A DIAGNOSIS -- three coarse invariants
+  #   (handled constructors, guard calls, defined functions). What identified the recursion
+  #   bound was a human reading the diff hunks; the counts only said where to look. Blocking
+  #   a merge on a signal that does not establish a defect is a category error, and treating
+  #   a green run as "the copies behave identically" is the same mistake inverted.
+  #
+  # So: advisory via continue-on-error, loud in the log, and the exit code is still captured
+  # and printed so a failure is never inferred from grepped output. Measured before wiring
+  # (2026-10-08): exit 0, no divergence, upstream main at e00db69840 -- which is currently
+  # the v3.5.0 release commit.
+  #
+  # IT EXPIRES. The window opened when there were two copies and closes when step 4 deletes
+  # upstream's; at that point delete this job rather than fixing it. It does not become
+  # blocking -- a release-based comparison is impossible once the second copy is gone.
+  #
+  # WHAT IT CANNOT SEE: a producer/consumer attribute mismatch, which is a disagreement
+  # between two DIFFERENT files in ONE repo and structurally out of scope. The obvious
+  # widening -- attributes written anywhere vs read anywhere -- was prototyped and failed in
+  # both directions (silent on the real defect, loud on correct layering), so it is recorded
+  # as measured-and-rejected rather than left as an improvement someone reimplements.
+  converter-divergence:
+    name: Converter copies agree with upstream (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      # The script self-tests unprompted and fails if its own comparators cannot detect a
+      # planted divergence, so a green run cannot mean "found nothing because it compared
+      # nothing".
+      - name: Compare panduck's converter against upstream's copy
+        run: |
+          set +e
+          python3 scripts/check_converter_divergence.py --require
+          rc=$?
+          set -e
+          echo "check_converter_divergence.py --require exit=$rc"
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning title=Converter divergence::A SIGNAL TO INVESTIGATE, not a diagnosis: read the hunks before concluding anything. Advisory -- this does not block the merge."
+          fi
+          exit $rc

@@ -260,8 +260,9 @@ delegated to the pdf extension and is not a duck_block output target.
 Container output is the expensive kind, but less expensive than it looks:
 
 - **miniz's writer APIs are compiled in** — `MINIZ_NO_ARCHIVE_WRITING_APIS` is commented out in
-  the vendored `miniz.hpp`. panduck already links miniz, and `src/zip_container.cpp` uses only
-  `mz_zip_reader_*`. A `ZipWriter` sibling to `ZipContainer` is small.
+  the vendored `miniz.hpp`. panduck already links miniz, and
+  `libpanduck/src/zip_container.cpp` uses only `mz_zip_reader_*`. A `ZipWriter` sibling to
+  `ZipContainer` is small, and would belong behind the seam beside it (issue #104, L2).
 - **pugixml can serialise** (`xml_document::save`), though panduck has **zero** `.save(` calls
   today — it has only ever parsed.
 - **The mapping is an inverse of one panduck already owns.** It reads docx structurally, not

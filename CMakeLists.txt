@@ -157,6 +157,11 @@ set(EXTENSION_SOURCES
     libpanduck/src/org.cpp
     libpanduck/src/rst.cpp
     libpanduck/src/textile.cpp
+    # The shared ZIP container -- not a format module; docx, odt and epub each
+    # read one (issue #104, L2). src/zip_container.cpp below is the DuckDB tail
+    # that remains: two throws of IOException/InvalidInputException, whose types
+    # are SQL-visible and so could not cross the seam.
+    libpanduck/src/zip_container.cpp
     src/pandoc_block_convert.cpp
     src/pandoc_inline_convert.cpp
     src/pandoc_reader.cpp
@@ -201,7 +206,13 @@ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 # ONE LIST PER BUILD IS THE COST OF HAVING TWO BUILDS. When a reader moves behind the
 # seam it must be added here AND in libpanduck/CMakeLists.txt -- the standalone build
 # will not tell you about this one, since it is the extension that is wrong.
-set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST TEXTILE)
+# ZIP is in this list and is NOT a format module. It is shared infrastructure
+# (ZipContainer, behind the seam since #104 L2) rather than a reader, but
+# HasModule() answers from the same PANDUCK_WITH_<NAME> definitions, and this
+# build DOES compile it -- so leaving it out would make HasModule("zip") answer
+# false about code that is linked in, which is the exact drift the comment above
+# records for textile.
+set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST TEXTILE ZIP)
 foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
   target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
   target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})

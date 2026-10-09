@@ -156,6 +156,7 @@ set(EXTENSION_SOURCES
     libpanduck/src/mediawiki.cpp
     libpanduck/src/org.cpp
     libpanduck/src/rst.cpp
+    libpanduck/src/rtf.cpp
     libpanduck/src/textile.cpp
     src/pandoc_block_convert.cpp
     src/pandoc_inline_convert.cpp
@@ -201,7 +202,7 @@ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 # ONE LIST PER BUILD IS THE COST OF HAVING TWO BUILDS. When a reader moves behind the
 # seam it must be added here AND in libpanduck/CMakeLists.txt -- the standalone build
 # will not tell you about this one, since it is the extension that is wrong.
-set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST TEXTILE)
+set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST RTF TEXTILE)
 foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
   target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
   target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})

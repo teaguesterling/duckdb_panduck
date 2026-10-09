@@ -1,5 +1,7 @@
 #pragma once
 
+#include "panduck/rtf.hpp"
+
 #include "duckdb.hpp"
 
 #include <string>
@@ -7,11 +9,16 @@
 
 namespace duckdb {
 
+class ExtensionLoader;
+
 //! RTF (Rich Text Format) reader.
 //!
 //! RTF is 7-bit ASCII with brace-delimited groups and backslash control words,
 //! so unlike DOCX/ODT/EPUB it needs neither miniz nor pugixml -- this reader is
-//! self-contained.
+//! self-contained. THAT is what let it move behind the seam alongside the Tier 1
+//! readers while its three Tier 2 siblings wait on a dependency decision: its
+//! only non-portable include was duckdb/common/file_system.hpp, and that belongs
+//! to the tail.
 //!
 //! Heading detection deliberately supports TWO mechanisms, because real writers
 //! disagree and handling only one silently loses every heading from the other:
@@ -26,35 +33,30 @@ namespace duckdb {
 //! exactly one mechanism each, so a regression in either path fails a test.
 namespace rtf {
 
-//! An inline run within a block. element_type uses the duck_block inline
-//! vocabulary
-//! ("text", "bold", "italic", "underline", "strikethrough") fixed by
-//! duck_block_utils.
-struct RtfInline {
-	std::string element_type;
-	std::string content;
-};
-
-//! One block-level element.
-struct RtfBlock {
-	//! duck_block kind. Empty means `block`. `value` is document METADATA.
-	std::string kind;
-	//! `value` only: field name for attributes['key'], in PANDOC's namespace.
-	std::string key;
-	std::string element_type;       //!< "heading", "paragraph", "list", "list_item"
-	std::string content;            //!< flattened text; empty when inlines are populated
-	int heading_level = 0;          //!< 1-6 for headings, 0 otherwise
-	int level = 1;                  //!< STRUCTURAL depth; lists nest, so not always 1
-	std::string list_type;          //!< `list` only: DuckBlockTypes::LIST_TYPE_*
-	std::string encoding;           //!< `table` only: 'json'
-	std::vector<RtfInline> inlines; //!< empty for a text-only run
-};
-
-//! Parse an RTF document into block elements.
-//! Never throws on malformed input -- unbalanced groups and unknown control
-//! words are tolerated, matching how readers must behave on documents in the
-//! wild.
-std::vector<RtfBlock> ParseRtfDocument(const std::string &data);
+// THE PARSE CORE AND THE ROW FLATTENING LIVE IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/rtf.hpp and libpanduck/src/rtf.cpp, which name no
+// DuckDB type. Only the table function, its bind, its scan and its registration
+// stay on this side of the seam -- including DuckDB's FileSystem, which
+// read_rtf_blocks reads a path through.
+//
+// The flatten did NOT exist as a function to move: it was fused into
+// RtfReaderBind. It is now ::panduck::rtf::ReadRtf, the only place an rtf row is
+// built.
+//
+// ParseRtfDocument was RENAMED to ParseRtfString here, the one rename in the
+// move, so rtf spells its intermediate entry point like every other module. The
+// old name had two references, both inside this reader's own two files.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Enumerate the moved header's surface with a pattern covering
+// enum/using/constexpr/class as well as struct and function -- the first textile
+// scanner shim missed `LineKind` exactly that way. rtf's surface is four names
+// and no enum. Alphabetised for clang-format.
+using ::panduck::rtf::ParseRtfString;
+using ::panduck::rtf::ReadRtf;
+using ::panduck::rtf::RtfBlock;
+using ::panduck::rtf::RtfInline;
 
 } // namespace rtf
 

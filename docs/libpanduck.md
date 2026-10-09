@@ -78,14 +78,20 @@ recorded as a ruling when it was a question Teague asked; that part stands. The
 first correction then added that "the vocabulary has no `Doc` or `Text`
 `element_type` to say it with", which was measured against *panduck's vendored
 copy* and is false of the spec: upstream added `TYPE_DOCUMENT` in
-duck_block_utils v3.4.0, and panduck is stamped at v3.3.0. The question was about
-a document root that already existed. See the open-question section below for the
+duck_block_utils v3.4.0, while panduck was stamped at v3.3.0 (since re-vendored to
+`e00db698` / v3.5.0). The question was about a document root that already existed. See the open-question section below for the
 measurement and for why a `SPEC_VERSION` comparison cannot detect that gap.
-The emission helper preserves the older behaviour exactly — `HasContent()`
-is "present AND non-empty", so absent and empty both still become SQL NULL.
-Changing any reader to emit a real empty string waits on
-[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60)
-and would then be a separate, per-reader change with its own test.
+The emission helper maps both absent and empty to SQL NULL, and **that is the
+spec's preferred behaviour rather than a compromise.** duck_block ruled on
+2026-09-01: *"Consumers MUST treat NULL and `''` as the same absence. Producers
+SHOULD emit NULL. The portable test is `coalesce(content, '') <> ''`."*
+
+So `HasContent()` — `!is_null && !value.empty()` — is precisely that portable
+test, with a name on it, in one place, instead of eleven readers each spelling a
+two-part condition. That is the whole justification for the type, and it is enough
+of one. An earlier version of this page said emitting a real empty string "waits
+on duck_block_utils#60"; that read as a plan, and it was the opposite of the rule
+— no reader should make that change.
 
 ### Modules are compile-time options
 
@@ -173,8 +179,10 @@ attempt at this correction got that backwards.
 
 **The `Doc` row is real, and panduck simply cannot see it.** That first attempt
 said the vocabulary provides no document or root type, measured against
-`src/include/duck_block_vocabulary.hpp`. That file is a vendored copy stamped at
-upstream `95a84e6` = duck_block_utils **v3.3.0**; upstream is on **v3.5.0**, and
+`src/include/duck_block_vocabulary.hpp`. That file *was* a vendored copy stamped at
+upstream `95a84e6` = duck_block_utils **v3.3.0** while upstream was on **v3.5.0** —
+it has since been re-vendored to `e00db698`, so this gap is closed; the account
+stays because the error it produced is worth keeping. And
 v3.4.0 (2026-09-16) added `TYPE_DOCUMENT = "document"` and legalised `level = 0`
 for that row alone. The question was about a document root that had existed
 upstream for three weeks.
@@ -188,11 +196,23 @@ consecutive dbu releases all declare `1.4`. Comparing version strings proves
 nothing here, by design; upstream's prescribed test is whether the vendored copy
 contains `TYPE_DOCUMENT`.
 
-The semantics question is open upstream, where the vocabulary is owned —
-[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60).
-Re-vendoring to v3.5.0 is separate work, and the whole fleet needs it: panduck,
-markdown, webbed and sitting_duck are all stamped at `95a84e6` and all lack
-`TYPE_DOCUMENT`, `ATTR_ID` and `ATTR_NAME`.
+**The semantics question was not open, and asking it upstream was the error.**
+duck_block_utils#60 asked what an empty `content` means; the spec had answered on
+2026-09-01, five weeks earlier, in the same repo. NULL and `''` are the same
+absence; producers should emit NULL. The "three producers, three answers"
+divergence reported there is not a divergence — every spelling involved is
+conformant, and panduck's readers are at the preferred one. #60 is closed.
+
+That diagnosis came from reading panduck's vendored header and panduck's reader
+behaviour and never opening the spec. Both measurements were real; the authority
+was not consulted.
+
+What survives is narrower and genuinely open, and is not about `content`: whether
+an empty document should have a spine, now that `TYPE_DOCUMENT` makes a level-0
+root expressible. Filed as
+[duck_block_utils#63](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/63).
+All six readers return zero rows for `''`, uniformly, which reads as one shared
+convention rather than six oversights.
 
 The tests assert the *observed* behaviour with a comment, which was the right
 call for a different reason than the one originally given: not "the ruling is not

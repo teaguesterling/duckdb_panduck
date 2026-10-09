@@ -25,10 +25,73 @@ namespace panduck {
 //! not available. It is deliberately minimal -- absent-or-present and nothing
 //! else -- because that is the whole distinction the vocabulary needs.
 //!
-//! AND WHY THE DISTINCTION MATTERS. An empty document is a Doc row plus a Text
-//! row whose content is the empty string; NULL means the field is absent. Those
-//! are different facts and the row type must be able to tell them apart.
-//! Teague's ruling, 2026-10-05.
+//! AND WHY THE DISTINCTION MATTERS -- CORRECTED 2026-10-08. This comment used to
+//! read "An empty document is a Doc row plus a Text row whose content is the
+//! empty string; NULL means the field is absent. ... Teague's ruling,
+//! 2026-10-05." Both halves of that were wrong, and the error spread from here
+//! to six test files and docs/libpanduck.md before it was caught.
+//!
+//! It was not a ruling. On 2026-10-05 Teague asked a QUESTION -- would an empty
+//! document be a Doc row, a Text row holding `""`, whereas null is null? -- and
+//! it was written down here as his answer to it. Nobody decided anything.
+//!
+//! CORRECTED AGAIN, SAME DAY, and this one is the more instructive error. An
+//! earlier version of this very paragraph said the vocabulary "cannot say that
+//! sentence" -- that `KIND_*` is only `block`/`inline`/`value` and none of the 25
+//! `TYPE_*` constants is a document or root, so "a Doc row" was never
+//! expressible. All of that is true of THIS FILE'S NEIGHBOUR and false of the
+//! spec.
+//!
+//! `src/include/duck_block_vocabulary.hpp` is a vendored copy stamped at upstream
+//! `95a84e6` = duck_block_utils **v3.3.0**, and upstream is on **v3.5.0**. In
+//! v3.4.0 (2026-09-16) upstream added
+//!
+//!     static constexpr const char *TYPE_DOCUMENT = "document";
+//!
+//! and legalised `level = 0` for exactly that row and nothing else. So the
+//! question asked on 2026-10-05 was WELL FOUNDED -- it was about a document root
+//! that had existed upstream for three weeks. The gap was panduck's, not the
+//! question's.
+//!
+//! WHY THE STALENESS WAS INVISIBLE, which is the part worth carrying: upstream
+//! declined to bump the version for that amendment, deliberately ("add it to 1.4,
+//! we don't need to churn versions any more"), and recorded the consequence in
+//! the header itself -- "two builds can both say SPEC_VERSION 1.4 and differ on
+//! whether they accept a level-0 root, and a consumer cannot tell them apart from
+//! the version alone." Three dbu releases all say 1.4. Reading `SPEC_VERSION`
+//! here and matching it against upstream's therefore proves nothing, and that is
+//! documented, not accidental. Upstream also prescribes the remedy: "a consumer
+//! that needs to know tests for TYPE_DOCUMENT's presence in its vendored copy."
+//!
+//! The lesson for anyone measuring this repo against the spec: a vendored copy is
+//! not the spec, and a version string that two different vocabularies share is
+//! not a comparator. Re-vendoring is tracked separately from the semantics
+//! question.
+//!
+//! WHAT IS ACTUALLY TRUE, measured against build/release on 2026-10-08. Where
+//! `content` is JSON the distinction already survives, because JSON forces the
+//! choice: org `| a |   | c |` yields `{"headers":[],"rows":[["a","","c"]]}` --
+//! the empty cell is `""`. Where `content` is text it collapses, because every
+//! DuckDB tail emits
+//! `HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR)` and
+//! `std::string` has no null state; the information dies at the emission
+//! boundary. That was an accident of the type, not a decision -- and producers
+//! disagree today because of it: an empty org code block gives NULL, a
+//! declared-but-valueless `#+TITLE:` gives NULL, latex `\section{}` drops the
+//! row entirely, and the pandoc reader gives `''`.
+//!
+//! IT IS OPEN, and duck_block owns it as vocabulary owner:
+//! https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
+//! The candidate rule under discussion there is about APPLICABILITY, not
+//! emptiness: NULL would mean `content` does not apply to this `element_type`
+//! (a `list`, whose children are separate rows), `''` that it applies and is
+//! empty. Teague has indicated he favours that direction; it is not ratified.
+//! The empty-document case needs the document-level concept the vocabulary does
+//! not have, which is question 4 on that issue.
+//!
+//! None of which puts `Nullable<T>` in question. Whichever way #60 lands, the
+//! row type has to be ABLE to tell absent from empty, and it is the only layer
+//! that currently can. The type stays; only the justification above it was wrong.
 template <class T>
 struct Nullable {
 	T value;

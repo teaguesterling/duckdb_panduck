@@ -91,14 +91,25 @@ void RunOrgTests() {
 		CHECK_EQ(Attr(*meta, V::ATTR_KEY), std::string("title"));
 	}
 
-	// 7. OBSERVED behaviour on empty input, not the project's ruling.
+	// 7. OBSERVED behaviour on empty input: ReadOrg returns NO rows, and that is
+	//    all that is asserted.
 	//
-	//    Teague's ruling (libpanduck/include/panduck/block.hpp) is that an empty
-	//    document is a Doc row plus a Text row whose content is the empty
-	//    string. ReadOrg returns NO rows. That divergence is recorded here as
-	//    what the reader does -- changing the reader to match the ruling is a
-	//    separate, per-reader change with its own test, and asserting the ruling
-	//    here would just be a failing test with no owner.
+	//    THIS NOTE USED TO SAY the observation "diverges from Teague's ruling"
+	//    that an empty document is a Doc row plus a Text row whose content is
+	//    the empty string. There is no such ruling -- that was a question Teague
+	//    asked on 2026-10-05, recorded in block.hpp as his answer -- and the
+	//    vocabulary has no document or text `element_type` to express it with
+	//    anyway. So zero rows is not a divergence from anything settled.
+	//
+	//    The real question (does empty-vs-absent `content` mean anything, and
+	//    should a document-level row exist at all) is open upstream, where the
+	//    vocabulary is owned; the empty-document half is question 4 there:
+	//    https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
+	//    libpanduck/include/panduck/block.hpp carries the measured detail so
+	//    these test notes can stay short.
+	//
+	//    Asserting an unratified rule here would still be a failing test with no
+	//    owner, so the assertion below is unchanged.
 	const std::vector<::panduck::Block> empty = ::panduck::org::ReadOrg("");
 	CHECK_EQ(empty.size(), static_cast<size_t>(0));
 

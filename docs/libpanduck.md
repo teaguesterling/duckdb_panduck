@@ -69,13 +69,23 @@ in the vocabulary's column order. Before milestone L1 there were **eleven**
 private copies of that struct (`IpynbRow`, `OrgRow`, `RstRow`, `MwRow`,
 `BlockRow`, …), each inside a reader's DuckDB half, none reachable from outside.
 
-`Block::content` is a `NullableString`, because an empty document and an absent
-field are different facts: an empty document is a `Doc` row plus a `Text` row
-whose content is the empty string, while NULL means absent. The emission helper
-currently preserves the older behaviour exactly — `HasContent()` is "present
-AND non-empty", so absent and empty both still become SQL NULL. Changing any
-reader to emit a real empty string is a separate, per-reader change with its own
-test.
+`Block::content` is a `NullableString` because the row type has to be *able* to
+tell an absent field from a present-but-empty one, whichever way the vocabulary
+ends up using that. This paragraph used to justify it differently — "an empty
+document is a `Doc` row plus a `Text` row whose content is the empty string" —
+and that was wrong — though not in the way a first correction claimed. It was
+recorded as a ruling when it was a question Teague asked; that part stands. The
+first correction then added that "the vocabulary has no `Doc` or `Text`
+`element_type` to say it with", which was measured against *panduck's vendored
+copy* and is false of the spec: upstream added `TYPE_DOCUMENT` in
+duck_block_utils v3.4.0, and panduck is stamped at v3.3.0. The question was about
+a document root that already existed. See the open-question section below for the
+measurement and for why a `SPEC_VERSION` comparison cannot detect that gap.
+The emission helper preserves the older behaviour exactly — `HasContent()`
+is "present AND non-empty", so absent and empty both still become SQL NULL.
+Changing any reader to emit a real empty string waits on
+[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60)
+and would then be a separate, per-reader change with its own test.
 
 ### Modules are compile-time options
 
@@ -151,19 +161,48 @@ the tree outside the repo, with its own build directory, had
 trap, in the exact row class it favours. Two independent checks fired, naming the
 offending row and its contents, and the process exited non-zero.
 
-### Known divergence: empty input
+### Open question: empty input
 
-All six readers return **zero rows** for `""`, and for `"\n\n"`. The recorded
-ruling is that an empty document is a `Doc` row plus a `Text` row whose content
-is the empty string, with NULL reserved for absent. The tests assert the
-*observed* behaviour with a comment, rather than asserting the ruling and
-failing — changing a reader is a separate per-reader change with its own test.
+All six readers return **zero rows** for `""`, and for `"\n\n"`. This subsection
+used to call that a *known divergence* from a recorded ruling — that an empty
+document is a `Doc` row plus a `Text` row whose content is the empty string, with
+NULL reserved for absent. There was no ruling: Teague asked that as a question on
+2026-10-05 and it was written into `block.hpp` as his answer. So there is nothing
+here to diverge *from* — but the question itself was well founded, and a first
+attempt at this correction got that backwards.
 
-Two things make this one decision rather than six bugs: it is uniform
-six-for-six, so the readers share a convention that predates the ruling; and it
+**The `Doc` row is real, and panduck simply cannot see it.** That first attempt
+said the vocabulary provides no document or root type, measured against
+`src/include/duck_block_vocabulary.hpp`. That file is a vendored copy stamped at
+upstream `95a84e6` = duck_block_utils **v3.3.0**; upstream is on **v3.5.0**, and
+v3.4.0 (2026-09-16) added `TYPE_DOCUMENT = "document"` and legalised `level = 0`
+for that row alone. The question was about a document root that had existed
+upstream for three weeks.
+
+Worse, the staleness is undetectable by the obvious check. Upstream declined to
+bump the version for that amendment on purpose — *"add it to 1.4, we don't need to
+churn versions any more"* — and wrote the consequence into the header: *"two
+builds can both say SPEC_VERSION 1.4 and differ on whether they accept a level-0
+root, and a consumer cannot tell them apart from the version alone."* Three
+consecutive dbu releases all declare `1.4`. Comparing version strings proves
+nothing here, by design; upstream's prescribed test is whether the vendored copy
+contains `TYPE_DOCUMENT`.
+
+The semantics question is open upstream, where the vocabulary is owned —
+[duck_block_utils#60](https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60).
+Re-vendoring to v3.5.0 is separate work, and the whole fleet needs it: panduck,
+markdown, webbed and sitting_duck are all stamped at `95a84e6` and all lack
+`TYPE_DOCUMENT`, `ATTR_ID` and `ATTR_NAME`.
+
+The tests assert the *observed* behaviour with a comment, which was the right
+call for a different reason than the one originally given: not "the ruling is not
+worth a failing test" but "there is no ruling to assert".
+
+Two things still make this one convention rather than six bugs: it is uniform
+six-for-six, so the readers share a behaviour that predates the question; and it
 is **user-visible, not an artifact of the new entry points** — the DuckDB tails
 pass `ReadX`'s vector straight through, so `read_org_blocks_string('')` returns
-no rows today.
+no rows today (measured).
 
 ## Moving a reader behind the seam
 

@@ -42,8 +42,10 @@ namespace panduck {
 //! expressible. All of that is true of THIS FILE'S NEIGHBOUR and false of the
 //! spec.
 //!
-//! `src/include/duck_block_vocabulary.hpp` is a vendored copy stamped at upstream
-//! `95a84e6` = duck_block_utils **v3.3.0**, and upstream is on **v3.5.0**. In
+//! `src/include/duck_block_vocabulary.hpp` WAS a vendored copy stamped at upstream
+//! `95a84e6` = duck_block_utils **v3.3.0**, while upstream was on **v3.5.0** -- it
+//! has since been re-vendored to `e00db698`, so the gap described here is closed
+//! and the reasoning is kept only because the mistake it caused is instructive. In
 //! v3.4.0 (2026-09-16) upstream added
 //!
 //!     static constexpr const char *TYPE_DOCUMENT = "document";
@@ -68,30 +70,51 @@ namespace panduck {
 //! not a comparator. Re-vendoring is tracked separately from the semantics
 //! question.
 //!
-//! WHAT IS ACTUALLY TRUE, measured against build/release on 2026-10-08. Where
-//! `content` is JSON the distinction already survives, because JSON forces the
-//! choice: org `| a |   | c |` yields `{"headers":[],"rows":[["a","","c"]]}` --
-//! the empty cell is `""`. Where `content` is text it collapses, because every
-//! DuckDB tail emits
-//! `HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR)` and
-//! `std::string` has no null state; the information dies at the emission
-//! boundary. That was an accident of the type, not a decision -- and producers
-//! disagree today because of it: an empty org code block gives NULL, a
-//! declared-but-valueless `#+TITLE:` gives NULL, latex `\section{}` drops the
-//! row entirely, and the pandoc reader gives `''`.
+//! AND THE ANSWER WAS ALREADY WRITTEN DOWN -- CORRECTED AGAIN 2026-10-09, the
+//! fourth pass over this one comment and the one that should have been first.
 //!
-//! IT IS OPEN, and duck_block owns it as vocabulary owner:
-//! https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
-//! The candidate rule under discussion there is about APPLICABILITY, not
-//! emptiness: NULL would mean `content` does not apply to this `element_type`
-//! (a `list`, whose children are separate rows), `''` that it applies and is
-//! empty. Teague has indicated he favours that direction; it is not ratified.
-//! The empty-document case needs the document-level concept the vocabulary does
-//! not have, which is question 4 on that issue.
+//! An earlier version of this paragraph said the collapse of `""` to SQL NULL was
+//! "an accident of the type, not a decision", that producers therefore "disagree",
+//! and that duck_block_utils#60 had the question open with an applicability rule
+//! under discussion. All of that is wrong. duck_block ruled on it in
+//! `docs/duck_blocks_spec.md` on 2026-09-01, commit 9c22810, five weeks before
+//! anyone here asked:
 //!
-//! None of which puts `Nullable<T>` in question. Whichever way #60 lands, the
-//! row type has to be ABLE to tell absent from empty, and it is the only layer
-//! that currently can. The type stays; only the justification above it was wrong.
+//!     Consumers MUST treat NULL and `''` as the same absence. Producers SHOULD
+//!     emit NULL. The portable test is `coalesce(content, '') <> ''`.
+//!
+//! And it had already weighed the distinction this file was about to argue for,
+//! declining it in terms that name the cost: "an INTENTIONALLY empty value cannot
+//! be distinguished from a container carrying no content ... If a body case ever
+//! needs the distinction, the fix is a real one and not a re-spelling."
+//!
+//! SO THERE IS NOTHING TO FIX IN THE READERS. What every DuckDB tail does --
+//!
+//!     HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR)
+//!
+//! -- is the PREFERRED spelling, not a lossy artifact. The pandoc reader emitting
+//! `''` is conformant but not preferred, which makes it a style item rather than
+//! the divergence it was reported as. #60 is closed as already-answered.
+//!
+//! WHICH LEAVES `Nullable<T>` NEEDING AN HONEST JUSTIFICATION, since the one above
+//! it ("the row type has to be ABLE to tell absent from empty, whichever way #60
+//! lands") assumed a pending wire-format decision that does not exist.
+//!
+//! The real one is narrower and better: `HasContent()` IS the spec's portable
+//! test. `!is_null && !value.empty()` is exactly `coalesce(content, '') <> ''`,
+//! with a name on it, in one place, instead of eleven readers each spelling a
+//! two-part condition and one of them eventually spelling it differently. That is
+//! worth a type on its own, and it is all this type claims.
+//!
+//! What it does NOT claim: that the distinction it can carry internally will ever
+//! reach SQL. By the rule above it should not, and if a body case ever needs it
+//! the spec says that takes a real mechanism rather than re-reading these two
+//! spellings.
+//!
+//! The one genuinely open question from all of this is narrower still and is not
+//! about `content` at all -- whether an empty document should have a spine, now
+//! that TYPE_DOCUMENT makes a level-0 root expressible:
+//! https://github.com/teaguesterling/duckdb_duck_block_utils/issues/63
 template <class T>
 struct Nullable {
 	T value;
@@ -144,11 +167,16 @@ struct Block {
 //
 //     row.content.empty() ? Value(LogicalType::VARCHAR) : Value(row.content)
 //
-// i.e. an empty string becomes SQL NULL. Introducing Nullable does NOT change
+// i.e. an empty string becomes SQL NULL. Introducing Nullable did NOT change
 // that: the emission helper preserves it exactly, treating absent and empty
-// alike, so this commit is a refactor and nothing else. Changing a reader to
-// emit a real empty string is a separate, per-reader change with its own test --
-// otherwise a semantic change rides along inside a refactor and no failure is
-// attributable to either.
+// alike, so that commit was a refactor and nothing else.
+//
+// AND IT SHOULD STAY THAT WAY. An earlier version of this note said changing a
+// reader to "emit a real empty string" would be a separate per-reader change with
+// its own test, which read as a plan. It is not one: the spec's rule is that
+// producers SHOULD emit NULL, so this behaviour is already the preferred one and
+// the change that note contemplated would move AWAY from it. If a case ever
+// genuinely needs absent and empty told apart, the spec is explicit that the fix
+// is a real mechanism and not a re-spelling of these two.
 
 } // namespace panduck

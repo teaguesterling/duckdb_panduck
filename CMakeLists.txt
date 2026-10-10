@@ -186,6 +186,27 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 target_link_libraries(${EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
 
+# THIS IS WHY THE SHIPPED BINARY DOES NOT CHANGE when libpanduck gained a yyjson
+# of its own (issue #123). libpanduck/src/ipynb.cpp includes
+# panduck/yyjson_compat.hpp, which needs to know WHICH yyjson this build has:
+#
+#   defined here           the vendored copy linked just above, in
+#                          `namespace duckdb_yyjson`
+#   NOT defined (standalone) a global-scope `<yyjson.h>` from vcpkg/system,
+#                          which libpanduck/CMakeLists.txt links as
+#                          yyjson::yyjson
+#
+# It is defined by the EXTENSION build rather than defaulted on in the header so
+# that this is the only build opting into DuckDB's copy: the standalone gate gets
+# the plain C library, and NO artifact ever links two yyjson copies at once.
+#
+# It belongs on these targets and not in libpanduck/CMakeLists.txt, because it
+# describes THIS composition -- the one that compiles libpanduck/src/*.cpp into
+# the extension with duckdb/third_party/yyjson/include on the include path
+# (see the include_directories call above).
+target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_YYJSON_VENDORED_DUCKDB)
+target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_YYJSON_VENDORED_DUCKDB)
+
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 

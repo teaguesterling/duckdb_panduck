@@ -1,25 +1,25 @@
 #include "panduck/ipynb.hpp"
 
 #include "panduck/vocabulary.hpp"
-#include "yyjson.hpp"
+#include "panduck/yyjson_compat.hpp"
 
 #include <map>
 #include <string>
 #include <vector>
 
-// THE SEAM'S SECOND CONCESSION, and the sharpest open question in L1.
+// THE SEAM'S SECOND CONCESSION WAS THAT THIS FILE NAMED DuckDB'S yyjson BUILD.
 //
-// yyjson is a C library, but the copy this build uses is DuckDB's vendored one,
-// which wraps it in `namespace duckdb_yyjson`. So the core depends not merely on
-// yyjson but on DuckDB's *namespaced build* of it -- a standalone libpanduck
-// linking a system yyjson would find these symbols at global scope instead and
-// this directive would not compile.
+// It included `"yyjson.hpp"` -- DuckDB's vendored, namespaced copy -- and then
+// did `using namespace duckdb_yyjson;` to make the unqualified `yyjson_*` calls
+// below resolve. A standalone libpanduck has no such header, so this was the one
+// module the standalone build could not compile, and that build is the seam's
+// only compile-level enforcement (issue #123).
 //
-// Left as-is rather than papered over with a macro: the real decision is whether
-// libpanduck carries its own yyjson or takes one from the host, and that belongs
-// to the L1 contract (issue #104), not to a reader move. Recorded in
-// libpanduck/CMakeLists.txt as PANDUCK_YYJSON_INCLUDE_DIR.
-using namespace duckdb_yyjson; // NOLINT -- the spelling the json extension uses
+// Both halves now live in panduck/yyjson_compat.hpp, which picks DuckDB's
+// namespaced copy or a global-scope standalone one from
+// PANDUCK_YYJSON_VENDORED_DUCKDB. READ THAT HEADER BEFORE EDITING ANY yyjson
+// CALL BELOW: every call site here is deliberately unqualified and identical in
+// both builds, which is the entire point of the compat include.
 
 // The parse core, moved out of src/ipynb_reader.cpp (issue #104, milestone L2).
 // Behaviour is unchanged: the only edits are the namespace (duckdb::ipynb ->

@@ -92,15 +92,24 @@ def main() -> int:
 
     print(f"libpanduck seam holds ({checked} file(s) checked, no DuckDB API named)")
     # SAY WHAT THIS DOES NOT COVER, so "seam holds" is not read as more than it
-    # is. Two dependencies on DuckDB's *build* survive behind the seam, both
+    # is. ONE dependency on DuckDB's *build* still survives behind the seam,
     # tracked in issue #104's L1 contract rather than silently tolerated:
     #   - the duck_block vocabulary declares its constants in `namespace duckdb`
     #     (aliased once in panduck/vocabulary.hpp)
-    #   - yyjson arrives as DuckDB's vendored `namespace duckdb_yyjson` build
-    # Neither is a DuckDB API dependency -- nothing here would break on a
-    # DuckDB API change, which is the property the seam exists to buy -- but a
-    # standalone build has to answer both.
-    print("  known gaps (issue #104): duck_block vocabulary namespace, vendored yyjson")
+    # It is not a DuckDB API dependency -- nothing here would break on a DuckDB
+    # API change, which is the property the seam exists to buy -- but a
+    # standalone build has to answer it.
+    #
+    # yyjson WAS the second gap, and is recorded here rather than deleted so the
+    # next reader does not rediscover it: libpanduck/src/ipynb.cpp included
+    # DuckDB's vendored `namespace duckdb_yyjson` header directly, so the
+    # standalone build -- the seam's only compile-level enforcement -- could not
+    # compile that one module. Answered in #123 by
+    # libpanduck/include/panduck/yyjson_compat.hpp, which selects the vendored
+    # copy or a standalone global-scope `<yyjson.h>` from
+    # PANDUCK_YYJSON_VENDORED_DUCKDB; the standalone build links vcpkg's yyjson
+    # and compiles ipynb.
+    print("  known gaps (issue #104): duck_block vocabulary namespace")
     return 0
 
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "panduck/byte_source.hpp"
+
 #include <memory>
 #include <string>
 
@@ -36,7 +38,26 @@ namespace panduck {
 class ZipContainer {
 public:
 	//! Opens `path`. Never throws: ask `IsOpen()` whether it worked.
+	//!
+	//! Implemented over an OWNED `FileSource` since issue #120, so there is one
+	//! archive code path rather than two. The behaviour is unchanged by
+	//! construction -- a missing or unreadable file leaves `IsOpen()` false,
+	//! exactly as `mz_zip_reader_init_file` did -- which is what lets every
+	//! existing call site stay as it is.
 	explicit ZipContainer(const std::string &path);
+
+	//! Opens the archive in `source`, which may be bytes in memory, a handle
+	//! from a host filesystem, or anything else positional (issue #120). Never
+	//! throws: ask `IsOpen()`.
+	//!
+	//! LIFETIME: the source is held BY REFERENCE and must outlive this
+	//! container. miniz reads the central directory at open and then reads each
+	//! member on demand -- the container is deliberately kept open across reads
+	//! (see above), so the source is still being read long after the
+	//! constructor returns. For `MemorySource` that means the underlying buffer
+	//! must outlive BOTH the source and this container.
+	explicit ZipContainer(ByteSource &source);
+
 	~ZipContainer();
 
 	ZipContainer(const ZipContainer &) = delete;
@@ -48,7 +69,9 @@ public:
 	bool IsOpen() const;
 
 	//! The path as opened, so a caller building an error message does not have
-	//! to keep its own copy.
+	//! to keep its own copy. For a container opened from a `ByteSource` this is
+	//! that source's `Name()`, which may be a placeholder like `<memory>`
+	//! rather than anything openable -- it has only ever been message material.
 	const std::string &Path() const;
 
 	//! Reads one member into `out`. Returns false when the member is absent --
@@ -57,6 +80,10 @@ public:
 	bool Read(const char *member, std::string &out);
 
 private:
+	//! Shared by both constructors: installs the miniz read callback over
+	//! `source` and reads the central directory. Never throws; sets `IsOpen()`.
+	void Open(ByteSource &source);
+
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 	std::string path;

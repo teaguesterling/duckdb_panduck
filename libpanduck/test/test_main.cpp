@@ -33,7 +33,13 @@ struct ModuleTally {
 
 typedef void (*TestEntry)();
 
-ModuleTally gTallies[8];
+// SIZED WITH HEADROOM, and it matters: this is a plain array with no bound
+// check, and RunModule increments past the end if the entry count ever exceeds
+// it. The count was 7 (engine plus six format modules) when the array was 8;
+// byte_source makes 8, which would have filled it exactly. 16 leaves room for
+// the docx, epub, odt and rtf test files that are still missing without the next
+// person having to notice this line.
+ModuleTally gTallies[16];
 int gTallyCount = 0;
 
 void RunModule(const char *name, TestEntry entry) {
@@ -52,6 +58,11 @@ void RunModule(const char *name, TestEntry entry) {
 int main() {
 	// First, and unguarded: the engine's identity is present in every configure.
 	RunModule("engine", &::panduck_test::RunEngineTests);
+	// Second, and NOT a format module: ByteSource plus the archive reader over
+	// it (issue #120). Gated on the CONTAINER being compiled, not on a reader.
+#ifdef PANDUCK_HAVE_ZIP_CONTAINER
+	RunModule("byte_source", &::panduck_test::RunByteSourceTests);
+#endif
 #ifdef PANDUCK_WITH_IPYNB
 	RunModule("ipynb", &::panduck_test::RunIpynbTests);
 #endif

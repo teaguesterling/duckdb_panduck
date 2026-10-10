@@ -106,36 +106,76 @@ than panduck exposes" coherent rather than contradictory.
 
 | module | reader before | DuckDB tail now | option | standalone default |
 |---|---|---|---|---|
-| ipynb | 453 | **128** | `PANDUCK_WITH_IPYNB` | off — see the yyjson gap below |
-| textile | 708 | **118** | `PANDUCK_WITH_TEXTILE` | on |
-| org | 672 | **123** | `PANDUCK_WITH_ORG` | on |
-| rst | 996 | **125** | `PANDUCK_WITH_RST` | on |
-| mediawiki | 911 | **124** | `PANDUCK_WITH_MEDIAWIKI` | on |
-| latex | 1,780 | **151** | `PANDUCK_WITH_LATEX` | on |
+| textile | 708 | **113** | `PANDUCK_WITH_TEXTILE` | on |
+| org | 672 | **118** | `PANDUCK_WITH_ORG` | on |
+| mediawiki | 911 | **119** | `PANDUCK_WITH_MEDIAWIKI` | on |
+| rst | 996 | **120** | `PANDUCK_WITH_RST` | on |
+| ipynb | 453 | **123** | `PANDUCK_WITH_IPYNB` | on, when a yyjson is found |
+| rtf | 896 | **124** | `PANDUCK_WITH_RTF` | on |
+| odt | 874 | **137** | `PANDUCK_WITH_ODT` | on, when pugixml and miniz are found |
+| docx | 900 | **140** | `PANDUCK_WITH_DOCX` | on, when pugixml and miniz are found |
+| latex | 1,780 | **144** | `PANDUCK_WITH_LATEX` | on |
+| epub | 1,115 | **145** | `PANDUCK_WITH_EPUB` | on, when pugixml and miniz are found |
+
+**TEN modules, and this table listed six until #132.** rtf, docx, odt and epub
+all moved behind the seam on 2026-10-09 (b6fccc8, fa7ed75, 2462715, 9cec06b) and
+the section went on naming them as *not yet moved* two paragraphs under a table
+they were absent from. Every count here is `wc -l src/<fmt>_reader.cpp` at HEAD,
+and every *before* is the same command at the parent of that module's move
+commit — one method, so the two columns are comparable.
+
+RE-MEASURE RATHER THAN CITE THIS TABLE. The tails it used to carry (ipynb 128,
+textile 118, org 123, rst 125, mediawiki 124, latex 151) were each five to seven
+lines over the count today. Five of the six are exactly the AT-MOVE tail — the
+`wc -l` at the move commit itself, never re-measured after — and ipynb's 128
+matches neither its at-move tail (188) nor anything since, so it was wrong when
+it was written. The stalest of the six, `latex 151`, was later quoted into a
+brief as a current figure before re-measurement caught it. A stale doc does not
+only mislead a reader; it feeds wrong numbers into later work.
 
 Four companion scanners moved whole (textile 290, org 257, rst 232, mediawiki
-378 lines), along with latex's tokenizer and macro table and the shared helpers
-`block_json.hpp` and `slugify.hpp`.
+378 lines — re-measured and unchanged), along with latex's tokenizer (430) and
+macro table (234) and the shared helpers `panduck/block_json.hpp` and
+`panduck/slugify.hpp`. Those two are spelled with their `panduck/` prefix
+because it is now the only spelling: the `src/include/` re-export shims for both
+are deleted — block_json in #128, slugify in #132.
 
-**That five of six tails landed between 118 and 128 lines is the useful number
-here.** Readers written at different times, by different hands, over different
-formats each reduce to the same ~120 lines of DuckDB: a bind pair, a scan, a
-column list and a registration. The seam is a real structural boundary that was
-already there, not a line fitted per reader.
+**That ten tails land in a 32-line span, 113 to 145, is the useful number
+here** — ten readers written at different times, by different hands, over ten
+formats, out of originals spanning 453 to 1,780 lines. Each reduces to the same
+DuckDB: a bind, a scan, a column list and a registration. The seam is a real
+structural boundary that was already there, not a line fitted per reader.
 
-latex's 151 is the exception and it prices one thing: latex reads through
-DuckDB's `FileSystem` rather than `std::ifstream`, and that bind stays in the
-tail. latex is also the only module that is **three files behind one option** —
-the reader cannot work without its tokenizer or its macro table — and the only
-one whose companion file had to be *split* rather than moved, because
+Strip blanks and comments and the band tightens, and it splits exactly once, on
+one property of the FORMAT:
+
+| what the tail registers | code lines | modules |
+|---|---|---|
+| a file **and** a string function | 93–98 | textile 93, org 94, latex 94, rst 95, mediawiki 96, ipynb 98 |
+| a file function only | 67–72 | rtf 67, odt 72, docx 72, epub 72 |
+
+Six lines of spread inside each group. What separates the groups is the second
+bind and its registration, and which side a module falls on is not a style
+choice: a ZIP container and RTF have no text to hand a `_string` overload.
+Nothing else separates them — and in particular latex does not. Its 94 code
+lines are org's 94. What the raw column mostly varies by is COMMENT, from 20
+lines on textile to 73 on epub, with latex's 50 putting its raw 144 near the top
+of a table it sits in the middle of.
+
+latex is still the module that is **three files behind one option** — the reader
+cannot work without its tokenizer or its macro table — and the only one whose
+companion file had to be *split* rather than moved, because
 `panduck_latex_tokens()` is a table function living at the bottom of an otherwise
-DuckDB-free tokenizer.
+DuckDB-free tokenizer; its DuckDB half is `src/latex_tokenizer.cpp`, 79 lines
+beside the reader's 144. What latex is NO LONGER is the one tail that reads
+through DuckDB's `FileSystem` rather than a `std::ifstream`: #120 and #122 put
+all ten readers on `readers::ReadFileThroughVFS` or
+`readers::OpenFileThroughVFS`, so that is the shared shape now rather than
+latex's surcharge.
 
 Not yet moved:
 
-- **docx, epub, odt, rtf** — their flatten must first be extracted from their
-  `Bind` functions.
-- **pandoc** (177, plus a 3,522-line DuckDB-saturated converter) — needs #107
+- **pandoc** (171, plus a 3,522-line DuckDB-saturated converter) — needs #107
   and the compatibility-mode decision first.
 
 ## The standalone test suite

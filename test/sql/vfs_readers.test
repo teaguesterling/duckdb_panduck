@@ -1,0 +1,84 @@
+# name: test/sql/vfs_readers.test
+# description: every reader reads through DuckDB's FileSystem, not a private std::ifstream
+# group: [sql]
+
+#
+# WHAT THIS COVERS, AND WHY IT IS THE ONLY TEST IN THE SUITE THAT TOUCHES THE NETWORK.
+#
+# Until issue #120, nine of eleven readers obtained their bytes with
+# `std::ifstream` or by handing a C path to miniz, and never consulted DuckDB's
+# filesystem. latex and rtf called `FileSystem::GetFileSystem(context)` and did.
+# The consequence was user-visible and unpredictable from the SQL:
+#
+#   read_latex_blocks  ('https://.../edge_cases.tex')      -> 9 rows
+#   read_textile_blocks('https://.../constructs.textile')  -> IO Error: cannot open
+#
+# Same session, same kind of path, opposite outcome, because one reader honoured
+# `s3://`/httpfs/encrypted/in-memory filesystems and the other could not see them.
+#
+# THE DEFECT IS "DOES NOT GO THROUGH THE VFS", so the only way to tell the two code
+# paths apart is a path DuckDB can resolve and the C++ standard library cannot.
+# A local file cannot distinguish them: ifstream reads it just as well. That is why
+# this file needs the network, and why nothing else here does.
+#
+# COUNTS, NOT JUST SUCCESS. Asserting a row count rather than "no error" matters
+# because a read that silently returned nothing would otherwise pass. The URLs are
+# pinned to an IMMUTABLE COMMIT so neither an upstream fixture edit nor a local one
+# can drift the expected numbers -- this file tests reader plumbing, not fixture
+# content, and pinning keeps those two concerns from leaking into each other.
+#
+# `require httpfs` depends on `duckdb_extension_load(httpfs)` in
+# extension_config.cmake. Without that line this entire file is SILENTLY SKIPPED and
+# reports the same green as a passing run -- duckdb_markdown hit exactly that with
+# `require json` (its issue #36). scripts/check_test_skips.py exists to make that
+# visible and runs in CI.
+
+require panduck
+
+require httpfs
+
+# Readers that could NOT read a URL before #120 -- six of them, one per mechanism
+# that bypassed the VFS. Each count equals the same fixture read locally.
+
+query I
+SELECT count(*) FROM read_org_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/handwritten.org');
+----
+20
+
+query I
+SELECT count(*) FROM read_ipynb_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/code_adjacent.ipynb');
+----
+8
+
+query I
+SELECT count(*) FROM read_textile_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/constructs.textile');
+----
+45
+
+query I
+SELECT count(*) FROM read_rst_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/constructs.rst');
+----
+42
+
+# THE CONTROL. latex already went through the VFS before #120, so it must be
+# unchanged. If this row ever fails while the four above pass, the helper broke the
+# two readers that were already correct -- which is the one regression this change
+# could plausibly introduce.
+
+query I
+SELECT count(*) FROM read_latex_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/edge_cases.tex');
+----
+9
+
+# A MISSING REMOTE PATH MUST REPORT "file not found", not "cannot open".
+#
+# That wording is the tell that the read went through DuckDB's filesystem: the
+# pre-#120 ifstream path collapsed every failure into "cannot open", including a
+# path that exists but will not open. Now a missing path says "file not found" and
+# an unopenable one surfaces DuckDB's own error, which is strictly more informative.
+# rtf asserts the same wording at test/sql/rtf_reader.test:164.
+
+statement error
+SELECT count(*) FROM read_org_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/9418bc3698a5b5618ef2447b8e5da86bad8158ca/test/fixtures/no_such_fixture.org');
+----
+file not found

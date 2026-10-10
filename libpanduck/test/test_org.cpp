@@ -94,22 +94,39 @@ void RunOrgTests() {
 	// 7. OBSERVED behaviour on empty input: ReadOrg returns NO rows, and that is
 	//    all that is asserted.
 	//
-	//    THIS NOTE USED TO SAY the observation "diverges from Teague's ruling"
-	//    that an empty document is a Doc row plus a Text row whose content is
-	//    the empty string. There is no such ruling -- that was a question Teague
-	//    asked on 2026-10-05, recorded in block.hpp as his answer -- and the
-	//    vocabulary has no document or text `element_type` to express it with
-	//    anyway. So zero rows is not a divergence from anything settled.
+	//    THIS NOTE HAS BEEN WRONG TWICE, which is why it is long.
 	//
-	//    The real question (does empty-vs-absent `content` mean anything, and
-	//    should a document-level row exist at all) is open upstream, where the
-	//    vocabulary is owned; the empty-document half is question 4 there:
-	//    https://github.com/teaguesterling/duckdb_duck_block_utils/issues/60
-	//    libpanduck/include/panduck/block.hpp carries the measured detail so
-	//    these test notes can stay short.
+	//    It first said the observation "diverges from Teague's ruling" that an
+	//    empty document is a Doc row plus a Text row holding the empty string.
+	//    There is no such ruling: that was a QUESTION Teague asked on
+	//    2026-10-05, recorded in block.hpp as though it were his answer.
 	//
-	//    Asserting an unratified rule here would still be a failing test with no
-	//    owner, so the assertion below is unchanged.
+	//    The correction then claimed the vocabulary "has no document or text
+	//    `element_type` to express it with anyway". That is false. It was
+	//    measured against panduck's VENDORED copy, which was two releases
+	//    stale; upstream added TYPE_DOCUMENT in duck_block_utils v3.4.0 on
+	//    2026-09-16, and this repo now vendors v3.5.0, so the constant is
+	//    present in the very header beside this test.
+	//
+	//    WHAT IS ACTUALLY SETTLED. The `content` half is not open and never
+	//    was: duck_block ruled on 2026-09-01, five weeks before any of this,
+	//    that consumers MUST treat NULL and '' as the same absence and
+	//    producers SHOULD emit NULL -- `coalesce(content, '') <> ''` being the
+	//    portable test. So nothing about empty content awaits a decision, and
+	//    the readers are already at the preferred spelling.
+	//
+	//    WHAT IS STILL OPEN is narrower and is not about `content`: whether an
+	//    empty document should have a spine at all, which only became
+	//    answerable once TYPE_DOCUMENT made a level-0 root expressible. All six
+	//    readers return zero rows uniformly, which reads as one shared
+	//    convention rather than six oversights:
+	//    https://github.com/teaguesterling/duckdb_duck_block_utils/issues/63
+	//
+	//    So the assertion below stays as OBSERVED behaviour. Asserting the
+	//    unanswered half would be a failing test with no owner; asserting the
+	//    answered half would be asserting something this reader already does.
+	//    block.hpp carries the measured detail so the other five notes stay
+	//    short.
 	const std::vector<::panduck::Block> empty = ::panduck::org::ReadOrg("");
 	CHECK_EQ(empty.size(), static_cast<size_t>(0));
 

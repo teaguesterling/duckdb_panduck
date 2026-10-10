@@ -66,6 +66,45 @@ if(yyjson_FOUND AND NOT PANDUCK_YYJSON_INCLUDE_DIR)
   message(STATUS "libpanduck: using vcpkg/system yyjson")
 endif()
 
+# miniz IS THE DEPENDENCY CASE yyjson WAS NOT, and the contrast is the whole
+# reason this comment exists next to the one above.
+#
+# yyjson could not be reused because DuckDB's copy is VENDORED AND
+# DuckDB-flavoured: its header does `#include "duckdb/common/fast_mem.hpp"` and
+# it lives in `namespace duckdb_yyjson`, so pointing at
+# duckdb/third_party/yyjson/include configures and then fails to compile.
+#
+# MEASURED, rather than assumed by analogy: miniz reaches the extension build
+# through `find_package(miniz CONFIG REQUIRED)` in the ROOT CMakeLists (line
+# ~22), from vcpkg -- `vcpkg.json` lists `miniz` -- and its package files are
+# ordinary vcpkg ones at
+#   <vcpkg_installed>/<triplet>/share/miniz/minizConfig.cmake
+#   <vcpkg_installed>/<triplet>/include/miniz/miniz.h
+# No duckdb/ include, no DuckDB namespace, nothing vendored. So the standalone
+# build can use the same `find_package` the extension does, and unlike yyjson
+# it actually works.
+#
+# NO include-dir-only escape hatch, deliberately, which is the one place this
+# does NOT mirror PANDUCK_YYJSON_INCLUDE_DIR above: miniz is a compiled library,
+# and an include path alone would configure, compile (panduck is STATIC, so it
+# never links) and then fail at the first executable that linked it. A path
+# setting that defers the error to someone else's link line is worse than
+# requiring the package.
+#
+# This is OFF in CI, and that is correct rather than a gap: the libpanduck-seam
+# job configures with no toolchain file, so find_package finds nothing and the
+# zip module is simply not built -- exactly what happens to ipynb there. The
+# extension build is unaffected either way; it compiles these sources itself
+# with miniz already resolved.
+find_package(miniz CONFIG QUIET)
+if(miniz_FOUND)
+  message(STATUS "libpanduck: using vcpkg/system miniz")
+  set(_zip_default ON)
+else()
+  set(_zip_default OFF)
+endif()
+option(PANDUCK_WITH_ZIP "Build the shared ZIP container reader (requires miniz)" ${_zip_default})
+
 if(PANDUCK_YYJSON_INCLUDE_DIR OR yyjson_FOUND)
   set(_ipynb_default ON)
 else()
@@ -105,6 +144,14 @@ option(PANDUCK_WITH_ORG "Build the org format module" ON)
 # C++ over the vocabulary -- so unlike ipynb it defaults ON.
 option(PANDUCK_WITH_TEXTILE "Build the textile format module" ON)
 
+# zip IS NOT A FORMAT MODULE, and is listed with them because the option
+# mechanism is the same one. ZipContainer is shared INFRASTRUCTURE: docx, odt
+# and epub are each a ZIP with their document in a known member, and none of the
+# three can move behind the seam until the archive handling has. It carries no
+# reader and emits no rows. Its option is declared above with find_package(miniz)
+# because, unlike every format module, its default depends on a dependency being
+# found.
+
 # Always present, so the target is never empty and the standalone build always
 # has something to prove: panduck.cpp reaches the vendored vocabulary and
 # nothing else, so compiling it here demonstrates that header really is
@@ -137,6 +184,10 @@ endif()
 
 if(PANDUCK_WITH_IPYNB)
   list(APPEND PANDUCK_SOURCES src/ipynb.cpp)
+endif()
+
+if(PANDUCK_WITH_ZIP)
+  list(APPEND PANDUCK_SOURCES src/zip_container.cpp)
 endif()
 
 add_library(panduck STATIC ${PANDUCK_SOURCES})
@@ -175,6 +226,11 @@ if(PANDUCK_WITH_IPYNB)
   elseif(yyjson_FOUND)
     target_link_libraries(panduck PRIVATE yyjson::yyjson)
   endif()
+endif()
+
+if(PANDUCK_WITH_ZIP)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_ZIP)
+  target_link_libraries(panduck PRIVATE miniz::miniz)
 endif()
 
 # THE STANDALONE TEST SUITE, and the hole it fills (issue #104, L2).
@@ -252,4 +308,5 @@ message(
          " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
          " rst=${PANDUCK_WITH_RST} rtf=${PANDUCK_WITH_RTF}"
          " textile=${PANDUCK_WITH_TEXTILE}"
+         " zip=${PANDUCK_WITH_ZIP}"
          " (tests=${PANDUCK_BUILD_TESTS})")

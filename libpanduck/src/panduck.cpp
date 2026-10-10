@@ -18,6 +18,7 @@
 // Flagged by the subagent that performed the move; it was right.
 #include "panduck/block.hpp"
 #include "panduck/block_json.hpp"
+#include "panduck/doc_metadata.hpp"
 #include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 
@@ -70,6 +71,17 @@ bool HasModule(const char *name) {
 #endif
 #ifdef PANDUCK_WITH_TEXTILE
 	if (std::strcmp(name, "textile") == 0) {
+		return true;
+	}
+#endif
+	// "zip" IS NOT A FORMAT, and is answered here anyway. ZipContainer is shared
+	// infrastructure that docx, odt and epub each need, and a caller asking
+	// whether this build can open a container has no other way to find out --
+	// the three readers themselves are still in src/, so there is no "docx"
+	// module to ask about yet. Answering about the capability is more useful
+	// than refusing because it has no reader.
+#ifdef PANDUCK_WITH_ZIP
+	if (std::strcmp(name, "zip") == 0) {
 		return true;
 	}
 #endif

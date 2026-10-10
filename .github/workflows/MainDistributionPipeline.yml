@@ -344,12 +344,228 @@ jobs:
       # no failing test.
       #
       # No -D flags, matching the build above, so this takes the DEFAULTS:
-      # latex, mediawiki, org, rst and textile. ipynb is OFF here because it
-      # needs a standalone yyjson (see libpanduck/CMakeLists.txt). The runner
+      # latex, mediawiki, org, rst, rtf and textile. docx, epub, ipynb, odt and
+      # zip are OFF here because each one's default is conditional on
+      # find_package() locating yyjson, miniz or pugixml and none of the three is
+      # on an ubuntu-latest image (see libpanduck/CMakeLists.txt). The runner
       # prints the number of checks it EXECUTED and exits non-zero if that is
       # zero, so a configure that switched every module off could not pass.
+      #
+      # THAT IS NOW THE DEPS-FREE ARM OF TWO, not the whole of the enforcement
+      # (#124). libpanduck-seam-all-modules below compiles all eleven, and this
+      # job is deliberately left taking the defaults: it keeps the fast signal,
+      # and it is what actually exercises the FALSE arms of test_engine.cpp's
+      # HasModule() pins. Do NOT add -D flags here -- doing so would leave those
+      # arms pinned but never run, which is the half-test this project refuses.
       - name: Run libpanduck standalone tests
         run: ctest --test-dir build/libpanduck --output-on-failure --verbose
+
+  # THE SEAM GATE WITH EVERY MODULE ON (#124). The job above is the FAST ARM and
+  # takes the configure DEFAULTS, which means it compiles 6 of the 11 modules.
+  # docx, epub, ipynb, odt and zip default OFF on a bare runner because each one's
+  # default is conditional on find_package() locating yyjson, miniz or pugixml, and
+  # none of the three is on an ubuntu-latest image. Measured on 333ac3e by
+  # replicating that configure with the vcpkg environment stripped:
+  #
+  #   docx=OFF epub=OFF ipynb=OFF odt=OFF zip=OFF
+  #   latex=ON mediawiki=ON org=ON rst=ON rtf=ON textile=ON   -> 125 checks
+  #
+  # That gap is the whole defect. The seam-move contract tells every mover that the
+  # standalone build is THE compile-level enforcement -- check_libpanduck_seam.py is
+  # a grep and sees only NAMED DuckDB types, so a transitive include, the C++11
+  # aggregate trap and a C++11 ODR-use link failure are caught by nothing else --
+  # and the five modules it did not cover are exactly the ones where that costs
+  # most. The aggregate trap has already been hit twice in this repo (latex `Token`,
+  # an odt-local `struct Entry`) and is invisible to the extension's C++17 build.
+  #
+  # A SECOND JOB, NOT A STEP ON THE ONE ABOVE. That job advertises "no submodules,
+  # no extension build, no network: this is seconds", and that property is worth
+  # keeping: it is the one compile gate that still reports when everything else is
+  # broken. This job needs the opposite of all three. Running them as two arms in
+  # parallel keeps the fast signal fast and, just as important, keeps the deps-free
+  # configure exercised for real -- which is what the FALSE arms of
+  # libpanduck/test/test_engine.cpp's HasModule() pins assert.
+  #
+  # WHY vcpkg AND NOT apt. Measured 2026-10-10 against ubuntu noble, the archive
+  # ubuntu-latest draws from: `apt-cache policy libyyjson-dev libminiz-dev
+  # libpugixml-dev` returns a candidate for pugixml ONLY. yyjson and miniz are not
+  # packaged at all -- `apt-cache search miniz` offers only minizip, a different
+  # library. And even where a package does exist, these are located through
+  # find_package(... CONFIG): a Debian -dev package that ships headers with no CMake
+  # config file makes find_package fail, which flips the module default OFF and lets
+  # this job go green having compiled nothing new. That is this very bug wearing a
+  # passing check, so apt is not merely inconvenient here, it is the failure mode.
+  # vcpkg builds all three as CONFIG packages, which is what libpanduck/CMakeLists.txt
+  # and the root CMakeLists already consume.
+  #
+  # DRIVEN BY THE REPO'S OWN vcpkg.json, so the dependency set keeps ONE encoding
+  # instead of a second copy here that can drift from the extension build's. Manifest
+  # mode needs the extension-ci-tools submodule, because vcpkg.json's
+  # vcpkg-configuration names ./extension-ci-tools/vcpkg_ports as an overlay; with
+  # that directory absent vcpkg exits 1 with `Overlay path ... must be an existing
+  # directory` (measured), so the dependency on it is loud rather than a silent
+  # resolution against different ports. It is 276K and a --depth 1 init of the pinned
+  # sha succeeds, so this is nothing like a duckdb checkout.
+  libpanduck-seam-all-modules:
+    name: libpanduck standalone, every module ON
+    runs-on: ubuntu-latest
+    env:
+      # The triplet for the vcpkg install and for CMAKE_PREFIX_PATH. The cache key
+      # below spells it out literally instead of reading this, because the contexts
+      # a `with:` expression may use are not guaranteed to include `env` and an
+      # unrecognised named-value does not fail the step -- it fails the whole file to
+      # parse, which schedules NO jobs and looks exactly like a green run.
+      #
+      # The duplication is safe rather than merely tolerated: if the two ever
+      # disagreed, a cache hit would restore a tree under the other triplet,
+      # find_package would locate nothing, and the all-modules assertion below would
+      # fire. The gate backstops its own cache.
+      TRIPLET: x64-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keyed on vcpkg.json, so only a dependency change pays the build. On a hit
+      # BOTH steps below are skipped and the job touches no network at all -- which
+      # is why the cache is restored before the submodule is fetched, not after.
+      - name: Cache the built dependencies
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: libpanduck-deps-${{ runner.os }}-x64-linux-${{ hashFiles('vcpkg.json') }}
+
+      # extension-ci-tools ONLY, not `submodules: true`: that would also fetch
+      # duckdb, which this job never builds against and which dwarfs everything else
+      # here. Needed solely so vcpkg.json's overlay-ports path resolves, hence
+      # skipped whenever the vcpkg step below is.
+      - name: Check out extension-ci-tools (vcpkg.json's overlays point into it)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 extension-ci-tools
+
+      - name: Build yyjson, miniz and pugixml from vcpkg.json
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          set -uo pipefail
+          # The ubuntu-latest image ships vcpkg already bootstrapped, which saves a
+          # clone and a compile. If a future image drops it, fail HERE with the
+          # remedy named, rather than further down where a missing dependency reads
+          # as a dependency problem: the fix would be a pinned microsoft/vcpkg
+          # checkout plus bootstrap-vcpkg.sh in this step.
+          if [ -z "${VCPKG_INSTALLATION_ROOT:-}" ] || [ ! -x "${VCPKG_INSTALLATION_ROOT}/vcpkg" ]; then
+            echo "::error::no bootstrapped vcpkg on this runner (VCPKG_INSTALLATION_ROOT=${VCPKG_INSTALLATION_ROOT:-unset}); add a pinned microsoft/vcpkg checkout and bootstrap-vcpkg.sh to this step"
+            exit 1
+          fi
+          # --x-install-root is manifest mode's default already; stated anyway
+          # because the cache path above and CMAKE_PREFIX_PATH below both name it,
+          # and this job's entire subject is what happens when a default moves.
+          "${VCPKG_INSTALLATION_ROOT}/vcpkg" install \
+            --triplet "$TRIPLET" \
+            --x-install-root="$PWD/vcpkg_installed"
+
+      # EXPLICIT -D FOR EVERY MODULE, never auto-detection. The defect was a default
+      # flipping OFF unnoticed, so this states all eleven and the next step asserts
+      # the configure agreed. A dependency going missing now has to CONTRADICT an
+      # explicit ON, which is something a check can see.
+      - name: Configure libpanduck with every module ON
+        run: |
+          set -uo pipefail
+          cmake -S libpanduck -B build/libpanduck-all \
+            -DPANDUCK_WITH_DOCX=ON \
+            -DPANDUCK_WITH_EPUB=ON \
+            -DPANDUCK_WITH_IPYNB=ON \
+            -DPANDUCK_WITH_LATEX=ON \
+            -DPANDUCK_WITH_MEDIAWIKI=ON \
+            -DPANDUCK_WITH_ODT=ON \
+            -DPANDUCK_WITH_ORG=ON \
+            -DPANDUCK_WITH_RST=ON \
+            -DPANDUCK_WITH_RTF=ON \
+            -DPANDUCK_WITH_TEXTILE=ON \
+            -DPANDUCK_WITH_ZIP=ON \
+            -DCMAKE_PREFIX_PATH="$PWD/vcpkg_installed/$TRIPLET" \
+            > configure.log 2>&1
+          rc=$?
+          cat configure.log
+          exit $rc
+
+      # THE ASSERTION THIS WHOLE JOB EXISTS FOR, and the one line here worth reading
+      # twice. Without it the job can pass while compiling precisely what the fast
+      # arm already compiles: a dependency goes missing, find_package fails, each
+      # dependent module's default is conditional on it, the configure prints =OFF
+      # and exits 0, and the build and the tests are then green over the same 6
+      # modules as before. Nothing else in the pipeline would notice.
+      #
+      # It fails on =OFF *and* on any module the line does not mention, so renaming
+      # or dropping one in the message() at the foot of libpanduck/CMakeLists.txt
+      # cannot quietly make this vacuous. A missing line is likewise a failure: a
+      # green run must mean the modules were checked, never that there was nothing
+      # found to check.
+      #
+      # `grep -o` is deliberately not the test. It exits 1 on zero matches, and zero
+      # matches is the PASSING case here, so using it as the condition inverts the
+      # gate.
+      - name: Fail if the configure switched any module OFF
+        run: |
+          set -uo pipefail
+          line=$(grep -F 'libpanduck modules:' configure.log | tail -1)
+          if [ -z "$line" ]; then
+            echo "::error::the configure printed no 'libpanduck modules:' line, so no module state was verified; if the message() in libpanduck/CMakeLists.txt was reworded, update this check alongside it"
+            exit 1
+          fi
+          echo "$line"
+          bad=0
+          for m in docx epub ipynb latex mediawiki odt org rst rtf textile zip; do
+            case "$line" in
+            *"$m=ON"*)
+              ;;
+            *"$m=OFF"*)
+              echo "::error::module ${m} configured OFF; this job must compile every module, so check that vcpkg really provided yyjson, miniz and pugixml and that CMAKE_PREFIX_PATH points at them"
+              bad=1
+              ;;
+            *)
+              echo "::error::the module line never mentions ${m}, so its state is unknown and this gate is not covering it: ${line}"
+              bad=1
+              ;;
+            esac
+          done
+          [ "$bad" -eq 0 ] || exit 1
+          echo "all 11 modules configured ON"
+
+      - name: Build libpanduck standalone
+        run: cmake --build build/libpanduck-all
+
+      # --verbose because the per-module tally the next step reads comes from the
+      # runner's own stdout, and --output-on-failure alone prints nothing on success.
+      - name: Run libpanduck standalone tests
+        run: |
+          set -uo pipefail
+          ctest --test-dir build/libpanduck-all --output-on-failure --verbose > ctest.log 2>&1
+          rc=$?
+          cat ctest.log
+          exit $rc
+
+      # A FLOOR, NOT AN EXPECTATION. 147 is what the eleven-module build executed on
+      # 333ac3e across the 7 test-bearing modules; adding tests raises the real
+      # number and must not redden this job, which is why the comparison is >= and
+      # not ==. What it catches is a green ctest over the WRONG binary -- an all-ON
+      # configure whose suite nonetheless ran the 125 checks the defaults-only arm
+      # runs. Raise the floor when a module gains its first tests; never lower it.
+      #
+      # docx, epub, odt, rtf and zip compile here but contribute no checks of their
+      # own: they have no test files yet, which is tracked separately. So this number
+      # moves when those are written, not when those modules were switched on.
+      - name: Assert the suite ran the all-modules check count
+        run: |
+          set -uo pipefail
+          total=$(sed -nE 's/^.*TOTAL[[:space:]]+([0-9]+) checks.*$/\1/p' ctest.log | tail -1)
+          if [ -z "$total" ]; then
+            echo "::error::no TOTAL line in the ctest output, so the number of checks executed was never verified"
+            exit 1
+          fi
+          echo "libpanduck standalone executed ${total} checks across every module"
+          if [ "$total" -lt 147 ]; then
+            echo "::error::only ${total} checks ran; the eleven-module build executed 147 on 333ac3e and the defaults-only arm executes 125, so this looks like an all-ON configure whose suite did not take"
+            exit 1
+          fi
 
   # Panduck deliberately does not link pandoc, so nothing in the build above would
   # notice if pandoc changed its AST underneath us. This job installs a real pandoc and

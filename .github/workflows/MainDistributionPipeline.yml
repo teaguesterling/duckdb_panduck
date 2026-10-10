@@ -847,6 +847,8 @@ jobs:
       # planted divergence, so a green run cannot mean "found nothing because it compared
       # nothing".
       - name: Compare panduck's converter against upstream's copy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           python3 scripts/check_converter_divergence.py --require

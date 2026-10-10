@@ -128,6 +128,14 @@ option(PANDUCK_WITH_MEDIAWIKI "Build the mediawiki format module" ON)
 # parser are plain C++ over the vocabulary -- so unlike ipynb it defaults ON.
 option(PANDUCK_WITH_RST "Build the rst format module" ON)
 
+# rtf is the FIRST TIER 2 READER behind the seam, and it defaults ON for the same
+# reason the Tier 1 modules do: no third-party dependency. RTF is 7-bit ASCII
+# with brace-delimited groups and backslash control words, so it needs neither
+# miniz nor pugixml. Its three Tier 2 siblings -- docx, odt, epub -- additionally
+# need pugixml and a zip container, which is a real dependency decision for this
+# build and is deliberately not taken here.
+option(PANDUCK_WITH_RTF "Build the rtf format module" ON)
+
 # org, like textile, needs no third-party dependency -- its scanner and parser
 # are plain C++ over the vocabulary -- so unlike ipynb it defaults ON.
 option(PANDUCK_WITH_ORG "Build the org format module" ON)
@@ -166,6 +174,10 @@ if(PANDUCK_WITH_RST)
   list(APPEND PANDUCK_SOURCES src/rst.cpp src/rst_scanner.cpp)
 endif()
 
+if(PANDUCK_WITH_RTF)
+  list(APPEND PANDUCK_SOURCES src/rtf.cpp)
+endif()
+
 if(PANDUCK_WITH_TEXTILE)
   list(APPEND PANDUCK_SOURCES src/textile.cpp src/textile_scanner.cpp)
 endif()
@@ -197,6 +209,10 @@ endif()
 
 if(PANDUCK_WITH_RST)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_RST)
+endif()
+
+if(PANDUCK_WITH_RTF)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_RTF)
 endif()
 
 if(PANDUCK_WITH_TEXTILE)
@@ -262,6 +278,11 @@ if(PANDUCK_BUILD_TESTS)
   if(PANDUCK_WITH_RST)
     list(APPEND PANDUCK_TEST_SOURCES test/test_rst.cpp)
   endif()
+  # NO test/test_rtf.cpp, and the gap is deliberate rather than an oversight.
+  # Adding a module its first standalone assertions in the same commit that moves
+  # it would be implementation and tests changing together, which this project
+  # does not do. rtf's behaviour is pinned through SQL in test/sql/rtf_reader.test
+  # meanwhile; a standalone test module is its own change.
   if(PANDUCK_WITH_TEXTILE)
     list(APPEND PANDUCK_TEST_SOURCES test/test_textile.cpp)
   endif()
@@ -285,6 +306,7 @@ message(
   STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
          " latex=${PANDUCK_WITH_LATEX}"
          " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
-         " rst=${PANDUCK_WITH_RST} textile=${PANDUCK_WITH_TEXTILE}"
+         " rst=${PANDUCK_WITH_RST} rtf=${PANDUCK_WITH_RTF}"
+         " textile=${PANDUCK_WITH_TEXTILE}"
          " zip=${PANDUCK_WITH_ZIP}"
          " (tests=${PANDUCK_BUILD_TESTS})")

@@ -64,6 +64,11 @@ bool HasModule(const char *name) {
 		return true;
 	}
 #endif
+#ifdef PANDUCK_WITH_RTF
+	if (std::strcmp(name, "rtf") == 0) {
+		return true;
+	}
+#endif
 #ifdef PANDUCK_WITH_TEXTILE
 	if (std::strcmp(name, "textile") == 0) {
 		return true;

@@ -265,7 +265,7 @@ void CollectDocxMetadata(const std::string &core_xml, std::vector<DocxBlock> &ou
 	}
 }
 
-std::vector<DocxBlock> ParseDocxFile(const std::string &path, ContainerStatus &status) {
+std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status) {
 	status = ContainerStatus();
 	// THE NON-THROWING ZipContainer. The src/ wrapper this used to name
 	// (duckdb::ZipContainer, constructed with the reader name so it could build a
@@ -275,7 +275,7 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path, ContainerStatus &s
 	// first two ContainerStatus codes and src/docx_reader.cpp raises exactly what
 	// it raised before. The reader name is gone from this side entirely: it is the
 	// name of a DuckDB table function.
-	::panduck::ZipContainer zip(path);
+	::panduck::ZipContainer zip(source);
 	if (!zip.IsOpen()) {
 		status = ContainerStatus::NotAZip();
 		return std::vector<DocxBlock>();
@@ -815,16 +815,31 @@ std::vector<DocxBlock> ParseDocxFile(const std::string &path, ContainerStatus &s
 	return blocks;
 }
 
+//! The path form, which is now a DELEGATE and nothing else (issue #120 step 2).
+//!
+//! THE `FileSource` IS A LOCAL, and that is the lifetime rule rather than a
+//! shortcut: `ZipContainer` holds its source by reference and reads members on
+//! demand, so the source must outlive every read. It does -- the whole parse
+//! happens inside the call below -- and it is destroyed, closing the file, when
+//! this function returns. `FileSource` never throws on a missing path; its
+//! `Size()` is then 0, `mz_zip_reader_init` refuses an archive that small, and
+//! the overload reports `NotAZip`, which is byte-for-byte the behaviour this
+//! function had when it called `ZipContainer(path)` itself.
+std::vector<DocxBlock> ParseDocxFile(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ParseDocxFile(source, status);
+}
+
 //! Flatten format-shaped blocks into duck_block rows.
 //!
 //! LIFTED OUT OF DocxBind, where it was fused into the DuckDB bind rather than
 //! sitting after the parse core as a `BuildRows` free function. It names no
 //! DuckDB type -- only vocabulary constants -- and moving it is what lets a
 //! non-DuckDB consumer get rows at all.
-std::vector<Block> ReadDocx(const std::string &path, ContainerStatus &status) {
+std::vector<Block> ReadDocx(ByteSource &source, ContainerStatus &status) {
 	std::vector<Block> rows;
 	int32_t order = 0;
-	for (auto &block : ParseDocxFile(path, status)) {
+	for (auto &block : ParseDocxFile(source, status)) {
 		Block row;
 		row.kind = block.kind.empty() ? DuckBlockVocabulary::KIND_BLOCK : block.kind;
 		if (!block.key.empty()) {
@@ -894,6 +909,15 @@ std::vector<Block> ReadDocx(const std::string &path, ContainerStatus &status) {
 		}
 	}
 	return rows;
+}
+
+//! The path form, a delegate for the same reason ParseDocxFile's is -- see the
+//! lifetime note there. It goes through the `ByteSource` row builder rather than
+//! through `ParseDocxFile(path, ...)`, so the row-building loop above has
+//! exactly one caller shape.
+std::vector<Block> ReadDocx(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ReadDocx(source, status);
 }
 
 } // namespace docx

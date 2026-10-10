@@ -1,6 +1,7 @@
 #pragma once
 
 #include "panduck/block.hpp"
+#include "panduck/byte_source.hpp"
 #include "panduck/container_status.hpp"
 
 #include <map>
@@ -11,15 +12,17 @@
 // The table function, its bind, its scan and its registration stay in
 // src/odt_reader.cpp.
 //
-// THE ENTRY POINTS TAKE A PATH, not source text, and that is deliberate rather
-// than a shortcut. The seven Tier 1 modules are `ReadX(const std::string &src)`
-// because their formats ARE text. A .odt is a ZIP archive. libpanduck exists so
-// a consumer can read a document without DuckDB, so if the core only accepted
-// pre-extracted content.xml then every standalone consumer would have to
-// reimplement ODF part lookup -- and libpanduck would own a zip reader its own
-// modules refused to use. ::panduck::ZipContainer is already behind the seam and
-// already opens files from disk (mz_zip_reader_init_file), so there is no new
-// dependency in taking the path here.
+// THE ENTRY POINTS TAKE AN ARCHIVE, not source text, and that is deliberate
+// rather than a shortcut. The seven Tier 1 modules are
+// `ReadX(const std::string &src)` because their formats ARE text. A .odt is a
+// ZIP archive. libpanduck exists so a consumer can read a document without
+// DuckDB, so if the core only accepted pre-extracted content.xml then every
+// standalone consumer would have to reimplement ODF part lookup -- and
+// libpanduck would own a zip reader its own modules refused to use.
+// ::panduck::ZipContainer is already behind the seam and already opens files
+// from disk, so there is no new dependency in taking the archive here. Since
+// #120 it arrives as a `ByteSource`, with the path form kept as a delegate over
+// `FileSource`; see the note above the entry points.
 //
 // FAILURE IS REPORTED, NOT THROWN. ParseOdtFile used to throw IOException and
 // InvalidInputException; those are DuckDB API types AND their type is the
@@ -68,17 +71,34 @@ struct OdtBlock {
 	std::vector<OdtInline> inlines;
 };
 
-//! Parse a .odt file into format-shaped blocks. The intermediate; callers
+// THE `ByteSource &` FORM IS THE IMPLEMENTATION; THE PATH FORM DELEGATES TO IT
+// (issue #120 step 2). The full argument is recorded once, above the entry
+// points in panduck/docx.hpp: source primitive plus path delegate is one
+// archive code path, where a path primitive plus a parallel source
+// implementation is two that drift. Until #120 this module's only way in was a
+// path handed to miniz, which is why odt was one of the three readers that could
+// not read an `s3://` or `https://` file while the other ten could.
+
+//! Parse a .odt archive into format-shaped blocks. The intermediate; callers
 //! wanting duck_block rows want ReadOdt.
 //!
-//! Opens the archive itself. On failure `status` says which failure and, for a
-//! missing or unparseable member, which member, and the result is empty.
+//! Reads the archive out of `source`, which must outlive the call. On failure
+//! `status` says which failure and, for a missing or unparseable member, which
+//! member, and the result is empty.
+std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status);
+
+//! Parse a .odt file into format-shaped blocks. Opens `path` as a `FileSource`
+//! and calls the overload above; a missing or unreadable path reports `NotAZip`,
+//! exactly as it did when this function opened the archive itself.
 std::vector<OdtBlock> ParseOdtFile(const std::string &path, ContainerStatus &status);
 
-//! Read a .odt file as duck_block rows. THE MODULE'S PUBLIC SHAPE, shared by
+//! Read a .odt archive as duck_block rows. THE MODULE'S PUBLIC SHAPE, shared by
 //! every format module -- document in, vocabulary rows out, no DuckDB anywhere.
-//! Container formats take a path where the text formats take source text; see
-//! the note at the top of this file.
+//! Container formats take a byte source or a path where the text formats take
+//! source text; see the note at the top of this file.
+std::vector<Block> ReadOdt(ByteSource &source, ContainerStatus &status);
+
+//! Read a .odt file as duck_block rows, by path. The thin delegate; see above.
 std::vector<Block> ReadOdt(const std::string &path, ContainerStatus &status);
 
 } // namespace odt

@@ -914,7 +914,7 @@ void CollectMetadata(const pugi::xml_node &package, std::vector<EpubBlock> &out)
 	}
 }
 
-std::vector<EpubBlock> ParseEpubFile(const std::string &path, ContainerStatus &status) {
+std::vector<EpubBlock> ParseEpubFile(ByteSource &source, ContainerStatus &status) {
 	status = ContainerStatus();
 	// THE NON-THROWING ZipContainer. The src/ wrapper this used to name
 	// (duckdb::ZipContainer, constructed with the reader name so it could build a
@@ -922,7 +922,11 @@ std::vector<EpubBlock> ParseEpubFile(const std::string &path, ContainerStatus &s
 	// ReadRequired. Behind the seam neither type exists, so the open is TESTED and
 	// the required member read through a plain Read. The reader name is gone from
 	// this side entirely: it is the name of a DuckDB table function.
-	::panduck::ZipContainer zip(path);
+	//
+	// THE CONTAINER STAYS OPEN FOR THE WHOLE FUNCTION, which is what makes the
+	// source's lifetime load-bearing here rather than incidental: every spine
+	// member below is read through `source` long after this line.
+	::panduck::ZipContainer zip(source);
 	if (!zip.IsOpen()) {
 		status = ContainerStatus::NotAZip();
 		return std::vector<EpubBlock>();
@@ -1035,16 +1039,31 @@ std::vector<EpubBlock> ParseEpubFile(const std::string &path, ContainerStatus &s
 	return blocks;
 }
 
+//! The path form, which is now a DELEGATE and nothing else (issue #120 step 2).
+//!
+//! THE `FileSource` IS A LOCAL, and that is the lifetime rule rather than a
+//! shortcut: `ZipContainer` holds its source by reference and reads members on
+//! demand -- dozens of times for a book -- so the source must outlive every
+//! read. It does: the whole parse happens inside the call below, and the file is
+//! closed when this function returns. `FileSource` never throws on a missing
+//! path; its `Size()` is then 0, `mz_zip_reader_init` refuses an archive that
+//! small, and the overload reports `NotAZip`, which is byte-for-byte the
+//! behaviour this function had when it called `ZipContainer(path)` itself.
+std::vector<EpubBlock> ParseEpubFile(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ParseEpubFile(source, status);
+}
+
 //! Flatten format-shaped blocks into duck_block rows.
 //!
 //! LIFTED OUT OF EpubBind, where it was fused into the DuckDB bind rather than
 //! sitting after the parse core as a `BuildRows` free function. It names no
 //! DuckDB type -- only vocabulary constants -- and moving it is what lets a
 //! non-DuckDB consumer get rows at all.
-std::vector<Block> ReadEpub(const std::string &path, ContainerStatus &status) {
+std::vector<Block> ReadEpub(ByteSource &source, ContainerStatus &status) {
 	std::vector<Block> rows;
 	int32_t order = 0;
-	for (auto &block : ParseEpubFile(path, status)) {
+	for (auto &block : ParseEpubFile(source, status)) {
 		Block row;
 		row.kind = block.kind.empty() ? DuckBlockVocabulary::KIND_BLOCK : block.kind;
 		row.element_type = block.element_type;
@@ -1127,6 +1146,15 @@ std::vector<Block> ReadEpub(const std::string &path, ContainerStatus &status) {
 		}
 	}
 	return rows;
+}
+
+//! The path form, a delegate for the same reason ParseEpubFile's is -- see the
+//! lifetime note there. It goes through the `ByteSource` row builder rather than
+//! through `ParseEpubFile(path, ...)`, so the row-building loop above has
+//! exactly one caller shape.
+std::vector<Block> ReadEpub(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ReadEpub(source, status);
 }
 
 } // namespace epub

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "panduck/block.hpp"
+#include "panduck/byte_source.hpp"
 #include "panduck/container_status.hpp"
 
 #include <map>
@@ -11,12 +12,15 @@
 // The table function, its bind, its scan and its registration stay in
 // src/docx_reader.cpp.
 //
-// THE ENTRY POINTS TAKE A PATH, not source text, for the reason recorded at the
-// top of panduck/odt.hpp: a .docx is an archive, libpanduck exists so a consumer
-// can read a document without DuckDB, and a core that only accepted
+// THE ENTRY POINTS TAKE AN ARCHIVE, not source text, for the reason recorded at
+// the top of panduck/odt.hpp: a .docx is an archive, libpanduck exists so a
+// consumer can read a document without DuckDB, and a core that only accepted
 // pre-extracted word/document.xml would make every standalone consumer
 // reimplement OOXML part lookup. ::panduck::ZipContainer already opens files
-// from disk, so nothing new is depended on here.
+// from disk, so nothing new is depended on here. Since #120 the archive arrives
+// as a `ByteSource` -- bytes, a stdio file, or a host file handle -- with the
+// path form kept as a delegate over `FileSource`; see the note above the entry
+// points.
 //
 // FAILURE IS REPORTED, NOT THROWN -- a ContainerStatus out-parameter and an
 // empty result. ParseDocxFile threw IOException and InvalidInputException, whose
@@ -61,16 +65,43 @@ struct DocxBlock {
 	std::vector<DocxInline> inlines;
 };
 
-//! Parse a .docx file into format-shaped blocks. The intermediate; callers
+// THE `ByteSource &` FORM IS THE IMPLEMENTATION; THE PATH FORM DELEGATES TO IT
+// (issue #120 step 2), and that direction is the point rather than an
+// implementation detail worth hiding. A .docx is a ZIP, so until #120 the only
+// way into this module was a path that `ZipContainer` handed to miniz -- which
+// means docx, odt and epub were the three readers that could not see an `s3://`
+// or `https://` file, while the other ten read whatever filesystem the host had
+// attached. The extension's tail now opens through DuckDB's FileSystem and
+// passes a `FileHandleSource`; a standalone consumer with no host filesystem
+// passes a path and gets the `FileSource` the path form builds for it.
+//
+// Written THIS way round -- source primitive, path delegate -- so there is one
+// archive code path. The reverse (a path primitive plus a parallel source
+// implementation) is how the two drift: a fix applied to one spelling and not
+// the other is invisible until a user hits the branch that did not get it.
+
+//! Parse a .docx archive into format-shaped blocks. The intermediate; callers
 //! wanting duck_block rows want ReadDocx.
 //!
-//! Opens the archive itself. On failure `status` says which failure and, for a
-//! missing or unparseable member, which member, and the result is empty.
+//! Reads the archive out of `source`, which must outlive the call. On failure
+//! `status` says which failure and, for a missing or unparseable member, which
+//! member, and the result is empty. A source that cannot be read at all reports
+//! the same `NotAZip` an unopenable path does -- see byte_source.hpp on why a
+//! short read is a report rather than an error.
+std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status);
+
+//! Parse a .docx file into format-shaped blocks. Opens `path` as a `FileSource`
+//! and calls the overload above; a missing or unreadable path reports `NotAZip`,
+//! exactly as it did when this function opened the archive itself.
 std::vector<DocxBlock> ParseDocxFile(const std::string &path, ContainerStatus &status);
 
-//! Read a .docx file as duck_block rows. THE MODULE'S PUBLIC SHAPE, shared by
+//! Read a .docx archive as duck_block rows. THE MODULE'S PUBLIC SHAPE, shared by
 //! every format module -- document in, vocabulary rows out, no DuckDB anywhere.
-//! Container formats take a path where the text formats take source text.
+//! Container formats take a byte source or a path where the text formats take
+//! source text.
+std::vector<Block> ReadDocx(ByteSource &source, ContainerStatus &status);
+
+//! Read a .docx file as duck_block rows, by path. The thin delegate; see above.
 std::vector<Block> ReadDocx(const std::string &path, ContainerStatus &status);
 
 } // namespace docx

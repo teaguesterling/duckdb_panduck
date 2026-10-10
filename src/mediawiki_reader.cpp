@@ -8,7 +8,6 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -45,11 +44,7 @@ unique_ptr<FunctionData> MwFileBind(ClientContext &context, TableFunctionBindInp
 	readers::RequireReaderEnabled(context, "mediawiki");
 	MwColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
-	std::ifstream in(path, std::ios::binary);
-	if (!in) {
-		throw IOException("read_mediawiki_blocks: cannot open %s", path);
-	}
-	std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto src = readers::ReadFileThroughVFS(context, path, "read_mediawiki_blocks");
 	auto result = make_uniq<MwBindData>();
 	result->rows = ::panduck::mediawiki::ReadMediaWiki(src);
 	return std::move(result);

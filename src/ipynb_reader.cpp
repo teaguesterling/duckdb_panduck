@@ -8,7 +8,6 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
-#include <fstream>
 #include <map>
 #include <string>
 #include <vector>
@@ -45,11 +44,7 @@ unique_ptr<FunctionData> IpynbFileBind(ClientContext &context, TableFunctionBind
 	readers::RequireReaderEnabled(context, "ipynb");
 	IpynbColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
-	std::ifstream in(path, std::ios::binary);
-	if (!in) {
-		throw IOException("read_ipynb_blocks: cannot open %s", path);
-	}
-	std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto src = readers::ReadFileThroughVFS(context, path, "read_ipynb_blocks");
 	auto result = make_uniq<IpynbBindData>();
 	result->rows = ::panduck::ipynb::ReadIpynb(src);
 	return std::move(result);

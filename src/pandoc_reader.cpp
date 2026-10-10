@@ -10,8 +10,6 @@
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
-#include <fstream>
-
 namespace duckdb {
 namespace {
 
@@ -48,11 +46,7 @@ unique_ptr<FunctionData> PandocFileBind(ClientContext &context, TableFunctionBin
                                         vector<LogicalType> &return_types, panduck::BindNames &names) {
 	readers::RequireReaderEnabled(context, "pandoc");
 	auto path = input.inputs[0].GetValue<string>();
-	std::ifstream in(path, std::ios::binary);
-	if (!in) {
-		throw IOException("read_pandoc_blocks: cannot open %s", path);
-	}
-	std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto json = readers::ReadFileThroughVFS(context, path, "read_pandoc_blocks");
 	return BindFromJson(json, return_types, names);
 }
 

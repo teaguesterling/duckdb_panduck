@@ -165,6 +165,22 @@ namespace readers {
 //! fails before any file is opened, and fails with panduck's named error rather
 //! than the reader's own.
 void RequireReaderEnabled(ClientContext &context, const char *format);
+
+//! Read a whole file through DuckDB's FileSystem, so every reader honours whatever
+//! filesystem the client has attached -- httpfs, s3, encrypted, in-memory, anything
+//! registered now or later. `function_name` appears in the error message.
+//!
+//! WHY THIS EXISTS AT ALL. latex and rtf each carried a byte-identical ten-line
+//! copy of this block and read any path DuckDB could; the other six readers built
+//! a `std::ifstream` and could only ever see the local disk. Issue #120. Six more
+//! copies of the block would have been absurd, so the block became this.
+//!
+//! IT IS DELIBERATELY MORE PRECISE THAN ifstream WAS. Only a path that does not
+//! exist gets "file not found". A path that exists but will not open -- no read
+//! permission, a remote that answers then dies -- lets DuckDB's own OpenFile error
+//! propagate, naming the actual cause. ifstream collapsed both cases into one
+//! "cannot open", which named neither.
+std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name);
 } // namespace readers
 
 void RegisterReaderRegistry(ExtensionLoader &loader);

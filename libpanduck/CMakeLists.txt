@@ -38,18 +38,22 @@ set(PANDUCK_VOCABULARY_DIR
 # fails to compile. libpanduck therefore needs ITS OWN yyjson -- a system or
 # vcpkg one -- and that is a real dependency decision, not a path setting.
 #
-# It is deliberately NOT taken here: vcpkg.json drives every platform build of
-# the shipped extension including Wasm, and adding a dependency to it during the
-# v2.0 migration is not a side effect to smuggle into a seam commit. Until it is
-# decided, the ipynb module is off by default in the standalone build; the
-# extension build is unaffected, since it compiles these sources itself with
-# duckdb's yyjson already on the include path.
+# That decision has since been taken, in two steps, so this no longer defers it:
+# yyjson became a vcpkg dependency (see the block below), and issue #123 added
+# panduck/yyjson_compat.hpp, which selects duckdb's namespaced copy for the
+# extension build and a standalone one otherwise. So ipynb now defaults ON in the
+# standalone build whenever a yyjson is found -- and because CMAKE_PREFIX_PATH is
+# mandatory here for miniz and pugixml, that is every run of the documented seam
+# recipe. The extension build is unaffected either way: it compiles these sources
+# itself with duckdb's yyjson already on the include path.
 set(PANDUCK_YYJSON_INCLUDE_DIR
     ""
     CACHE PATH "Directory holding a STANDALONE yyjson (not duckdb's vendored copy)")
 
-# yyjson is now a vcpkg dependency (vcpkg.json), which is what lets the ipynb
-# module build standalone at all.
+# yyjson is now a vcpkg dependency (vcpkg.json). That plus the compat header
+# added by #123 is what lets the ipynb module build standalone at all; the
+# manifest entry alone was not enough, because vcpkg's copy puts the API at
+# global scope rather than in namespace duckdb_yyjson.
 #
 # TODO, and deliberately not done here: the EXTENSION build does not need it --
 # it already compiles these sources with duckdb's vendored yyjson on the include

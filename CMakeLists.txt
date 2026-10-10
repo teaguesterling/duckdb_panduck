@@ -162,9 +162,11 @@ set(EXTENSION_SOURCES
     libpanduck/src/rtf.cpp
     libpanduck/src/textile.cpp
     # The shared ZIP container -- not a format module; docx, odt and epub each
-    # read one (issue #104, L2). src/zip_container.cpp below is the DuckDB tail
-    # that remains: two throws of IOException/InvalidInputException, whose types
-    # are SQL-visible and so could not cross the seam.
+    # read one (issue #104, L2). The DuckDB tail that remains is
+    # src/container_status.cpp below, because the exception TYPES are SQL-visible
+    # and so could not cross the seam. There used to be a src/zip_container.cpp
+    # here too, a throwing duckdb::ZipContainer wrapper; the three readers moving
+    # behind the seam took its last caller with them, so it is gone (issue #128).
     libpanduck/src/zip_container.cpp
     src/pandoc_block_convert.cpp
     src/pandoc_inline_convert.cpp
@@ -173,7 +175,6 @@ set(EXTENSION_SOURCES
     src/reader_registry.cpp
     src/rtf_reader.cpp
     src/supported_extensions.cpp
-    src/zip_container.cpp
     # The DuckDB tail of container failure: five exception format strings, one
     # per ::panduck::ContainerStatus code (issue #104, L2). docx, odt and epub
     # report rather than throw once their cores are behind the seam, and their

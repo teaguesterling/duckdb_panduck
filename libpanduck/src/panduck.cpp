@@ -18,6 +18,7 @@
 // Flagged by the subagent that performed the move; it was right.
 #include "panduck/block.hpp"
 #include "panduck/block_json.hpp"
+#include "panduck/container_status.hpp"
 #include "panduck/doc_metadata.hpp"
 #include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
@@ -39,6 +40,16 @@ bool HasModule(const char *name) {
 	// answered false for a module that was compiled in. Nothing fails when this
 	// drifts, which is exactly why it drifts: the answer is only wrong, never
 	// broken. Adding textile's missing branch here alongside org's.
+#ifdef PANDUCK_WITH_DOCX
+	if (std::strcmp(name, "docx") == 0) {
+		return true;
+	}
+#endif
+#ifdef PANDUCK_WITH_EPUB
+	if (std::strcmp(name, "epub") == 0) {
+		return true;
+	}
+#endif
 #ifdef PANDUCK_WITH_IPYNB
 	if (std::strcmp(name, "ipynb") == 0) {
 		return true;
@@ -51,6 +62,11 @@ bool HasModule(const char *name) {
 #endif
 #ifdef PANDUCK_WITH_MEDIAWIKI
 	if (std::strcmp(name, "mediawiki") == 0) {
+		return true;
+	}
+#endif
+#ifdef PANDUCK_WITH_ODT
+	if (std::strcmp(name, "odt") == 0) {
 		return true;
 	}
 #endif

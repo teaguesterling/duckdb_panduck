@@ -130,13 +130,16 @@ include_directories(duckdb/third_party/yyjson/include)
 set(EXTENSION_SOURCES
     src/duck_block_repair.cpp
     src/docx_reader.cpp
+    libpanduck/src/docx.cpp
     src/panduck_extension.cpp
     src/epub_reader.cpp
+    libpanduck/src/epub.cpp
     src/latex_reader.cpp
     src/latex_tokenizer.cpp
     libpanduck/src/latex_macros.cpp
     libpanduck/src/latex_tokenizer.cpp
     src/odt_reader.cpp
+    libpanduck/src/odt.cpp
     src/mediawiki_reader.cpp
     libpanduck/src/mediawiki_scanner.cpp
     src/org_reader.cpp
@@ -170,13 +173,39 @@ set(EXTENSION_SOURCES
     src/reader_registry.cpp
     src/rtf_reader.cpp
     src/supported_extensions.cpp
-    src/zip_container.cpp)
+    src/zip_container.cpp
+    # The DuckDB tail of container failure: five exception format strings, one
+    # per ::panduck::ContainerStatus code (issue #104, L2). docx, odt and epub
+    # report rather than throw once their cores are behind the seam, and their
+    # exception TYPES are SQL-visible, so this is what keeps them identical.
+    src/container_status.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 target_link_libraries(${EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
+
+# THIS IS WHY THE SHIPPED BINARY DOES NOT CHANGE when libpanduck gained a yyjson
+# of its own (issue #123). libpanduck/src/ipynb.cpp includes
+# panduck/yyjson_compat.hpp, which needs to know WHICH yyjson this build has:
+#
+#   defined here           the vendored copy linked just above, in
+#                          `namespace duckdb_yyjson`
+#   NOT defined (standalone) a global-scope `<yyjson.h>` from vcpkg/system,
+#                          which libpanduck/CMakeLists.txt links as
+#                          yyjson::yyjson
+#
+# It is defined by the EXTENSION build rather than defaulted on in the header so
+# that this is the only build opting into DuckDB's copy: the standalone gate gets
+# the plain C library, and NO artifact ever links two yyjson copies at once.
+#
+# It belongs on these targets and not in libpanduck/CMakeLists.txt, because it
+# describes THIS composition -- the one that compiles libpanduck/src/*.cpp into
+# the extension with duckdb/third_party/yyjson/include on the include path
+# (see the include_directories call above).
+target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_YYJSON_VENDORED_DUCKDB)
+target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_YYJSON_VENDORED_DUCKDB)
 
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
@@ -213,7 +242,7 @@ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 # build DOES compile it -- so leaving it out would make HasModule("zip") answer
 # false about code that is linked in, which is the exact drift the comment above
 # records for textile.
-set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST RTF TEXTILE ZIP)
+set(PANDUCK_BUILT_MODULES DOCX EPUB IPYNB LATEX MEDIAWIKI ODT ORG RST RTF TEXTILE ZIP)
 foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
   target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
   target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})

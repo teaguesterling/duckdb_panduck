@@ -57,6 +57,7 @@ copies is being contemplated, and a migration is when a divergence gets adopted.
 """
 
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -152,14 +153,35 @@ def defined_functions(code: str) -> set:
     return set(re.findall(r"^(?:static\s+)?[\w:<>,\s*&]+?\b(\w+)\s*\([^;]*?\)\s*\{", code, flags=re.M))
 
 
+def _request(url: str) -> urllib.request.Request:
+    """A request for `url`, authenticated when a token is in the environment.
+
+    Anonymous api.github.com allows 60 requests an hour PER IP, shared across GitHub
+    Actions runners, so this job intermittently died with `HTTP Error 403: rate limit
+    exceeded`. The job is advisory and never blocked a merge, which is worse than it
+    sounds: it printed a divergence warning for a reason that had nothing to do with
+    divergence, and a reader glancing at a red check had no way to tell the two apart.
+
+    Guarded on the host rather than applied blanket: raw.githubusercontent.com needs no
+    credential for a public repo, and a token should not go to a host that does not use
+    it. Same shape as scripts/check_duck_block_vocabulary.py, deliberately -- two copies
+    of one rule drifting apart is a recurring failure in this tree.
+
+    Unauthenticated still works, because this script must run from a terminal with no
+    token set.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "panduck-divergence-check"})
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and "api.github.com" in url:
+        req.add_header("Authorization", f"Bearer {token}")
+    return req
+
+
 def fetch_upstream() -> tuple:
     """Return (source_text, sha) or raise urllib.error.URLError."""
-    req = urllib.request.Request(UPSTREAM_API, headers={"User-Agent": "panduck-divergence-check"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with urllib.request.urlopen(_request(UPSTREAM_API), timeout=20) as resp:
         sha = json.load(resp)["sha"]
-    url = UPSTREAM_RAW.format(ref=sha)
-    req = urllib.request.Request(url, headers={"User-Agent": "panduck-divergence-check"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with urllib.request.urlopen(_request(UPSTREAM_RAW.format(ref=sha)), timeout=20) as resp:
         return resp.read().decode("utf-8"), sha
 
 

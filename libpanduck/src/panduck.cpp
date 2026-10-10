@@ -40,6 +40,11 @@ bool HasModule(const char *name) {
 	// answered false for a module that was compiled in. Nothing fails when this
 	// drifts, which is exactly why it drifts: the answer is only wrong, never
 	// broken. Adding textile's missing branch here alongside org's.
+#ifdef PANDUCK_WITH_DOCX
+	if (std::strcmp(name, "docx") == 0) {
+		return true;
+	}
+#endif
 #ifdef PANDUCK_WITH_IPYNB
 	if (std::strcmp(name, "ipynb") == 0) {
 		return true;

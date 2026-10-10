@@ -1,12 +1,15 @@
 #pragma once
 
+#include "panduck/docx.hpp"
+
 #include "duckdb.hpp"
 
-#include <map>
 #include <string>
 #include <vector>
 
 namespace duckdb {
+
+class ExtensionLoader;
 
 //! DOCX (Office Open XML) reader.
 //!
@@ -36,45 +39,33 @@ namespace duckdb {
 //! the bridges throw away.
 namespace docx {
 
-struct DocxInline {
-	std::string element_type; //!< duck_block inline vocabulary: text, bold,
-	                          //!< italic, image, note
-	std::string content;
-	//! `image`: src. `note`: nothing today, the body is the content.
-	std::map<std::string, std::string> attributes;
-};
-
-struct DocxBlock {
-	//! duck_block kind. Empty means `block`. `value` is document METADATA.
-	std::string kind;
-	//! `value` only: the field name for attributes['key'], in PANDOC's namespace.
-	std::string key;
-	//! `value` only: the ORIGINAL field spelling, marking this as format-derived
-	//! rather than pandoc-derived. See doc_metadata.hpp for why the marker is
-	//! required.
-	std::string source_type;
-	std::string element_type; //!< "heading", "paragraph", "list", "list_item",
-	                          //!< "blockquote"
-	std::string content;      //!< flattened text; empty when inlines are populated
-	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
-	//! STRUCTURAL depth, 1 for a top-level block. This reader emits containers
-	//! now.
-	int level = 1;
-	//! `list` only: DuckBlockTypes::LIST_TYPE_*
-	std::string list_type;
-	//! `table` only: 'json', for the spec 5.0 native schema.
-	std::string encoding;
-	//! Anything not covered by the fields above -- currently a definition-list
-	//! item's `role`. Merged after the derived entries so it cannot displace one.
-	std::map<std::string, std::string> attributes;
-	std::vector<DocxInline> inlines;
-};
-
-//! Parse a .docx file into block elements. Throws IOException when the file is
-//! missing or is not a readable ZIP, and InvalidInputException when
-//! word/document.xml is absent -- a ZIP without it is not a DOCX, and saying so
-//! beats returning zero rows.
-std::vector<DocxBlock> ParseDocxFile(const std::string &path);
+// THE PARSE CORE AND THE ROW FLATTENING LIVE IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/docx.hpp and libpanduck/src/docx.cpp, which name
+// no DuckDB type. Only the table function, its bind, its scan and its
+// registration stay on this side of the seam.
+//
+// The flatten did NOT exist as a function to move: it was fused into DocxBind,
+// appending into a TableFunctionData member through a private `struct DocxRow`.
+// It is now ::panduck::docx::ReadDocx, the only place a docx row is built.
+//
+// BOTH ENTRY POINTS GAINED A ContainerStatus OUT-PARAMETER and lost the right to
+// throw. ParseDocxFile threw IOException and InvalidInputException, whose TYPES
+// are SQL-visible as the `IO Error:` / `Invalid Input Error:` prefix that
+// test/sql/docx_reader.test matches four times -- so the core reports and
+// DocxBind raises through RaiseContainerStatus (src/container_status.hpp), which
+// owns the format strings. They still take a PATH rather than source text: a
+// .docx is an archive, and ::panduck::ZipContainer is already behind the seam.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Enumerate the moved header's surface with a pattern covering
+// enum/using/constexpr/class as well as struct and function -- the first textile
+// scanner shim missed `LineKind` exactly that way. docx's surface is four names
+// and no enum, no using, no constexpr, no class. Alphabetised for clang-format.
+using ::panduck::docx::DocxBlock;
+using ::panduck::docx::DocxInline;
+using ::panduck::docx::ParseDocxFile;
+using ::panduck::docx::ReadDocx;
 
 } // namespace docx
 

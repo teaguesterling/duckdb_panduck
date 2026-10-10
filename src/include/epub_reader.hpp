@@ -1,11 +1,15 @@
 #pragma once
 
+#include "panduck/epub.hpp"
+
 #include "duckdb.hpp"
 
 #include <string>
 #include <vector>
 
 namespace duckdb {
+
+class ExtensionLoader;
 
 //! EPUB reader.
 //!
@@ -38,57 +42,37 @@ namespace duckdb {
 //! for where the line is drawn.
 namespace epub {
 
-struct EpubInline {
-	std::string element_type;
-	std::string content;
-	std::string href; //!< set for links
-	std::string src;  //!< set for images
-};
-
-struct EpubBlock {
-	//! duck_block kind. Empty means `block`, which is everything a document body
-	//! produces. `value` is document METADATA -- a discrete field, not body
-	//! content.
-	std::string kind;
-	//! `value` only: the field name, in attributes['key']. PANDOC'S namespace,
-	//! not the source's -- dc:creator is `author`.
-	std::string key;
-	//! `page_break` only: the PRINT edition's page label, from
-	//! epub:type="pagebreak". EPUB 3's way of recording where the print edition's
-	//! page N began, which citation and library workflows need and which this
-	//! reader discarded until 2026-09-01.
-	std::string page_number;
-	std::string element_type; //!< heading, paragraph, list_item, blockquote, div,
-	                          //!< code, hr
-	std::string content;      //!< flattened text; empty when inlines are populated
-	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
-	bool container = false;   //!< true for blocks whose text lives in the blocks that follow
-	//! Structural nesting depth, NOT the heading level. 0 means NULL -- a block
-	//! at the top of the document, owned by no container. `level` IS duck_block's
-	//! containment mechanism: a container's children follow it at level+1 and the
-	//! container ends at the first element back at its own level, so a consumer
-	//! has nothing else to read.
-	int level = 0;
-	//! 'bullet' or 'ordered' for a `list`, empty otherwise. Ordered lists
-	//! additionally carry start/number_style/number_delim -- emitted always, even
-	//! at their defaults, because that is what duck_block_utils' Pandoc reader
-	//! does and matching the stricter producer keeps one shape rather than two.
-	//! For a `section`: which kind of sectioning container the source marked, per
-	//! the duck_block role vocabulary. Empty for anything else.
-	std::string role;
-	//! `table` only: 'json', because spec 5.0 makes table the one element_type
-	//! whose content is a JSON document rather than text. Empty elsewhere, and an
-	//! empty encoding is emitted as NULL rather than as the string.
-	std::string encoding;
-	std::string list_type;
-	std::string list_start, number_style, number_delim;
-	std::vector<EpubInline> inlines;
-};
-
-//! Parse a .epub file into block elements, in spine order. Throws IOException
-//! when the file is missing or is not a readable ZIP, and InvalidInputException
-//! when META-INF/container.xml or the package document it names is absent.
-std::vector<EpubBlock> ParseEpubFile(const std::string &path);
+// THE PARSE CORE AND THE ROW FLATTENING LIVE IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/epub.hpp and libpanduck/src/epub.cpp, which name
+// no DuckDB type. Only the table function, its bind, its scan and its
+// registration stay on this side of the seam.
+//
+// The flatten did NOT exist as a function to move: it was fused into EpubBind,
+// appending into a TableFunctionData member through a private `struct EpubRow`.
+// It is now ::panduck::epub::ReadEpub, the only place an epub row is built.
+//
+// BOTH ENTRY POINTS GAINED A ContainerStatus OUT-PARAMETER and lost the right to
+// throw -- five throws' worth, the most of the three container readers, which is
+// why ::panduck::ContainerStatus has five codes rather than three. Their TYPES
+// are SQL-visible as the `IO Error:` / `Invalid Input Error:` prefix that
+// test/sql/epub_reader.test matches, so the core reports and EpubBind raises
+// through RaiseContainerStatus (src/container_status.hpp), which owns the format
+// strings. They still take a PATH rather than source text, and epub is the
+// clearest case for it: a book is a SPINE of members behind three levels of
+// indirection, so there is no single source text to hand in.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Enumerate the moved header's surface with a pattern covering
+// enum/using/constexpr/class as well as struct and function -- the first textile
+// scanner shim missed `LineKind` exactly that way. epub's surface is four names
+// and no enum, no using, no constexpr, no class: `using CssRules = ...` lives
+// inside the core's ANONYMOUS namespace and is not part of the module's surface.
+// Alphabetised for clang-format.
+using ::panduck::epub::EpubBlock;
+using ::panduck::epub::EpubInline;
+using ::panduck::epub::ParseEpubFile;
+using ::panduck::epub::ReadEpub;
 
 } // namespace epub
 

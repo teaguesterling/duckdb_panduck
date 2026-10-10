@@ -133,6 +133,7 @@ set(EXTENSION_SOURCES
     libpanduck/src/docx.cpp
     src/panduck_extension.cpp
     src/epub_reader.cpp
+    libpanduck/src/epub.cpp
     src/latex_reader.cpp
     src/latex_tokenizer.cpp
     libpanduck/src/latex_macros.cpp
@@ -220,7 +221,7 @@ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 # build DOES compile it -- so leaving it out would make HasModule("zip") answer
 # false about code that is linked in, which is the exact drift the comment above
 # records for textile.
-set(PANDUCK_BUILT_MODULES DOCX IPYNB LATEX MEDIAWIKI ODT ORG RST RTF TEXTILE ZIP)
+set(PANDUCK_BUILT_MODULES DOCX EPUB IPYNB LATEX MEDIAWIKI ODT ORG RST RTF TEXTILE ZIP)
 foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
   target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
   target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})

@@ -148,6 +148,8 @@ endif()
 # means only what HasModule("zip") reports.
 option(PANDUCK_WITH_DOCX "Build the docx format module (requires pugixml and miniz)"
        ${_container_default})
+option(PANDUCK_WITH_EPUB "Build the epub format module (requires pugixml and miniz)"
+       ${_container_default})
 option(PANDUCK_WITH_ODT "Build the odt format module (requires pugixml and miniz)"
        ${_container_default})
 
@@ -236,6 +238,10 @@ if(PANDUCK_WITH_DOCX)
   list(APPEND PANDUCK_SOURCES src/docx.cpp)
 endif()
 
+if(PANDUCK_WITH_EPUB)
+  list(APPEND PANDUCK_SOURCES src/epub.cpp)
+endif()
+
 if(PANDUCK_WITH_ODT)
   list(APPEND PANDUCK_SOURCES src/odt.cpp)
 endif()
@@ -249,6 +255,7 @@ endif()
 set(PANDUCK_NEEDS_ZIP_CONTAINER OFF)
 if(PANDUCK_WITH_ZIP
    OR PANDUCK_WITH_DOCX
+   OR PANDUCK_WITH_EPUB
    OR PANDUCK_WITH_ODT)
   set(PANDUCK_NEEDS_ZIP_CONTAINER ON)
   list(APPEND PANDUCK_SOURCES src/zip_container.cpp)
@@ -256,7 +263,9 @@ endif()
 
 # Likewise for pugixml, which only the container readers name.
 set(PANDUCK_NEEDS_PUGIXML OFF)
-if(PANDUCK_WITH_DOCX OR PANDUCK_WITH_ODT)
+if(PANDUCK_WITH_DOCX
+   OR PANDUCK_WITH_EPUB
+   OR PANDUCK_WITH_ODT)
   set(PANDUCK_NEEDS_PUGIXML ON)
 endif()
 
@@ -300,6 +309,10 @@ endif()
 
 if(PANDUCK_WITH_DOCX)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_DOCX)
+endif()
+
+if(PANDUCK_WITH_EPUB)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_EPUB)
 endif()
 
 if(PANDUCK_WITH_ODT)
@@ -365,7 +378,7 @@ if(PANDUCK_BUILD_TESTS)
   if(PANDUCK_WITH_RST)
     list(APPEND PANDUCK_TEST_SOURCES test/test_rst.cpp)
   endif()
-  # NO test/test_docx.cpp and NO test/test_odt.cpp, for rtf's reason below -- and odt has a second
+  # NO test_docx.cpp, NO test_epub.cpp and NO test_odt.cpp, for rtf's reason below -- and odt has a second
   # one on top of it: a standalone odt assertion needs a .odt FIXTURE on disk,
   # which means this target would grow a data dependency on test/fixtures/. That
   # is a decision about what the standalone suite is allowed to read, not a side
@@ -396,7 +409,7 @@ endif()
 
 message(
   STATUS "libpanduck modules: docx=${PANDUCK_WITH_DOCX}"
-         " ipynb=${PANDUCK_WITH_IPYNB}"
+         " epub=${PANDUCK_WITH_EPUB} ipynb=${PANDUCK_WITH_IPYNB}"
          " latex=${PANDUCK_WITH_LATEX}"
          " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
          " odt=${PANDUCK_WITH_ODT}"

@@ -45,6 +45,11 @@ bool HasModule(const char *name) {
 		return true;
 	}
 #endif
+#ifdef PANDUCK_WITH_EPUB
+	if (std::strcmp(name, "epub") == 0) {
+		return true;
+	}
+#endif
 #ifdef PANDUCK_WITH_IPYNB
 	if (std::strcmp(name, "ipynb") == 0) {
 		return true;

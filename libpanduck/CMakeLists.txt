@@ -331,6 +331,16 @@ endif()
 # reader built with PANDUCK_WITH_ZIP=OFF still gets miniz.
 if(PANDUCK_NEEDS_ZIP_CONTAINER)
   target_link_libraries(panduck PRIVATE miniz::miniz)
+  # A SECOND DEFINITION, AND NOT A DUPLICATE OF PANDUCK_WITH_ZIP. That option
+  # means only what HasModule("zip") reports; this one means "zip_container.cpp
+  # is in this build", which is true for whichever of zip/docx/epub/odt asked
+  # for it. The ByteSource tests need the second question answered, not the
+  # first: `-DPANDUCK_WITH_ZIP=OFF -DPANDUCK_WITH_ODT=ON` compiles the container
+  # and must still test it.
+  #
+  # PUBLIC so panduck_tests inherits it, which is how every module define above
+  # reaches the test sources.
+  target_compile_definitions(panduck PUBLIC PANDUCK_HAVE_ZIP_CONTAINER)
 endif()
 
 if(PANDUCK_NEEDS_PUGIXML)
@@ -363,6 +373,47 @@ if(PANDUCK_BUILD_TESTS)
   # what keeps this target meaningful with every format module switched off.
   set(PANDUCK_TEST_SOURCES test/panduck_test.cpp test/test_main.cpp test/test_engine.cpp)
 
+  # THE FIXTURE DIRECTORY, and the first data dependency this suite has had
+  # (issue #120). Every other test file feeds a string literal; test_byte_source
+  # cannot, because the claim under test is that a REAL container opens from
+  # bytes rather than from a path, and a hand-built ZIP literal would prove the
+  # plumbing against a toy instead of against the archives docx and epub ship.
+  #
+  # THE FIXTURES LIVE OUTSIDE libpanduck/, at <repo>/test/fixtures/, and are
+  # pointed at rather than copied -- a second .docx to keep byte-exact is the
+  # trap the vendored-vocabulary comment above already refuses once.
+  #
+  # THE IMPLICATION, recorded here and in test/test_byte_source.cpp because it
+  # is cheaper to name now than to rediscover: libpanduck is IN-TREE today, so
+  # this relative path resolves. The roadmap contemplates extracting it
+  # (docs/roadmap.md, L3), and on that day this path points outside the project
+  # and has to be answered -- a vendored fixture subset, a submodule, or
+  # archives generated at build time.
+  set(PANDUCK_TEST_FIXTURE_DIR
+      "${CMAKE_CURRENT_SOURCE_DIR}/../test/fixtures"
+      CACHE PATH "Directory holding the repository's test fixtures")
+
+  # FAIL LOUDLY, NEVER SILENTLY SKIP. A test that quietly does not run is this
+  # project's most expensive failure mode -- the runner already exits non-zero
+  # on zero checks for the same reason. If the fixtures are not where this
+  # expects them, the configure stops here with the remedy named rather than
+  # producing a suite that is green because it dropped a module.
+  if(NOT IS_DIRECTORY "${PANDUCK_TEST_FIXTURE_DIR}")
+    message(
+      FATAL_ERROR
+        "libpanduck tests need the repository's fixtures, and "
+        "PANDUCK_TEST_FIXTURE_DIR does not name a directory:\n"
+        "  ${PANDUCK_TEST_FIXTURE_DIR}\n"
+        "Point it at <repo>/test/fixtures with -DPANDUCK_TEST_FIXTURE_DIR=..., "
+        "or configure with -DPANDUCK_BUILD_TESTS=OFF if a test build is not wanted.")
+  endif()
+
+  # ByteSource and the archive reader over it. Follows the CONTAINER, not a
+  # reader: see PANDUCK_HAVE_ZIP_CONTAINER above.
+  if(PANDUCK_NEEDS_ZIP_CONTAINER)
+    list(APPEND PANDUCK_TEST_SOURCES test/test_byte_source.cpp)
+  endif()
+
   # Per-module test files follow their module's option, exactly as the sources
   # do -- a test referencing a module that was not built must not break the
   # configure. Each file is ALSO #ifdef-guarded internally, so the guard holds
@@ -382,11 +433,17 @@ if(PANDUCK_BUILD_TESTS)
   if(PANDUCK_WITH_RST)
     list(APPEND PANDUCK_TEST_SOURCES test/test_rst.cpp)
   endif()
-  # NO test_docx.cpp, NO test_epub.cpp and NO test_odt.cpp, for rtf's reason below -- and odt has a second
-  # one on top of it: a standalone odt assertion needs a .odt FIXTURE on disk,
-  # which means this target would grow a data dependency on test/fixtures/. That
-  # is a decision about what the standalone suite is allowed to read, not a side
-  # effect of moving a reader.
+  # NO test_docx.cpp, NO test_epub.cpp and NO test_odt.cpp, for rtf's reason below.
+  #
+  # THE SECOND OBJECTION TO THOSE THREE HAS NOW BEEN ANSWERED, which is why this
+  # comment changed rather than being deleted: a standalone docx/odt/epub
+  # assertion needs an ARCHIVE FIXTURE on disk, so the target had to grow a data
+  # dependency on test/fixtures/ -- a decision about what the standalone suite
+  # may read, not a side effect of moving a reader. Issue #120 took that
+  # decision (see PANDUCK_TEST_FIXTURE_DIR below), so what is left standing
+  # between here and a test_docx.cpp is only rtf's reason: a module's first
+  # standalone assertions are their own change, not a rider on the commit that
+  # moved it.
   # NO test/test_rtf.cpp, and the gap is deliberate rather than an oversight.
   # Adding a module its first standalone assertions in the same commit that moves
   # it would be implementation and tests changing together, which this project
@@ -407,6 +464,11 @@ if(PANDUCK_BUILD_TESTS)
   # changes the library's interface, which is an L3 decision about what
   # libpanduck installs, not a side effect of adding tests.
   target_include_directories(panduck_tests PRIVATE "${PANDUCK_VOCABULARY_DIR}")
+
+  # Quoted INSIDE the definition, so the test source can use it as a string
+  # literal without a stringify macro.
+  target_compile_definitions(panduck_tests
+                             PRIVATE "PANDUCK_TEST_FIXTURE_DIR=\"${PANDUCK_TEST_FIXTURE_DIR}\"")
 
   add_test(NAME panduck_tests COMMAND panduck_tests)
 endif()

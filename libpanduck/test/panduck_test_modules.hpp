@@ -17,6 +17,16 @@ namespace panduck_test {
 // runner's "zero checks is an error" rule would otherwise be the only thing running.
 void RunEngineTests();
 
+// NOT A FORMAT MODULE, and listed first among the guarded entries for the same
+// reason ZipContainer is listed with the format options in CMakeLists.txt: the
+// mechanism is the same one. These cover ByteSource and the archive reader built
+// on it (issue #120), so they follow the CONTAINER's availability rather than any
+// reader's -- PANDUCK_HAVE_ZIP_CONTAINER is set whenever zip_container.cpp is
+// compiled, which is for whichever of zip/docx/epub/odt asked for it.
+#ifdef PANDUCK_HAVE_ZIP_CONTAINER
+void RunByteSourceTests();
+#endif
+
 #ifdef PANDUCK_WITH_IPYNB
 void RunIpynbTests();
 #endif

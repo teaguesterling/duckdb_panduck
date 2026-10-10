@@ -1,7 +1,11 @@
 #pragma once
 
+#include "panduck/byte_source.hpp"
+
 #include "duckdb.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -181,6 +185,72 @@ void RequireReaderEnabled(ClientContext &context, const char *format);
 //! propagate, naming the actual cause. ifstream collapsed both cases into one
 //! "cannot open", which named neither.
 std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name);
+
+//! Open a file through DuckDB's FileSystem and hand back the handle, for a reader
+//! that cannot use the whole-file form above.
+//!
+//! WHY A SECOND ENTRY POINT. docx, odt and epub read a ZIP: miniz asks for bytes
+//! at offsets, and EPUB walks dozens of members out of one open archive. Slurping
+//! the whole file to satisfy that would copy an entire book into memory to read
+//! its spine, so these three want the HANDLE and a ByteSource over it (see
+//! FileHandleSource) rather than a string.
+//!
+//! ReadFileThroughVFS IS IMPLEMENTED OVER THIS, which is the point of extracting
+//! it rather than writing the open twice: the "file not found" check, its wording
+//! and its exception type are in ONE place, so a container reader's missing-file
+//! error cannot drift from the other ten readers' -- and `function_name` appears
+//! in that message for both.
+unique_ptr<FileHandle> OpenFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name);
+
+//! A ::panduck::ByteSource over a duckdb::FileHandle -- THE VFS BRIDGE, and the
+//! whole reason issue #120 built a ByteSource at all.
+//!
+//! With this, docx, odt and epub read whatever filesystem the client has attached
+//! (httpfs, s3, encrypted, in-memory, anything registered now or later), which the
+//! other ten readers have done since #122 and these three could not: they opened
+//! their archive by path through miniz.
+//!
+//! IT CATCHES AT ITS OWN BOUNDARY, AND THAT IS NOT DEFENSIVE STYLE -- IT IS THE
+//! CONTRACT. `ByteSource::Read` must not throw, because the call arrives through a
+//! C callback frame inside miniz: an exception crossing it leaks miniz's internal
+//! state and surfaces as whatever DuckDB wraps a foreign exception in, rather than
+//! as the `IO Error:` / `Invalid Input Error:` prefix three tests and
+//! test/fixtures/malformed/README.md match on. `Read` is deliberately NOT spelled
+//! `noexcept` (see byte_source.hpp) precisely so that a leak here is a reportable
+//! error instead of std::terminate -- which means the catch below, not the
+//! compiler, is the enforcement. A `FileHandle::Read` on an httpfs or S3 path can
+//! throw, so this is a live case and not a theoretical one.
+//!
+//! The division is unchanged by this class: the CORE reports failure through
+//! ContainerStatus and the TAIL raises. A read that fails becomes 0 bytes, miniz
+//! fails to open or fails to inflate, the core reports, and the reader raises the
+//! same exception callers have always seen.
+class FileHandleSource : public ::panduck::ByteSource {
+public:
+	//! `handle` must outlive this source, and the source must outlive anything
+	//! built on it -- a ZipContainer holds its source by reference and reads
+	//! members on demand (zip_container.hpp). Never throws.
+	explicit FileHandleSource(FileHandle &handle);
+
+	//! The size cached at construction, or 0 when it could not be determined.
+	//! CACHED because this is const and `GetFileSize` is not -- the same bargain
+	//! ::panduck::FileSource makes, and for the same reason.
+	uint64_t Size() const override;
+
+	//! Reads up to `nr_bytes` at `offset`, CLAMPED to the cached size. Returns the
+	//! bytes copied: a short read at end of file, and 0 when the read failed or
+	//! the offset is past the end. Never throws.
+	size_t Read(void *buffer, size_t nr_bytes, uint64_t offset) override;
+
+	//! The path as opened -- a path or a URL, whatever the client's filesystem was
+	//! handed. Message material only.
+	const std::string &Name() const override;
+
+private:
+	FileHandle &handle;
+	uint64_t size;
+	std::string name;
+};
 } // namespace readers
 
 void RegisterReaderRegistry(ExtensionLoader &loader);

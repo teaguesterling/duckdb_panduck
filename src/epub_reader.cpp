@@ -37,9 +37,24 @@
 // message, and epub is why that type has five codes. See
 // src/include/container_status.hpp.
 //
-// NO FileSystem HERE, like docx and odt and unlike rtf, and that is unchanged
-// behaviour rather than a choice made in this commit: read_epub_blocks has
-// always opened the archive with miniz directly.
+// THE ARCHIVE NOW OPENS THROUGH DuckDB's FileSystem (issue #120 step 2), like
+// docx and odt and like the other ten readers since #122. read_epub_blocks
+// handed a path straight to miniz, so it could not see an `s3://` or `https://`
+// file. The bind opens the handle here and passes a
+// `readers::FileHandleSource` to the core's `ByteSource` overload; the core still
+// knows nothing about DuckDB.
+//
+// EPUB IS THE FORMAT THAT MAKES THE HANDLE WORTH HAVING. A book is a SPINE of
+// members read out of one open archive, so slurping the whole file to satisfy
+// miniz would copy an entire book into memory to walk its contents. That is why
+// readers::OpenFileThroughVFS exists beside readers::ReadFileThroughVFS rather
+// than these three readers reusing the whole-file helper.
+//
+// THE MISSING-FILE ERROR IS THE SHARED ONE, not a local copy:
+// OpenFileThroughVFS raises the same `file not found` IOException
+// ReadFileThroughVFS raises for the other ten readers. All five of the core's
+// reported failures still come from the core, which keeps every assertion in
+// test/sql/epub_reader.test exactly as it was.
 
 namespace duckdb {
 
@@ -67,10 +82,18 @@ unique_ptr<FunctionData> EpubBind(ClientContext &context, TableFunctionBindInput
 
 	auto path = input.inputs[0].GetValue<string>();
 	auto result = make_uniq<EpubBindData>();
-	// THE ONE ROW EMITTER, now ::panduck::epub::ReadEpub, which opens the archive
-	// itself, follows the spine, and REPORTS failure instead of throwing it.
+	// OPENED THROUGH THE CLIENT'S FILESYSTEM, so any path DuckDB can reach works.
+	// The handle and the source are LOCALS that outlive the read below, and epub is
+	// where that matters most: the core keeps one container open and reads it once
+	// per spine member, so the source is still being read long after the call
+	// begins (see panduck/byte_source.hpp).
+	auto handle = readers::OpenFileThroughVFS(context, path, "read_epub_blocks");
+	readers::FileHandleSource source(*handle);
+	// THE ONE ROW EMITTER, now ::panduck::epub::ReadEpub, which reads the archive
+	// out of the source, follows the spine, and REPORTS failure instead of
+	// throwing it.
 	::panduck::ContainerStatus status;
-	result->rows = ::panduck::epub::ReadEpub(path, status);
+	result->rows = ::panduck::epub::ReadEpub(source, status);
 	if (!status.Ok()) {
 		RaiseContainerStatus(status, "read_epub_blocks", path);
 	}

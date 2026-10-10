@@ -461,7 +461,7 @@ std::set<std::string> ParseDefBodyStyles(const pugi::xml_node &content_root, con
 	                         {"Definition_20_Definition", "Definition_20_Definition_20_Tight"});
 }
 
-std::vector<OdtBlock> ParseOdtFile(const std::string &path, ContainerStatus &status) {
+std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) {
 	status = ContainerStatus();
 	// THE NON-THROWING ZipContainer. The src/ wrapper this used to name
 	// (duckdb::ZipContainer, constructed with the reader name so it could build
@@ -471,7 +471,7 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path, ContainerStatus &sta
 	// become the first two ContainerStatus codes and src/odt_reader.cpp raises
 	// exactly what it raised before. The reader name is gone from this side
 	// entirely: it is the name of a DuckDB table function.
-	::panduck::ZipContainer zip(path);
+	::panduck::ZipContainer zip(source);
 	if (!zip.IsOpen()) {
 		status = ContainerStatus::NotAZip();
 		return std::vector<OdtBlock>();
@@ -813,16 +813,31 @@ std::vector<OdtBlock> ParseOdtFile(const std::string &path, ContainerStatus &sta
 	return blocks;
 }
 
+//! The path form, which is now a DELEGATE and nothing else (issue #120 step 2).
+//!
+//! THE `FileSource` IS A LOCAL, and that is the lifetime rule rather than a
+//! shortcut: `ZipContainer` holds its source by reference and reads members on
+//! demand, so the source must outlive every read. It does -- the whole parse
+//! happens inside the call below -- and it is destroyed, closing the file, when
+//! this function returns. `FileSource` never throws on a missing path; its
+//! `Size()` is then 0, `mz_zip_reader_init` refuses an archive that small, and
+//! the overload reports `NotAZip`, which is byte-for-byte the behaviour this
+//! function had when it called `ZipContainer(path)` itself.
+std::vector<OdtBlock> ParseOdtFile(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ParseOdtFile(source, status);
+}
+
 //! Flatten format-shaped blocks into duck_block rows.
 //!
 //! LIFTED OUT OF OdtBind, where it was fused into the DuckDB bind rather than
 //! sitting after the parse core as a `BuildRows` free function. It names no
 //! DuckDB type -- only vocabulary constants -- and moving it is what lets a
 //! non-DuckDB consumer get rows at all.
-std::vector<Block> ReadOdt(const std::string &path, ContainerStatus &status) {
+std::vector<Block> ReadOdt(ByteSource &source, ContainerStatus &status) {
 	std::vector<Block> rows;
 	int32_t order = 0;
-	for (auto &block : ParseOdtFile(path, status)) {
+	for (auto &block : ParseOdtFile(source, status)) {
 		Block row;
 		row.kind = block.kind.empty() ? DuckBlockVocabulary::KIND_BLOCK : block.kind;
 		if (!block.key.empty()) {
@@ -890,6 +905,15 @@ std::vector<Block> ReadOdt(const std::string &path, ContainerStatus &status) {
 		}
 	}
 	return rows;
+}
+
+//! The path form, a delegate for the same reason ParseOdtFile's is -- see the
+//! lifetime note there. It goes through the `ByteSource` row builder rather than
+//! through `ParseOdtFile(path, ...)`, so the row-building loop above has exactly
+//! one caller shape.
+std::vector<Block> ReadOdt(const std::string &path, ContainerStatus &status) {
+	FileSource source(path);
+	return ReadOdt(source, status);
 }
 
 } // namespace odt

@@ -152,10 +152,19 @@ SELECT * FROM read_docx_blocks('test/fixtures/pandoc_outlinelevel.rtf');
 ----
 not a readable ZIP archive
 
+# A MISSING FILE NOW SAYS SO, where it used to say "not a readable ZIP archive"
+# (issue #120 step 2). The reader opens its archive through DuckDB's FileSystem
+# rather than handing a path to miniz, so a path that does not exist is caught by
+# the same readers::OpenFileThroughVFS check -- and therefore with the same
+# wording -- that every other panduck reader has used since #122. Compare
+# rtf_reader.test, which has asserted exactly this text for the same cause all
+# along: the two groups of readers no longer disagree about what a missing file
+# is called. The line above still asserts the OTHER failure, a file that exists
+# and is not a ZIP, which is still the core's report.
 statement error
 SELECT * FROM read_docx_blocks('test/fixtures/does_not_exist.docx');
 ----
-not a readable ZIP archive
+file not found
 
 # ---------------------------------------------------------------------------
 # EVERY ELEMENT CARRIES A STRUCTURAL LEVEL. Top level is 1, children are parent+1, and an

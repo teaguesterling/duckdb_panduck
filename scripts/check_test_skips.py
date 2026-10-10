@@ -125,6 +125,18 @@ DECLARED = {
         "Needs the pdf community extension.",
     ("reader_policy_mutation.test", "require-env PANDUCK_TEST_POLICY_MUTATION"):
         "Mutates reader policy globally; run on its own so it cannot disturb other files.",
+    ("container_vfs.test", "require httpfs"):
+        "Reads a docx, an odt and an epub over HTTPS, which is the point of #120 step 2 and "
+        "cannot be asserted without a filesystem extension. httpfs is out-of-tree in duckdb "
+        "v1.5.6 and declaring it would need openssl + curl in vcpkg.json, whose blast radius "
+        "includes the Wasm builds -- an earlier attempt at that broke CI and was reverted "
+        "(d2558ba). So this file RUNS for a developer with httpfs installed and SKIPS here, "
+        "and this entry is the declaration that makes that honest rather than invisible. IT "
+        "GIVES NO CI PROTECTION. The mechanism underneath it -- a ByteSource feeding "
+        "ZipContainer -- is covered hermetically and everywhere by libpanduck's "
+        "test/test_byte_source.cpp. This is the FIRST `require <ext>` entry in this map, and "
+        "it exists because #127 taught the predictor above to see one; before that, a file "
+        "exactly like this one would have gone missing while the guard printed OK.",
 }
 
 SKIPPED_RE = re.compile(r"All tests were skipped")

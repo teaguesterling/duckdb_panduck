@@ -1,0 +1,90 @@
+# name: test/sql/container_vfs.test
+# description: docx, odt and epub read through DuckDB's filesystem, not just the local disk (#120)
+# group: [sql]
+
+#
+# THIS FILE GIVES NO CI PROTECTION, AND THAT IS STATED FIRST SO NOBODY READS IT AS
+# A GATE. httpfs is out-of-tree in duckdb v1.5.6, this repo's
+# extension_config.cmake loads only panduck, and declaring httpfs would need
+# `openssl` + `curl` in vcpkg.json -- whose blast radius includes the Wasm builds,
+# which is why an earlier attempt at exactly that was reverted (d2558ba). So
+# `require httpfs` below SKIPS this whole file on every CI runner.
+#
+# What it is instead: developer-facing coverage that RUNS for anyone with httpfs
+# installed, plus an HONEST DECLARATION. scripts/check_test_skips.py predicts a
+# `require <ext>` skip since #127, and this file's (file, reason) pair is in that
+# script's DECLARED map with this reason -- so the guard stays green by AGREEING
+# that this file skips, rather than by not noticing. Before #127 a file like this
+# one went missing while the guard printed "4 predicted skip(s), 4 declared. OK".
+#
+# THE MECHANISM IS COVERED HERMETICALLY ELSEWHERE. libpanduck's
+# test/test_byte_source.cpp opens real .docx and .epub archives through a
+# MemorySource and pins member byte lengths, which is the same ByteSource path
+# this file exercises with a FileHandleSource on the far end. That test runs
+# everywhere and needs no network. This file covers the one thing it cannot: that
+# the extension's three container tails actually open through
+# FileSystem::GetFileSystem(context).
+#
+# THE URL IS PINNED TO A COMMIT SHA, not to a branch, so this file keeps testing
+# the same bytes after main moves. b97f10e is the merge of #120 step 1, where
+# these three fixtures are present and byte-identical to the local ones.
+#
+# MEASURED BEFORE THE FIX, on the same build with httpfs loaded -- all three
+# readers failed, and failed MISLEADINGLY, because a path handed to miniz could
+# only ever be a local one:
+#
+#   IO Error: read_docx_blocks: not a readable ZIP archive: https://raw.github...
+#   IO Error: read_odt_blocks:  not a readable ZIP archive: https://raw.github...
+#   IO Error: read_epub_blocks: not a readable ZIP archive: https://raw.github...
+#
+
+require httpfs
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# THE ROW COUNTS ARE THE LOCAL ONES. That is the assertion: the same fixture read
+# over HTTPS yields exactly what it yields off the disk, so nothing about going
+# through a handle changed what the readers see.
+#
+#   test/fixtures/rich.docx    10 rows   (docx_reader.test reads it locally)
+#   test/fixtures/rich.odt     12 rows
+#   test/fixtures/pandoc.epub  24 rows
+#
+# Counts rather than content, because content is already asserted in depth by the
+# three per-format test files against the identical local fixtures; repeating that
+# here would duplicate coverage that runs everywhere with coverage that does not.
+# ---------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM read_docx_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/b97f10e9c0a12a61c3936323ddff7c725e598f2f/test/fixtures/rich.docx');
+----
+10
+
+query I
+SELECT count(*) FROM read_odt_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/b97f10e9c0a12a61c3936323ddff7c725e598f2f/test/fixtures/rich.odt');
+----
+12
+
+# EPUB IS THE ONE WORTH READING REMOTELY. A book is a SPINE of members reached
+# through META-INF/container.xml and the OPF, so this count is the product of
+# dozens of positional reads against one open handle rather than of a single
+# whole-file fetch -- which is why these readers take a handle instead of reusing
+# readers::ReadFileThroughVFS.
+query I
+SELECT count(*) FROM read_epub_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/b97f10e9c0a12a61c3936323ddff7c725e598f2f/test/fixtures/pandoc.epub');
+----
+24
+
+# ---------------------------------------------------------------------------
+# AND THE ERROR CONVERGED TOO. A URL that does not exist is "file not found" --
+# the same wording readers::ReadFileThroughVFS has given the other ten readers
+# since #122, because both now go through readers::OpenFileThroughVFS. Before
+# this change a missing remote file and a corrupt local one gave the SAME message
+# ("not a readable ZIP archive"), which named neither.
+# ---------------------------------------------------------------------------
+
+statement error
+SELECT * FROM read_docx_blocks('https://raw.githubusercontent.com/teaguesterling/duckdb_panduck/b97f10e9c0a12a61c3936323ddff7c725e598f2f/test/fixtures/does_not_exist.docx');
+----
+file not found

@@ -34,11 +34,20 @@
 // reports a ::panduck::ContainerStatus; RaiseContainerStatus turns it back into
 // the same exception with the same message. See src/include/container_status.hpp.
 //
-// NO FileSystem HERE, unlike rtf, and that is unchanged behaviour rather than a
-// choice made in this commit: read_odt_blocks has always opened the archive with
-// miniz directly (ZipContainer -> mz_zip_reader_init_file), so it has never read
-// through a client-attached filesystem. Routing it through FileSystem would be a
-// behaviour change, and a widening one; it is not this commit's business.
+// THE ARCHIVE NOW OPENS THROUGH DuckDB's FileSystem (issue #120 step 2). The
+// note that used to sit here said routing this reader through FileSystem would
+// be a widening behaviour change and was not that commit's business -- it is
+// this one's. read_odt_blocks handed a path straight to miniz, so it was one of
+// three readers that could not see an `s3://` or `https://` file while the other
+// ten could. The bind opens the handle here and passes a
+// `readers::FileHandleSource` to the core's `ByteSource` overload; the core still
+// knows nothing about DuckDB.
+//
+// THE MISSING-FILE ERROR IS THE SHARED ONE, not a local copy:
+// readers::OpenFileThroughVFS raises the same `file not found` IOException
+// readers::ReadFileThroughVFS raises for the other ten readers. Everything after
+// a successful open still comes from the core, which keeps the three assertions
+// in test/sql/odt_reader.test exactly as they were.
 
 namespace duckdb {
 
@@ -66,10 +75,17 @@ unique_ptr<FunctionData> OdtBind(ClientContext &context, TableFunctionBindInput 
 
 	auto path = input.inputs[0].GetValue<string>();
 	auto result = make_uniq<OdtBindData>();
-	// THE ONE ROW EMITTER, now ::panduck::odt::ReadOdt, which opens the archive
-	// itself and REPORTS failure instead of throwing it.
+	// OPENED THROUGH THE CLIENT'S FILESYSTEM, so any path DuckDB can reach works.
+	// The handle and the source are LOCALS that outlive the read below -- which is
+	// the requirement, not an accident: the core's ZipContainer holds the source by
+	// reference and reads members on demand, so both must still be alive for the
+	// whole call (see panduck/byte_source.hpp).
+	auto handle = readers::OpenFileThroughVFS(context, path, "read_odt_blocks");
+	readers::FileHandleSource source(*handle);
+	// THE ONE ROW EMITTER, now ::panduck::odt::ReadOdt, which reads the archive out
+	// of the source and REPORTS failure instead of throwing it.
 	::panduck::ContainerStatus status;
-	result->rows = ::panduck::odt::ReadOdt(path, status);
+	result->rows = ::panduck::odt::ReadOdt(source, status);
 	if (!status.Ok()) {
 		RaiseContainerStatus(status, "read_odt_blocks", path);
 	}

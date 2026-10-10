@@ -2926,7 +2926,7 @@ void RequireReaderEnabled(ClientContext &context, const char *format) {
 	}
 }
 
-std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name) {
+unique_ptr<FileHandle> OpenFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name) {
 	// GetFileSystem(context), not a LocalFileSystem: this is the whole point. The
 	// client's registered filesystems -- httpfs, s3, an encrypted or in-memory one
 	// -- are reachable only through the context's FileSystem.
@@ -2934,7 +2934,20 @@ std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, 
 	if (!fs.FileExists(path)) {
 		throw IOException("%s: file not found: %s", function_name, path);
 	}
-	auto handle = fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_READ);
+	// OpenFile's OWN error is allowed to propagate, which is the precision note in
+	// the header: a path that exists but will not open names its actual cause
+	// instead of being collapsed into "cannot open".
+	return fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_READ);
+}
+
+std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name) {
+	// THE OPEN IS SHARED WITH THE CONTAINER READERS (issue #120 step 2), so the
+	// "file not found" check, its wording and its exception type have one home.
+	// GetFileSystem is looked up again here rather than threaded out of the helper:
+	// it is an accessor on the context, not an open, and returning it alongside the
+	// handle would widen the helper's shape for nothing.
+	auto handle = OpenFileThroughVFS(context, path, function_name);
+	auto &fs = FileSystem::GetFileSystem(context);
 	auto size = fs.GetFileSize(*handle);
 	std::string data;
 	data.resize(size);
@@ -2942,6 +2955,79 @@ std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, 
 		fs.Read(*handle, const_cast<char *>(data.data()), size);
 	}
 	return data;
+}
+
+FileHandleSource::FileHandleSource(FileHandle &handle_p) : handle(handle_p), size(0), name(handle_p.GetPath()) {
+	// SIZE CACHED AT CONSTRUCTION, because Size() is const and GetFileSize() is
+	// not -- ::panduck::FileSource caches it in its constructor for the same
+	// reason. The FileSystem comes off the handle rather than being passed in, so
+	// a caller needs nothing but the handle it already has.
+	//
+	// THE int64_t FORM IS USED ON PURPOSE. FileSystem::GetFileSize(FileHandle &)
+	// returns -1 on error, where FileHandle::GetFileSize() NumericCasts that same
+	// -1 into an idx_t and throws doing it. A ByteSource constructor that threw
+	// would be the wrong shape twice over: FileSource's never does, and the whole
+	// class exists to keep errors out of the callback path. So: -1 becomes a size
+	// of 0, and byte_source.hpp already rules that a size of 0 is a REPORT --
+	// mz_zip_reader_init simply refuses an archive that small.
+	try {
+		int64_t file_size = handle.file_system.GetFileSize(handle);
+		if (file_size > 0) {
+			size = static_cast<uint64_t>(file_size);
+		}
+	} catch (...) {
+		size = 0;
+	}
+}
+
+uint64_t FileHandleSource::Size() const {
+	return size;
+}
+
+size_t FileHandleSource::Read(void *buffer, size_t nr_bytes, uint64_t offset) {
+	if (nr_bytes == 0 || offset >= size) {
+		// PAST THE END IS A SHORT READ OF ZERO, not a failure -- miniz probes
+		// beyond the end of a truncated archive while hunting for the central
+		// directory, and MemorySource answers that probe the same way.
+		return 0;
+	}
+	// CLAMPED TO THE CACHED SIZE BEFORE THE CALL, and this is load-bearing rather
+	// than tidy. DuckDB's positional read is documented "Read exactly nr_bytes...
+	// Fails if nr_bytes could not be read" and returns void -- it THROWS on a
+	// short read rather than reporting one. miniz asks for more than remains, so
+	// without this clamp an ordinary end-of-archive probe would raise, be caught
+	// below, and report 0 bytes where the bytes were really there. Clamping turns
+	// the normal case back into a plain successful read.
+	uint64_t available = size - offset;
+	size_t n = static_cast<uint64_t>(nr_bytes) < available ? nr_bytes : static_cast<size_t>(available);
+	try {
+		handle.Read(buffer, static_cast<idx_t>(n), static_cast<idx_t>(offset));
+		return n;
+	} catch (...) {
+		// THE BOUNDARY CATCH THE CONTRACT REQUIRES. See the class comment: this
+		// call returns through a C callback frame inside miniz, and
+		// ByteSource::Read is must-not-throw-but-not-noexcept so that a failure
+		// here is a reportable error rather than std::terminate.
+		//
+		// `catch (...)`, not a list of types, because the set of things an
+		// arbitrary registered filesystem can throw is not ours to enumerate --
+		// httpfs alone raises on a 403, on a connection reset and on retry
+		// exhaustion, and a filesystem registered by some future extension owes us
+		// no particular hierarchy.
+		//
+		// WHAT IT COSTS, recorded so the next person does not have to find out: the
+		// specific cause is dropped. An S3 403 reaches the user as the container
+		// reader's own failure message rather than as the permission error it was,
+		// because the only channel back through miniz is a byte count. Carrying the
+		// message out would need a second error channel between the source and the
+		// tail, which `core reports, tail raises` deliberately does not have; it is
+		// a candidate for later, not something to smuggle in here.
+		return 0;
+	}
+}
+
+const std::string &FileHandleSource::Name() const {
+	return name;
 }
 } // namespace readers
 

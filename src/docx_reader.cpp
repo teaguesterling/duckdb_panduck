@@ -35,10 +35,20 @@
 // into the same exception with the same message. See
 // src/include/container_status.hpp.
 //
-// NO FileSystem HERE, unlike rtf, and that is unchanged behaviour rather than a
-// choice made in this commit: read_docx_blocks has always opened the archive
-// with miniz directly (ZipContainer -> mz_zip_reader_init_file), so it has never
-// read through a client-attached filesystem.
+// THE ARCHIVE NOW OPENS THROUGH DuckDB's FileSystem (issue #120 step 2), which
+// closed the last gap this reader had: read_docx_blocks used to hand a path
+// straight to miniz, so it was one of three readers that could not see an
+// `s3://` or `https://` file while the other ten could. The bind opens the handle
+// here and passes a `readers::FileHandleSource` to the core's `ByteSource`
+// overload; the core still knows nothing about DuckDB.
+//
+// THE MISSING-FILE ERROR IS THE SHARED ONE, not a local copy:
+// readers::OpenFileThroughVFS raises the same `file not found` IOException
+// readers::ReadFileThroughVFS raises for the other ten readers, so a user cannot
+// tell the two groups apart by the message. What DOES still come from the core is
+// everything after a successful open -- a file that is not a ZIP, a missing
+// word/document.xml -- which keeps the four assertions in
+// test/sql/docx_reader.test exactly as they were.
 
 namespace duckdb {
 
@@ -68,10 +78,17 @@ unique_ptr<FunctionData> DocxBind(ClientContext &context, TableFunctionBindInput
 
 	auto path = input.inputs[0].GetValue<string>();
 	auto result = make_uniq<DocxBindData>();
-	// THE ONE ROW EMITTER, now ::panduck::docx::ReadDocx, which opens the archive
-	// itself and REPORTS failure instead of throwing it.
+	// OPENED THROUGH THE CLIENT'S FILESYSTEM, so any path DuckDB can reach works.
+	// The handle and the source are LOCALS that outlive the read below -- which is
+	// the requirement, not an accident: the core's ZipContainer holds the source by
+	// reference and reads members on demand, so both must still be alive for the
+	// whole call (see panduck/byte_source.hpp).
+	auto handle = readers::OpenFileThroughVFS(context, path, "read_docx_blocks");
+	readers::FileHandleSource source(*handle);
+	// THE ONE ROW EMITTER, now ::panduck::docx::ReadDocx, which reads the archive
+	// out of the source and REPORTS failure instead of throwing it.
 	::panduck::ContainerStatus status;
-	result->rows = ::panduck::docx::ReadDocx(path, status);
+	result->rows = ::panduck::docx::ReadDocx(source, status);
 	if (!status.Ok()) {
 		RaiseContainerStatus(status, "read_docx_blocks", path);
 	}

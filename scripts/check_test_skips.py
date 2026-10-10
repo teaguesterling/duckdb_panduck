@@ -53,9 +53,11 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TEST_DIR = ROOT / "test" / "sql"
+EXTENSION_CONFIG = ROOT / "extension_config.cmake"
 
 HTTP = "skip on error_message matching 'HTTP'"
 
@@ -65,8 +67,41 @@ HTTP = "skip on error_message matching 'HTTP'"
 # sees the consequences of.
 COMMUNITY = ("webbed", "duck_block_utils", "pdf", "markdown")
 
+# Extensions DuckDB's default build links statically, so `require <ext>` never skips no
+# matter what THIS repo's extension_config.cmake loads. Kept as short as the tree actually
+# requires -- not a speculative list of everything core ships.
+STATICALLY_LINKED = (
+    "parquet",  # test/sql/ has one `require parquet`; parquet ships in DuckDB's default build.
+)
+
 BARE_INSTALL_RE = re.compile(r"^INSTALL\s+(\w+)\s*;", re.M)
 REQUIRE_ENV_RE = re.compile(r"^require-env\s+(\S+)", re.M)
+# `require <ext>` on its own line. Must NOT match `require-env FOO`: after `require` comes
+# `-`, not [ \t], so REQUIRE_ENV_RE's lines fail this pattern at the same character that
+# makes them require-env in the first place. Verified, not assumed -- see --self-test.
+REQUIRE_RE = re.compile(r"^require[ \t]+(\w+)\s*$", re.M)
+EXTENSION_LOAD_RE = re.compile(r"duckdb_extension_load\(\s*(\w+)")
+
+
+def built_extensions(config_path=EXTENSION_CONFIG):
+    """Extensions THIS repo's build loads, derived from extension_config.cmake.
+
+    Parsed rather than hardcoded so the rule tracks the build instead of drifting from it:
+    if someone later adds `duckdb_extension_load(httpfs ...)`, `require httpfs` genuinely
+    stops skipping and this guard stops predicting it with no edit to this file. A hardcoded
+    guess would instead need updating by hand every time the build's extension list changes,
+    and silently go stale the moment it didn't.
+    """
+    try:
+        text = config_path.read_text()
+    except OSError:
+        return set()
+    return set(EXTENSION_LOAD_RE.findall(text))
+
+
+def available_extensions(config_path=EXTENSION_CONFIG):
+    """Extensions a `require <ext>` directive will find present: derived + statically linked."""
+    return built_extensions(config_path) | set(STATICALLY_LINKED)
 
 # (file, reason prefix) -> why this skip is expected.
 DECLARED = {
@@ -95,14 +130,18 @@ DECLARED = {
 SKIPPED_RE = re.compile(r"All tests were skipped")
 
 
-def predict(path):
+def predict(path=None, text=None):
     """Reasons this file WILL be skipped, read from the file itself.
 
     The runtime mode measures what happened; this predicts it from the causes, so it needs
     no build and runs on any runner. It cannot see a skip whose cause is not one of these
-    two -- which is why it reports what it scanned for, and why the runtime mode exists.
+    three -- which is why it reports what it scanned for, and why the runtime mode exists.
+
+    Takes a path OR text directly, so --self-test can drive it against synthetic input
+    without writing into test/sql/.
     """
-    text = path.read_text()
+    if text is None:
+        text = path.read_text()
     # A require-env GATE FIRES FIRST and skips the whole file, so nothing below it ever
     # runs -- including a bare INSTALL that would otherwise 404. Predicting both would
     # report a skip that cannot happen, and the runtime mode proves it: pdf_reader.test
@@ -110,11 +149,58 @@ def predict(path):
     envs = REQUIRE_ENV_RE.findall(text)
     if envs:
         return [(f"require-env {var}", f"require-env {var} gates the whole file") for var in envs]
+    # `require <ext>` GATES THE FILE BEFORE ANY INSTALL LINE EXECUTES, same reasoning as
+    # require-env above: an unavailable `require` means a bare INSTALL below it never runs
+    # either, so these two causes are also mutually exclusive within one file.
+    unavailable = [ext for ext in REQUIRE_RE.findall(text) if ext not in available_extensions()]
+    if unavailable:
+        return [
+            (f"require {ext}", f"require {ext} -- not loaded by this build, so it gates the whole file")
+            for ext in unavailable
+        ]
     reasons = []
     for ext in BARE_INSTALL_RE.findall(text):
         if ext in COMMUNITY:
             reasons.append((HTTP, f"bare `INSTALL {ext};` -- community, so a 404 on a clean runner"))
     return reasons
+
+
+def self_test():
+    """Prove the predictor fires on synthetic input -- including the negative arms.
+
+    A detector that only checks its positive arm is half a test (this project's standing
+    rule, see check_converter_divergence.py and check_duck_block_conformance.py): it would
+    pass identically whether `require <ext>` availability was derived correctly or not at
+    all. Writes synthetic .test files to a temp directory so test/sql/ is never touched.
+    """
+    failures = []
+    cases = [
+        ("require httpfs\n", True, "require httpfs (not loaded by this build) must predict a skip"),
+        ("require panduck\n", False, "require panduck (this repo's own extension, built) must not"),
+        ("require parquet\n", False, "require parquet (statically linked) must not"),
+        ("require-env FOO\n", True, "require-env alone must still predict a skip (no regression)"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = pathlib.Path(tmp_name)
+        for text, want_skip, label in cases:
+            p = tmp / "synthetic.test"
+            p.write_text(text)
+            reasons = predict(path=p)
+            if bool(reasons) != want_skip:
+                failures.append(f"SELF-TEST: {label} -- predict() returned {reasons!r}")
+
+        # THE PRECEDENCE RULE: require-env and an unavailable require can both be present
+        # in one file, but only the require-env reason should be reported, because the
+        # env gate fires first and the require line below it never runs.
+        both = tmp / "both.test"
+        both.write_text("require-env FOO\nrequire httpfs\n")
+        reasons = predict(path=both)
+        if len(reasons) != 1 or not reasons[0][0].startswith("require-env"):
+            failures.append(
+                "SELF-TEST: require-env FOO + require httpfs together must yield only the "
+                f"require-env reason (the env gate fires first) -- got {reasons!r}"
+            )
+    return failures
 
 
 def run_one(unittest, path, env_home=None):
@@ -141,7 +227,24 @@ def main():
     ap.add_argument("--list", action="store_true", help="report only; never fail")
     ap.add_argument("--static", action="store_true",
                     help="predict skips by reading the test files; needs no build, for CI")
+    ap.add_argument("--self-test", action="store_true",
+                    help="prove the predictor fires on synthetic input (positive and negative "
+                         "arms), including the require-env precedence rule; exits non-zero on "
+                         "any wrong arm")
     args = ap.parse_args()
+
+    if args.self_test:
+        failures = self_test()
+        if failures:
+            for f in failures:
+                print(f"  {f}")
+            print("\nFAILED: the predictor did not behave as expected on synthetic input. Its")
+            print("        verdict on real test files cannot be trusted until this is fixed.")
+            return 1
+        print("OK: 5 self-test arm(s) passed -- require httpfs predicted, require panduck and")
+        print("    require parquet not predicted, require-env alone predicted, and require-env")
+        print("    + require httpfs together yield only the require-env reason.")
+        return 0
 
     if args.static:
         files = sorted(TEST_DIR.glob("*.test"))
@@ -154,12 +257,13 @@ def main():
                 print(f"  {path.name:<34} {reason:<44} {cause}{mark}")
                 if key is None:
                     undeclared.append((path.name, reason))
-        print(f"\n  scanned {len(files)} files for two causes: a bare INSTALL of a community")
-        print(f"  extension, and require-env. {predicted} predicted skip(s), "
-              f"{predicted - len(undeclared)} declared.")
+        print(f"\n  scanned {len(files)} files for three causes: a bare INSTALL of a community")
+        print(f"  extension, a `require <ext>` that this build cannot satisfy, and require-env.")
+        print(f"  {predicted} predicted skip(s), {predicted - len(undeclared)} declared.")
         if undeclared and not args.list:
             print("\nFAILED: a test file will be skipped and nothing declares it.")
-            print("Use `INSTALL x FROM community;`, or add the pair to DECLARED with a reason.")
+            print("Use `INSTALL x FROM community;`, build/add the extension (extension_config.cmake")
+            print("or STATICALLY_LINKED), or add the pair to DECLARED with a reason.")
             return 1
         print("\nOK: every predicted skip is declared. (This mode reads the files; the")
         print("    default mode runs them and needs a build.)")

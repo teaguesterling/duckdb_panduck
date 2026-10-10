@@ -137,6 +137,7 @@ set(EXTENSION_SOURCES
     libpanduck/src/latex_macros.cpp
     libpanduck/src/latex_tokenizer.cpp
     src/odt_reader.cpp
+    libpanduck/src/odt.cpp
     src/mediawiki_reader.cpp
     libpanduck/src/mediawiki_scanner.cpp
     src/org_reader.cpp
@@ -170,7 +171,12 @@ set(EXTENSION_SOURCES
     src/reader_registry.cpp
     src/rtf_reader.cpp
     src/supported_extensions.cpp
-    src/zip_container.cpp)
+    src/zip_container.cpp
+    # The DuckDB tail of container failure: five exception format strings, one
+    # per ::panduck::ContainerStatus code (issue #104, L2). docx, odt and epub
+    # report rather than throw once their cores are behind the seam, and their
+    # exception TYPES are SQL-visible, so this is what keeps them identical.
+    src/container_status.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
@@ -213,7 +219,7 @@ set_property(TARGET ${LOADABLE_EXTENSION_NAME} PROPERTY CXX_STANDARD 17)
 # build DOES compile it -- so leaving it out would make HasModule("zip") answer
 # false about code that is linked in, which is the exact drift the comment above
 # records for textile.
-set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ORG RST RTF TEXTILE ZIP)
+set(PANDUCK_BUILT_MODULES IPYNB LATEX MEDIAWIKI ODT ORG RST RTF TEXTILE ZIP)
 foreach(_mod IN LISTS PANDUCK_BUILT_MODULES)
   target_compile_definitions(${EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})
   target_compile_definitions(${LOADABLE_EXTENSION_NAME} PRIVATE PANDUCK_WITH_${_mod})

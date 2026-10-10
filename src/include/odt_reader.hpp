@@ -1,12 +1,15 @@
 #pragma once
 
+#include "panduck/odt.hpp"
+
 #include "duckdb.hpp"
 
-#include <map>
 #include <string>
 #include <vector>
 
 namespace duckdb {
+
+class ExtensionLoader;
 
 //! ODT (OpenDocument Text) reader.
 //!
@@ -31,46 +34,33 @@ namespace duckdb {
 //! is "expect them wherever headings are a paragraph wearing a hat."
 namespace odt {
 
-struct OdtInline {
-	std::string element_type;
-	std::string content;
-	//! `image`: src.
-	std::map<std::string, std::string> attributes;
-};
-
-struct OdtBlock {
-	//! duck_block kind. Empty means `block`. `value` is document METADATA.
-	std::string kind;
-	//! `value` only: the field name for attributes['key'], in PANDOC's namespace.
-	std::string key;
-	//! `value` only: the ORIGINAL field spelling, marking this as format-derived
-	//! rather than pandoc-derived. See doc_metadata.hpp for why the marker is
-	//! required.
-	std::string source_type;
-	std::string element_type; //!< "heading", "paragraph", "list", "list_item",
-	                          //!< "blockquote"
-	std::string content;      //!< flattened text; empty when inlines are populated
-	int heading_level = 0;    //!< 1-6 for headings, 0 otherwise
-	//! STRUCTURAL depth, 1 for a top-level block. Lists nest, so this reader no
-	//! longer emits everything at 1 the way it did while list content was
-	//! flattened away.
-	int level = 1;
-	//! `list` only: DuckBlockTypes::LIST_TYPE_*
-	std::string list_type;
-	//! `table` only: 'json'.
-	std::string encoding;
-	//! Anything that is not one of the fields above -- currently a
-	//! definition-list item's `role`. Merged into the emitted attributes map
-	//! after the derived entries, so a reader-specific key cannot silently
-	//! overwrite `list_type` or `heading_level`.
-	std::map<std::string, std::string> attributes;
-	std::vector<OdtInline> inlines;
-};
-
-//! Parse a .odt file into block elements. Throws IOException when the file is
-//! missing or is not a readable ZIP, and InvalidInputException when content.xml
-//! is absent.
-std::vector<OdtBlock> ParseOdtFile(const std::string &path);
+// THE PARSE CORE AND THE ROW FLATTENING LIVE IN libpanduck (issue #104, L2):
+// libpanduck/include/panduck/odt.hpp and libpanduck/src/odt.cpp, which name no
+// DuckDB type. Only the table function, its bind, its scan and its registration
+// stay on this side of the seam.
+//
+// The flatten did NOT exist as a function to move: it was fused into OdtBind,
+// appending into a TableFunctionData member through a private `struct OdtRow`.
+// It is now ::panduck::odt::ReadOdt, the only place an odt row is built.
+//
+// BOTH ENTRY POINTS GAINED A ContainerStatus OUT-PARAMETER and lost the right to
+// throw. ParseOdtFile threw IOException and InvalidInputException, whose TYPES
+// are SQL-visible as the `IO Error:` / `Invalid Input Error:` prefix that
+// test/sql/odt_reader.test matches -- so the core reports and OdtBind raises
+// through RaiseContainerStatus (src/container_status.hpp), which owns the format
+// strings. They still take a PATH rather than source text: a .odt is an archive,
+// and ::panduck::ZipContainer is already behind the seam.
+//
+// Leading `::` is mandatory: inside `namespace duckdb` a bare `panduck::` binds
+// to `duckdb::panduck`, the compat helpers in panduck_duckdb_compat.hpp, not to
+// the library. Enumerate the moved header's surface with a pattern covering
+// enum/using/constexpr/class as well as struct and function -- the first textile
+// scanner shim missed `LineKind` exactly that way. odt's surface is four names
+// and no enum, no using, no constexpr, no class. Alphabetised for clang-format.
+using ::panduck::odt::OdtBlock;
+using ::panduck::odt::OdtInline;
+using ::panduck::odt::ParseOdtFile;
+using ::panduck::odt::ReadOdt;
 
 } // namespace odt
 

@@ -105,6 +105,50 @@ else()
 endif()
 option(PANDUCK_WITH_ZIP "Build the shared ZIP container reader (requires miniz)" ${_zip_default})
 
+# pugixml IS THE SECOND DEPENDENCY OF THE SAME SHAPE AS miniz, and like miniz it
+# is nothing like yyjson. It reaches the extension build through
+# `find_package(pugixml CONFIG REQUIRED)` in the ROOT CMakeLists (line ~21), from
+# vcpkg -- `vcpkg.json` lists `pugixml` -- and its package files are ordinary
+# vcpkg ones: no duckdb/ include, no DuckDB namespace, nothing vendored. So the
+# standalone build can use the same find_package the extension does, and unlike
+# yyjson it actually links. VERIFIED BY FORCE-LINKING, not by `panduck_tests`
+# building: an unused object is never pulled from a static archive, so a test
+# binary that happens to link proves nothing about whether pugixml resolves.
+#
+# NO include-dir-only escape hatch, for miniz's reason: pugixml is a compiled
+# library, so a bare include path would configure, compile (panduck is STATIC and
+# never links) and then fail at someone else's link line.
+#
+# OFF in CI, and correct rather than a gap: the libpanduck-seam job passes no
+# toolchain file, so find_package finds nothing and docx/odt/epub are simply not
+# built -- exactly what happens to ipynb and zip there.
+find_package(pugixml CONFIG QUIET)
+if(pugixml_FOUND)
+  message(STATUS "libpanduck: using vcpkg/system pugixml")
+endif()
+
+# THE THREE CONTAINER READERS NEED BOTH, so their default is the conjunction. A
+# format module whose default depended on one dependency could be switched on
+# with the other missing and fail at compile; `AND` is the whole of the check.
+if(pugixml_FOUND AND miniz_FOUND)
+  set(_container_default ON)
+else()
+  set(_container_default OFF)
+endif()
+
+# docx, odt and epub are the TIER 2 READERS PROPER -- the three that needed a
+# dependency decision rtf did not (see PANDUCK_WITH_RTF below). Each is a ZIP
+# with its document in a known member, so each needs ::panduck::ZipContainer
+# (hence miniz) and pugixml, and each gets its option here as it moves.
+#
+# PANDUCK_WITH_ZIP is a SEPARATE option and these do not force it on. Switching
+# zip off while leaving a container reader on is a configure the source list has
+# to handle rather than reject, and it handles it by adding zip_container.cpp
+# once for whichever of the four asked -- see the list below. The zip option then
+# means only what HasModule("zip") reports.
+option(PANDUCK_WITH_ODT "Build the odt format module (requires pugixml and miniz)"
+       ${_container_default})
+
 if(PANDUCK_YYJSON_INCLUDE_DIR OR yyjson_FOUND)
   set(_ipynb_default ON)
 else()
@@ -186,8 +230,26 @@ if(PANDUCK_WITH_IPYNB)
   list(APPEND PANDUCK_SOURCES src/ipynb.cpp)
 endif()
 
-if(PANDUCK_WITH_ZIP)
+if(PANDUCK_WITH_ODT)
+  list(APPEND PANDUCK_SOURCES src/odt.cpp)
+endif()
+
+# THE SHARED CONTAINER READER, ADDED ONCE FOR WHOEVER ASKED. It used to follow
+# PANDUCK_WITH_ZIP alone, which was right while nothing behind the seam used it.
+# odt does now, so `-DPANDUCK_WITH_ZIP=OFF -DPANDUCK_WITH_ODT=ON` would have
+# configured, compiled (panduck is STATIC, so it never links) and then failed at
+# the first executable that linked it -- the same deferred-error shape the
+# find_package comments above refuse for an include-dir escape hatch.
+set(PANDUCK_NEEDS_ZIP_CONTAINER OFF)
+if(PANDUCK_WITH_ZIP OR PANDUCK_WITH_ODT)
+  set(PANDUCK_NEEDS_ZIP_CONTAINER ON)
   list(APPEND PANDUCK_SOURCES src/zip_container.cpp)
+endif()
+
+# Likewise for pugixml, which only the container readers name.
+set(PANDUCK_NEEDS_PUGIXML OFF)
+if(PANDUCK_WITH_ODT)
+  set(PANDUCK_NEEDS_PUGIXML ON)
 endif()
 
 add_library(panduck STATIC ${PANDUCK_SOURCES})
@@ -228,9 +290,22 @@ if(PANDUCK_WITH_IPYNB)
   endif()
 endif()
 
+if(PANDUCK_WITH_ODT)
+  target_compile_definitions(panduck PUBLIC PANDUCK_WITH_ODT)
+endif()
+
 if(PANDUCK_WITH_ZIP)
   target_compile_definitions(panduck PUBLIC PANDUCK_WITH_ZIP)
+endif()
+
+# LINKED FROM THE "NEEDS" FLAGS, not from the module options, so a container
+# reader built with PANDUCK_WITH_ZIP=OFF still gets miniz.
+if(PANDUCK_NEEDS_ZIP_CONTAINER)
   target_link_libraries(panduck PRIVATE miniz::miniz)
+endif()
+
+if(PANDUCK_NEEDS_PUGIXML)
+  target_link_libraries(panduck PRIVATE pugixml::pugixml)
 endif()
 
 # THE STANDALONE TEST SUITE, and the hole it fills (issue #104, L2).
@@ -278,6 +353,11 @@ if(PANDUCK_BUILD_TESTS)
   if(PANDUCK_WITH_RST)
     list(APPEND PANDUCK_TEST_SOURCES test/test_rst.cpp)
   endif()
+  # NO test/test_odt.cpp either, for rtf's reason below -- and odt has a second
+  # one on top of it: a standalone odt assertion needs a .odt FIXTURE on disk,
+  # which means this target would grow a data dependency on test/fixtures/. That
+  # is a decision about what the standalone suite is allowed to read, not a side
+  # effect of moving a reader.
   # NO test/test_rtf.cpp, and the gap is deliberate rather than an oversight.
   # Adding a module its first standalone assertions in the same commit that moves
   # it would be implementation and tests changing together, which this project
@@ -306,6 +386,7 @@ message(
   STATUS "libpanduck modules: ipynb=${PANDUCK_WITH_IPYNB}"
          " latex=${PANDUCK_WITH_LATEX}"
          " mediawiki=${PANDUCK_WITH_MEDIAWIKI} org=${PANDUCK_WITH_ORG}"
+         " odt=${PANDUCK_WITH_ODT}"
          " rst=${PANDUCK_WITH_RST} rtf=${PANDUCK_WITH_RTF}"
          " textile=${PANDUCK_WITH_TEXTILE}"
          " zip=${PANDUCK_WITH_ZIP}"

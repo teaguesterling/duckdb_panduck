@@ -18,6 +18,7 @@
 // Flagged by the subagent that performed the move; it was right.
 #include "panduck/block.hpp"
 #include "panduck/block_json.hpp"
+#include "panduck/container_status.hpp"
 #include "panduck/doc_metadata.hpp"
 #include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
@@ -51,6 +52,11 @@ bool HasModule(const char *name) {
 #endif
 #ifdef PANDUCK_WITH_MEDIAWIKI
 	if (std::strcmp(name, "mediawiki") == 0) {
+		return true;
+	}
+#endif
+#ifdef PANDUCK_WITH_ODT
+	if (std::strcmp(name, "odt") == 0) {
 		return true;
 	}
 #endif

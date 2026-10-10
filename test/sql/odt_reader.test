@@ -108,7 +108,8 @@ SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/lib
 
 # ---------------------------------------------------------------------------
 # Errors distinguish "not a ZIP" from "a ZIP that is not an ODT" -- ZipContainer, shared
-# with the DOCX reader, names the member it expected.
+# with the DOCX reader, names the member it expected -- and both from a path that is not
+# there at all, which since #120 step 2 is answered BEFORE anything is opened.
 # ---------------------------------------------------------------------------
 statement error
 SELECT * FROM read_odt_blocks('test/fixtures/pandoc_outlinelevel.rtf');
@@ -119,6 +120,19 @@ statement error
 SELECT * FROM read_odt_blocks('test/fixtures/pandoc_pstyle.docx');
 ----
 has no content.xml
+
+# A MISSING FILE SAYS SO, from the readers::OpenFileThroughVFS check this reader
+# has shared with every other panduck reader since #120 step 2. It used to say
+# "not a readable ZIP archive" -- the same text as the first assertion above --
+# so the two causes were indistinguishable from SQL. Asserted here because the
+# convergence is a promise: docx_reader.test and epub_reader.test pin the
+# identical wording for the identical cause, and rtf_reader.test has pinned it
+# all along. A message nothing pins is how the next refactor un-converges them
+# quietly.
+statement error
+SELECT * FROM read_odt_blocks('test/fixtures/does_not_exist.odt');
+----
+file not found
 
 # ---------------------------------------------------------------------------
 # DOCUMENT METADATA -> kind='value'. Same approved exception as the DOCX reader: pandoc

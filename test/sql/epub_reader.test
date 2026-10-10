@@ -320,10 +320,11 @@ SELECT (SELECT count(*) FROM ((SELECT * FROM read_panduck_doc('test/fixtures/spi
 0
 
 # ---------------------------------------------------------------------------
-# Errors distinguish three failures: not a ZIP, a ZIP that is not an EPUB, and an EPUB
-# whose container.xml points at a package document that is not there.
-# META-INF/container.xml is the only path the format fixes, which is what makes its
-# absence mean "a ZIP, but not a book".
+# Errors distinguish four failures: a path that is not there at all, a file that is not a
+# ZIP, a ZIP that is not an EPUB, and an EPUB whose container.xml points at a package
+# document that is not there. META-INF/container.xml is the only path the format fixes,
+# which is what makes its absence mean "a ZIP, but not a book". The first of the four is
+# the newest (#120 step 2) and the only one the reader answers BEFORE opening anything.
 # ---------------------------------------------------------------------------
 statement error
 SELECT * FROM read_epub_blocks('test/fixtures/pandoc_outlinelevel.rtf');
@@ -334,6 +335,19 @@ statement error
 SELECT * FROM read_epub_blocks('test/fixtures/pandoc_pstyle.docx');
 ----
 has no META-INF/container.xml
+
+# A MISSING FILE SAYS SO, from the readers::OpenFileThroughVFS check this reader
+# has shared with every other panduck reader since #120 step 2. It used to say
+# "not a readable ZIP archive" -- the same text as the first assertion above --
+# so the two causes were indistinguishable from SQL. Asserted here because the
+# convergence is a promise: docx_reader.test and odt_reader.test pin the
+# identical wording for the identical cause, and rtf_reader.test has pinned it
+# all along. A message nothing pins is how the next refactor un-converges them
+# quietly.
+statement error
+SELECT * FROM read_epub_blocks('test/fixtures/does_not_exist.epub');
+----
+file not found
 
 # ---------------------------------------------------------------------------
 # A LIST IS A CONTAINER AND SO IS EACH ITEM -- duck_block spec 2.0. <ul> becomes a `list`

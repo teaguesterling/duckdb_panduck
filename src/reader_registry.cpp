@@ -2925,6 +2925,24 @@ void RequireReaderEnabled(ClientContext &context, const char *format) {
 		                            format);
 	}
 }
+
+std::string ReadFileThroughVFS(ClientContext &context, const std::string &path, const char *function_name) {
+	// GetFileSystem(context), not a LocalFileSystem: this is the whole point. The
+	// client's registered filesystems -- httpfs, s3, an encrypted or in-memory one
+	// -- are reachable only through the context's FileSystem.
+	auto &fs = FileSystem::GetFileSystem(context);
+	if (!fs.FileExists(path)) {
+		throw IOException("%s: file not found: %s", function_name, path);
+	}
+	auto handle = fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_READ);
+	auto size = fs.GetFileSize(*handle);
+	std::string data;
+	data.resize(size);
+	if (size > 0) {
+		fs.Read(*handle, const_cast<char *>(data.data()), size);
+	}
+	return data;
+}
 } // namespace readers
 
 static void RegisterScalarWithDesc(ExtensionLoader &loader, ScalarFunction fn, const vector<string> &params,

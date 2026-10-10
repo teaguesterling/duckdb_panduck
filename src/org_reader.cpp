@@ -8,7 +8,6 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -44,11 +43,7 @@ unique_ptr<FunctionData> OrgFileBind(ClientContext &context, TableFunctionBindIn
 	readers::RequireReaderEnabled(context, "org");
 	OrgColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
-	std::ifstream in(path, std::ios::binary);
-	if (!in) {
-		throw IOException("read_org_blocks: cannot open %s", path);
-	}
-	std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto src = readers::ReadFileThroughVFS(context, path, "read_org_blocks");
 	auto result = make_uniq<OrgBindData>();
 	result->rows = ::panduck::org::ReadOrg(src);
 	return std::move(result);

@@ -8,7 +8,6 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -43,11 +42,7 @@ unique_ptr<FunctionData> TxFileBind(ClientContext &context, TableFunctionBindInp
 	readers::RequireReaderEnabled(context, "textile");
 	TxColumns(return_types, names);
 	auto path = input.inputs[0].GetValue<string>();
-	std::ifstream in(path, std::ios::binary);
-	if (!in) {
-		throw IOException("read_textile_blocks: cannot open %s", path);
-	}
-	std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	auto src = readers::ReadFileThroughVFS(context, path, "read_textile_blocks");
 	auto result = make_uniq<TxBindData>();
 	result->rows = ::panduck::textile::ReadTextile(src);
 	return std::move(result);

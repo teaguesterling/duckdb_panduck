@@ -3,7 +3,6 @@
 #include "reader_registry.hpp"
 
 #include "duck_block_types.hpp"
-#include "duckdb/common/file_system.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -15,11 +14,16 @@
 // flattening moved to libpanduck (issue #104, L2); rtf_reader.hpp re-exports
 // their types into this namespace so nothing else had to change.
 //
-// FileSystem STAYS. Unlike textile, which reads with std::ifstream, this reader
-// goes through DuckDB's FileSystem -- so it reads from whatever filesystem the
-// client has attached, httpfs included. Swapping it for ifstream behind the seam
-// would be a behaviour change riding inside a refactor; it is a DuckDB
-// affordance and it belongs on the DuckDB side.
+// THE FILESYSTEM READ MOVED, THE BEHAVIOUR DID NOT. This reader always went
+// through DuckDB's FileSystem rather than a std::ifstream, so it always read from
+// whatever filesystem the client had attached -- httpfs included. latex and rtf
+// held byte-identical copies of that ten-line block while six other readers held
+// an ifstream and could see only local disk (issue #120), so the block is now
+// readers::ReadFileThroughVFS and all eight call it. For this file that is pure
+// deduplication: latex and rtf are the controls that prove the helper is
+// faithful, which is only worth anything if their row counts and their error
+// text are unchanged -- and rtf's "file not found" text is the one such message
+// the suite actually asserts (test/sql/rtf_reader.test:164).
 //
 // WHAT THIS FILE LOST THAT THE TIER 1 TAILS DID NOT. Those readers each had a
 // `BuildRows` free function, so the cut line was already drawn. RTF's flatten was
@@ -59,17 +63,7 @@ unique_ptr<FunctionData> RtfReaderBind(ClientContext &context, TableFunctionBind
 	                LogicalType::INTEGER};
 
 	auto path = input.inputs[0].GetValue<string>();
-	auto &fs = FileSystem::GetFileSystem(context);
-	if (!fs.FileExists(path)) {
-		throw IOException("read_rtf_blocks: file not found: %s", path);
-	}
-	auto handle = fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_READ);
-	auto size = fs.GetFileSize(*handle);
-	std::string data;
-	data.resize(size);
-	if (size > 0) {
-		fs.Read(*handle, const_cast<char *>(data.data()), size);
-	}
+	auto data = readers::ReadFileThroughVFS(context, path, "read_rtf_blocks");
 
 	auto result = make_uniq<RtfReaderBindData>();
 	// THE ONE ROW EMITTER, now ::panduck::rtf::ReadRtf. rtf has a single table

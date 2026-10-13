@@ -46,6 +46,43 @@ std::string NormalizeExt(const std::string &raw) {
 
 //! The extension of a path, normalized. Pure string work -- no I/O, so
 //! panduck_can_read() answers for a file that does not exist.
+//! Drop a trailing `@<revision>` from a git URI's basename.
+//!
+//! Only when the `@` falls after the last dot, so the revision goes and a filename
+//! that merely contains an `@` keeps its extension: `Doc.md@12345` -> `Doc.md`,
+//! while `Doc@v1.md` is returned untouched.
+static std::string StripGitRevision(const std::string &base) {
+	auto at = base.find_last_of('@');
+	if (at == std::string::npos) {
+		return base;
+	}
+	auto dot = base.find_last_of('.');
+	if (dot != std::string::npos && at < dot) {
+		return base;
+	}
+	return base.substr(0, at);
+}
+
+//! Drop a `?query` or `#fragment` from an http(s) URI's basename. Either may come
+//! first, so this cuts at whichever appears earliest.
+static std::string StripUrlQuery(const std::string &base) {
+	auto cut = base.find_first_of("?#");
+	return cut == std::string::npos ? base : base.substr(0, cut);
+}
+
+//! Schemes whose URIs carry decoration AFTER the extension, with the rule that
+//! removes it. A scheme absent here needs no cleaning -- see the measurement in
+//! ExtOfPath.
+struct SchemeCleaner {
+	const char *scheme;
+	std::string (*clean)(const std::string &);
+};
+static const SchemeCleaner SCHEME_CLEANERS[] = {
+    {"git://", StripGitRevision},
+    {"http://", StripUrlQuery},
+    {"https://", StripUrlQuery},
+};
+
 std::string ExtOfPath(const std::string &path) {
 	// A URL SCHEME IS AN EXTENSION FOR REGISTRY PURPOSES.
 	// `zim://wiki.zim/A/Article` names ONE ARTICLE inside an archive, and its
@@ -62,6 +99,38 @@ std::string ExtOfPath(const std::string &path) {
 	}
 	auto slash = path.find_last_of("/\\");
 	auto base = slash == std::string::npos ? path : path.substr(slash + 1);
+
+	// A TRANSPORT SCHEME CARRIES DECORATION AFTER THE EXTENSION, and the extension
+	// is what the registry keys on. `zim://` above is a different kind of scheme --
+	// it NAMES the format, so it answers before any of this. These ones are
+	// plumbing: the inner path decides the format, and they already worked whenever
+	// the basename happened to END at the extension. Measured before changing
+	// anything:
+	//
+	//     git://Doc.md                  markdown    already fine
+	//     git://Doc.md@12345            NULL        the @rev
+	//     https://x.org/doc.docx        docx        already fine
+	//     https://x.org/doc.docx?v=1    NULL        the query
+	//     https://x.org/doc.docx#frag   NULL        the fragment
+	//     s3://b/doc.odt                odt         needs nothing, so gets nothing
+	//
+	// So the bug was never "schemes are unhandled" -- it was that nothing removed
+	// what follows the extension. Hence a table of schemes that carry decoration
+	// rather than a table of every scheme: s3:// and the rest are absent because
+	// measurement says they need no entry, and an entry nothing needs is a claim
+	// nothing checks.
+	//
+	// WHY THIS IS PER SCHEME AND NOT ONE BLANKET RULE: `@` is legal in a local
+	// filename, so stripping it everywhere would turn `my@file.md` into `my` and
+	// lose the extension. Scope it to git:// and require the `@` to fall AFTER the
+	// last dot, so a revision is removed and `git://Doc@v1.md` is not.
+	for (auto &cleaner : SCHEME_CLEANERS) {
+		if (path.rfind(cleaner.scheme, 0) == 0) {
+			base = cleaner.clean(base);
+			break;
+		}
+	}
+
 	auto dot = base.find_last_of('.');
 	if (dot == std::string::npos || dot + 1 >= base.size()) {
 		return "";

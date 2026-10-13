@@ -523,6 +523,60 @@ SELECT panduck_format_for('zim://books/wiki.zim/A/Page') AS article,
 ----
 zim_article	zim
 
+# ---------------------------------------------------------------------------
+# DECORATION AFTER THE EXTENSION. `zim://` above NAMES a format; git:// and http(s)://
+# are transport, so the inner path decides and the registry keys on its extension.
+# Those already worked whenever the basename happened to END at the extension --
+# measured before the fix:
+#
+#     git://Doc.md                  markdown    already fine
+#     git://Doc.md@12345            NULL        the @rev
+#     https://x.org/doc.docx        docx        already fine
+#     https://x.org/doc.docx?v=1    NULL        the query
+#     s3://b/doc.odt                odt         needs nothing
+#
+# So the defect was never "schemes are unhandled": nothing removed what FOLLOWS the
+# extension. s3:// has no entry in the cleaner table because measurement says it needs
+# none, and an entry nothing needs is a claim nothing checks.
+# ---------------------------------------------------------------------------
+query IIII
+SELECT panduck_format_for('git://Doc.md@12345')          AS rev,
+       panduck_format_for('git://docs/Doc.md@HEAD')      AS nested_rev,
+       panduck_format_for('https://x.org/doc.docx?v=1')  AS query,
+       panduck_format_for('https://x.org/doc.docx#frag') AS fragment;
+----
+markdown	markdown	docx	docx
+
+# Both decorations at once, and in the order a URL puts them.
+query I
+SELECT panduck_format_for('https://x.org/doc.docx?a=1#f');
+----
+docx
+
+# THE `@` RULE IS SCOPED TWICE, and these two assertions pin DIFFERENT halves of it --
+# measured, not assumed, because a single wrong fix does not fail both:
+#
+#   at_before_dot  guards the POSITION rule. Cutting at the last `@` unconditionally
+#                  passes every assertion above and turns `Doc@v1.md` into `Doc`.
+#                  Verified by building exactly that: row 1, column at_before_dot.
+#   local_path     guards the SCHEME rule, and the naive fix above leaves it alone --
+#                  a local path never enters a scheme-scoped cleaner. It fails instead
+#                  for a fix that strips `@` from every path rather than from git://
+#                  URIs, which is the other obvious way to write this.
+query II
+SELECT panduck_format_for('git://Doc@v1.md') AS at_before_dot,
+       panduck_format_for('my@file.md')      AS local_path;
+----
+markdown	markdown
+
+# A scheme the table does not name is left exactly alone, and a transport URI with no
+# extension still answers NULL rather than guessing.
+query II
+SELECT panduck_format_for('s3://b/doc.odt') AS untouched_scheme,
+       COALESCE(panduck_format_for('git://notes'), 'NULL') AS no_extension;
+----
+odt	NULL
+
 # THE ARCHIVE ENDS AT `.zim`, WHICH IS WHAT SPLITS THE TWO HALVES. Splitting on the first
 # slash would take `wiki.zim` out of `zim://books/wiki.zim/A/Page` and leave `books` --
 # so the nested case is the one that discriminates, and a flat archive path alone would

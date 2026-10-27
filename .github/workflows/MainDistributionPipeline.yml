@@ -90,14 +90,61 @@ jobs:
   # line nobody ships. `if:` rather than `continue-on-error:` because a job calling
   # a REUSABLE workflow accepts only a fixed set of keys.
   #   gh workflow run MainDistributionPipeline.yml --ref <branch>
+  #
+  # UNTIL 2026-10-27 THIS LEG TESTED NOTHING. Every platform printed
+  # "ran tests: 0 passed, 36 skipped" (`require panduck: 33`) and concluded green
+  # (main runs 40341257349 and 40541680283). `duckdb_version: main` reaches the
+  # build as DUCKDB_VERSION=main, and duckdb main's CMakeLists.txt reads that env
+  # var as its explicit version: the binary reports 'vmain', the extension is
+  # stamped 'main', and the loader refuses it ("built specifically for DuckDB
+  # version 'main' ... this version of DuckDB is 'vmain'"). Found by scalarfs (#28).
+  # So the job below resolves main to a (commit, version) pair, computing the
+  # version the way duckdb's own CMake does for a dev build:
+  # v<scripts/ci/release_version.txt>.0-dev<git rev-list --count HEAD>.
+  # Staging builds no prebuilt for main, so ci-tools builds from source.
+  # Copied from duckdb_scalarfs 6271b22 (jobs duckdb-main-ref, duckdb-main-canary).
+  #
+  # The --require guard is the second half and is not optional: without it a load
+  # failure stays a silent skip that reports success. A red canary after this is a
+  # finding about DuckDB main, not a reason to revert.
+  duckdb-main-ref:
+    name: Canary build — resolve DuckDB main
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          # Commits only: rev-list --count needs the whole history, not its trees.
+          git clone --quiet --filter=tree:0 --no-checkout --single-branch --branch main \
+              https://github.com/duckdb/duckdb.git "$tmp/duckdb"
+          commit=$(git -C "$tmp/duckdb" rev-parse HEAD)
+          release=$(git -C "$tmp/duckdb" show HEAD:scripts/ci/release_version.txt | tr -d '[:space:]')
+          count=$(git -C "$tmp/duckdb" rev-list --count HEAD)
+          version="v${release}.0-dev${count}"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.0-dev[0-9]+$ ]]; then
+            echo "::error::could not build a dev version for duckdb main at $commit (got '$version')"
+            exit 1
+          fi
+          echo "duckdb main -> $commit, version $version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   duckdb-main-canary:
     name: Build extension binaries (duckdb main canary)
+    needs: duckdb-main-ref
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     with:
-      duckdb_version: main
+      duckdb_version: ${{ needs.duckdb-main-ref.outputs.version }}
+      duckdb_commit: ${{ needs.duckdb-main-ref.outputs.commit }}
       ci_tools_version: main
       extension_name: panduck
+      test_config: '{"test_env_variables": {"T": "--test-flags \"--require panduck\" \"test/*\""}}'
 
   # THREE ENCODINGS OF ONE FACT, asserted equal instead of maintained in parallel: the
   # duckdb submodule pin, the duckdb_version lines this workflow's build jobs ship, and the

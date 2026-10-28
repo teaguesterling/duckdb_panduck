@@ -66,12 +66,30 @@ jobs:
   # reference). panduck's `on: push` is already restricted to main, so the double build the
   # gate below prevents cannot occur here; the gate is copied verbatim anyway so every repo
   # carries the same line.
+  #
+  # PROMOTED TO THE v2.0.0 RELEASE (Teague, 2026-10-27): the (version, commit) pair the
+  # registry's build.yml builds a release with, not the v2.0-cyanoptera branch. Two
+  # reasons, both measured:
+  #  - The branch tip hid a release blocker. 0.6.3 passed this leg on cyanoptera and
+  #    failed the registry's v2.0.0 build at multidoc.test:568 (community-extensions
+  #    #3404, fixed in 0.6.4).
+  #  - A branch name is a latent all-red. ci_phase.py fetches a staged prebuilt when one
+  #    exists for the commit, and builds the URL from the staged version but never
+  #    writes it back. With `v2.0-cyanoptera` the library then reports the staged
+  #    version, the extension is stamped with the branch name, and every
+  #    `require panduck` fails (duckdb_markdown job 121336086218). It passed here only
+  #    because staging had no prebuilt for that commit, so DuckDB was built from source
+  #    (run 40598969160). `v2.0.0` matches STAGED_DUCKDB_VERSION_PATTERN, so the two
+  #    halves always agree. The commit must be hex: a branch name there is rejected.
+  # The registry's ref_next build (build_next.yml) still builds the cyanoptera branch;
+  # this leg no longer mirrors that one.
   duckdb-next-build:
     name: Build extension binaries (duckdb next, v2.0 line)
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     with:
-      duckdb_version: v2.0-cyanoptera
+      duckdb_version: v2.0.0
+      duckdb_commit: d54cbbe3df17e8e5ce68312f483b4155836112aa
       ci_tools_version: main
       extension_name: panduck
 
@@ -170,17 +188,17 @@ jobs:
     env:
       # What this repo pins, ships, and tests against.
       DUCKDB_VERSION: v1.5.6
-      # The next line this workflow builds, for compile-compat and for the
-      # test-coverage leg. BRANCH name, not the registry's commit -- see
-      # duckdb-v2-test-coverage below for why that distinction is load-bearing.
-      DUCKDB_NEXT: v2.0-cyanoptera
-      # What the community registry builds by default, as of its main f13027e
-      # (read 2026-10-25; the tag held, the commit moved on). Recorded so
-      # that the registry moving again is a FAILURE here rather than a surprise
-      # in a release. DUCKDB_REGISTRY_TAG is not an upstream tag: ci-tools tags
-      # the commit with it locally so the built extension reports a version.
+      # The next line this workflow builds and tests (duckdb-next-build). It is
+      # the registry's release version, not a branch name: see that job for why
+      # a branch name there can turn every test into a load failure.
+      DUCKDB_NEXT: v2.0.0
+      # What the community registry builds a release with by default (build.yml),
+      # read 2026-10-27. Recorded so that the registry moving again is a FAILURE
+      # here rather than a surprise in a release. Until 2026-10-27 this recorded
+      # DUCKDB_REGISTRY_TAG v2.0.0-alpha46057, read from a `duckdb_tag:` line the
+      # registry had already commented out; the parse below now skips comments.
       DUCKDB_REGISTRY_COMMIT: d54cbbe3df17e8e5ce68312f483b4155836112aa
-      DUCKDB_REGISTRY_TAG: v2.0.0-alpha46057
+      DUCKDB_REGISTRY_VERSION: v2.0.0
       DUCKDB_REGISTRY_TOOLS: v2.0-cyanoptera
       # scripts/build.py routes a v1.5.6 build to each descriptor's `variegata`
       # ref, which is the line this repo still ships.
@@ -231,9 +249,9 @@ jobs:
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' && continue
             for v in $(printf '%s\n' "$line" | grep -oE "$ver_re" || true); do
               [ "$v" = "$DUCKDB_VERSION" ] && continue
-              [ "$v" = "$DUCKDB_REGISTRY_TAG" ] && continue
+              [ "$v" = "$DUCKDB_REGISTRY_VERSION" ] && continue
               [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ] && continue
-              echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION} or the recorded registry tag ${DUCKDB_REGISTRY_TAG}: derive it from the shipped version or bump it"
+              echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION} or the recorded registry version ${DUCKDB_REGISTRY_VERSION}: derive it from the shipped version or bump it"
               bad=1
             done
           done < <(grep -nE "$ver_re" "$wf" || true)
@@ -299,26 +317,33 @@ jobs:
             echo "::error::community registry returned HTTP ${code2} for ${url2}"
             echo "duckdb-pin: FAILED, registry returned ${code2} for ${url2}" >> "$summary"; exit 1
           else
-            reg_commit=$(grep -m1 -o "inputs.duckdb_version || '[0-9a-f]\{40\}'" "$f1" | grep -o '[0-9a-f]\{40\}' || true)
-            reg_tag=$(grep -m1 -o "inputs.duckdb_tag || 'v[^']*'" "$f1" | grep -o "'v[^']*'" | tr -d "'" || true)
-            reg_tools=$(grep -m1 -o "inputs.ci_tools_version || '[^']*'" "$f1" | grep -o "'[^']*'$" | tr -d "'" || true)
+            # COMMENT LINES ARE NOT THE REGISTRY'S CONFIG. The registry comments out
+            # what it retires (`# duckdb_tag: ... 'v2.0.0-alpha46057'`, read
+            # 2026-10-27), and a grep over the raw file kept reading it as live.
+            f1c=$(mktemp); grep -vE '^[[:space:]]*#' "$f1" > "$f1c" || true
+            # The commit is read from the release build's `duckdb_commit:` default,
+            # not from any `duckdb_version ||` hex default: one of those belongs to
+            # doc_test, a job the registry runs with `if: false`.
+            reg_commit=$(grep -m1 -E "^[[:space:]]*duckdb_commit:.*'[0-9a-f]{40}'" "$f1c" | grep -oE '[0-9a-f]{40}' || true)
+            reg_version=$(grep -m1 -o "inputs.duckdb_version || 'v[^']*'" "$f1c" | grep -o "'v[^']*'" | tr -d "'" || true)
+            reg_tools=$(grep -m1 -o "inputs.ci_tools_version || '[^']*'" "$f1c" | grep -o "'[^']*'$" | tr -d "'" || true)
             # build.py routes one DUCKDB_VERSION to each descriptor's `variegata`
             # ref; the version sits in the condition on the line before.
             reg_variant=$(grep -B1 "'variegata' in desc" "$f2" | grep -m1 -o "== 'v[0-9.]*'" | grep -o "v[0-9.]*" || true)
-            if [ -z "$reg_commit" ] || [ -z "$reg_tag" ] || [ -z "$reg_tools" ] || [ -z "$reg_variant" ]; then
-              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build.py carry no recognisable defaults (commit='${reg_commit}', tag='${reg_tag}', ci-tools='${reg_tools}', variant='${reg_variant}'); this check's parse is wrong about the registry, fix the check"
+            if [ -z "$reg_commit" ] || [ -z "$reg_version" ] || [ -z "$reg_tools" ] || [ -z "$reg_variant" ]; then
+              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build.py carry no recognisable defaults (commit='${reg_commit}', version='${reg_version}', ci-tools='${reg_tools}', variant='${reg_variant}'); this check's parse is wrong about the registry, fix the check"
               echo "duckdb-pin: FAILED, registry files fetched but unparseable" >> "$summary"; exit 1
             fi
-            registry="${reg_commit}/${reg_tag}/${reg_tools}/${reg_variant}"
-            recorded="${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_TAG}/${DUCKDB_REGISTRY_TOOLS}/${DUCKDB_REGISTRY_VARIANT}"
+            registry="${reg_commit}/${reg_version}/${reg_tools}/${reg_variant}"
+            recorded="${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_VERSION}/${DUCKDB_REGISTRY_TOOLS}/${DUCKDB_REGISTRY_VARIANT}"
             if [ "$registry" != "$recorded" ]; then
-              echo "::error::the community registry now builds commit/tag/ci-tools/variant ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants, and re-read the DIVERGENCE note at the top of this job -- the registry has moved again"
+              echo "::error::the community registry now builds commit/version/ci-tools/variant ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants, and re-read the DIVERGENCE note at the top of this job -- the registry has moved again"
               echo "duckdb-pin: FAILED, registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 1
             fi
             # The divergence this repo knowingly carries, restated every run so it
             # cannot become invisible: we pin and ship ${DUCKDB_VERSION} while the
-            # registry's default build target is ${reg_commit:0:10} (${reg_tag}).
-            mode="registry verified at ${sha:-main}: default ${reg_commit:0:10} ${reg_tag} on ${reg_tools}, variant ${reg_variant}; THIS REPO SHIPS ${DUCKDB_VERSION} (declared divergence; see the note in this job)"
+            # registry's default build target is ${reg_commit:0:10} (${reg_version}).
+            mode="registry verified at ${sha:-main}: default ${reg_commit:0:10} ${reg_version} on ${reg_tools}, variant ${reg_variant}; THIS REPO SHIPS ${DUCKDB_VERSION} (declared divergence; see the note in this job)"
           fi
           echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; jobs ship ${DUCKDB_VERSION} and ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
 

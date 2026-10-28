@@ -317,16 +317,16 @@ jobs:
             echo "::error::community registry returned HTTP ${code2} for ${url2}"
             echo "duckdb-pin: FAILED, registry returned ${code2} for ${url2}" >> "$summary"; exit 1
           else
-            # COMMENT LINES ARE NOT THE REGISTRY'S CONFIG. The registry comments out
-            # what it retires (`# duckdb_tag: ... 'v2.0.0-alpha46057'`, read
-            # 2026-10-27), and a grep over the raw file kept reading it as live.
-            f1c=$(mktemp); grep -vE '^[[:space:]]*#' "$f1" > "$f1c" || true
-            # The commit is read from the release build's `duckdb_commit:` default,
-            # not from any `duckdb_version ||` hex default: one of those belongs to
-            # doc_test, a job the registry runs with `if: false`.
-            reg_commit=$(grep -m1 -E "^[[:space:]]*duckdb_commit:.*'[0-9a-f]{40}'" "$f1c" | grep -oE '[0-9a-f]{40}' || true)
-            reg_version=$(grep -m1 -o "inputs.duckdb_version || 'v[^']*'" "$f1c" | grep -o "'v[^']*'" | tr -d "'" || true)
-            reg_tools=$(grep -m1 -o "inputs.ci_tools_version || '[^']*'" "$f1c" | grep -o "'[^']*'$" | tr -d "'" || true)
+            # Commented-out lines are dropped first: build.yml keeps a disabled
+            # `# duckdb_tag:` line, and parsing it would report a tag nothing builds.
+            # These three parse lines are copied verbatim from duck_block_utils main
+            # at cb21b1423d. Until 2026-10-27 this job parsed the raw file and
+            # "verified" that disabled tag, v2.0.0-alpha46057; its commit grep also
+            # matched doc_test's `duckdb_version ||` hex default, not duckdb_commit.
+            grep -v '^[[:space:]]*#' "$f1" > "$f1.live" || true
+            reg_commit=$(grep -m1 -o "inputs.duckdb_commit || (inputs.duckdb_version == '' && '[0-9a-f]\{40\}'" "$f1.live" | grep -o '[0-9a-f]\{40\}' || true)
+            reg_version=$(grep -m1 -oE "^[[:space:]]+duckdb_version: \\$\\{\\{ inputs.duckdb_version \\|\\| 'v[^']*'" "$f1.live" | grep -o "'v[^']*'" | tr -d "'" || true)
+            reg_tools=$(grep -m1 -o "inputs.ci_tools_version || '[^']*'" "$f1.live" | grep -o "'[^']*'$" | tr -d "'" || true)
             # build.py routes one DUCKDB_VERSION to each descriptor's `variegata`
             # ref; the version sits in the condition on the line before.
             reg_variant=$(grep -B1 "'variegata' in desc" "$f2" | grep -m1 -o "== 'v[0-9.]*'" | grep -o "v[0-9.]*" || true)

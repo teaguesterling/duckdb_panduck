@@ -406,3 +406,21 @@ query I
 SELECT count(*) FROM (DESCRIBE SELECT * FROM read_panduck_doc('test/fixtures/two_pages.pdf'));
 ----
 7
+
+# API compatibility: the implementation must use the consolidated element grain
+# when pdf_text is present and retain the legacy reader otherwise. Exercise this
+# file against both PDF API generations; do not require either name exclusively.
+query I
+WITH expected AS (
+ SELECT page_number, element_idx FROM query(
+  CASE WHEN panduck_function_exists('pdf_text')
+  THEN 'SELECT page_number, element_idx FROM read_pdf(''test/fixtures/two_pages.pdf'', grain := ''element'', first_page := 2, last_page := 2)'
+  ELSE 'SELECT page_number, element_idx FROM read_pdf_elements(''test/fixtures/two_pages.pdf'', first_page := 2, last_page := 2)'
+  END
+ )
+), actual AS (SELECT * FROM read_pdf_blocks('test/fixtures/two_pages.pdf',pages:='2'))
+SELECT len(list(element_order))=(SELECT len(list(element_idx))+1 FROM expected)
+   AND list_sort(list(element_order))=range(0,len(list(element_order)))
+FROM actual;
+----
+true

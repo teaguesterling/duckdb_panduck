@@ -1818,6 +1818,9 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 
     {nullptr, nullptr, {nullptr}, {{nullptr, nullptr}}, nullptr}};
 
+// PDF API compatibility: pdf_text identifies the consolidated API. Choose SQL
+// before binding so neither branch names an unavailable element reader.
+//
 // read_pdf_blocks(src, pages := '') -- PDF into duck_blocks, with real page
 // selection.
 //
@@ -1827,8 +1830,8 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
 // that route cannot select pages at all. pdf_pages(src, dest, spec) can, but it
 // WRITES A NEW PDF and returns its path, which is a filesystem side effect
 // inside a SELECT and does not belong in a read path. read_pdf_elements takes
-// first_page/last_page natively, so it is the only route where `pages` can mean
-// anything.
+// first_page/last_page natively. The consolidated spelling is read_pdf with
+// grain := 'element'; both spellings expose the same bounded element stream.
 //
 // THE TRADE IS REAL AND MEASURED, NOT HIDDEN. Against the same document read as
 // ODT: the elements route KEEPS list structure that pdf_to_markdown flattens
@@ -2330,28 +2333,27 @@ WITH lvl AS (
     -- target, so read_panduck_doc's gate does not cover it: with pdf disabled,
     -- read_panduck_doc('x.pdf') refused while read_pdf_blocks('x.pdf') went straight
     -- through -- a second door onto the same content.
-    FROM (SELECT DISTINCT font_size FROM read_pdf_elements(
-              CASE WHEN NOT panduck_reader_enabled('pdf') THEN error('panduck: reader for format ''pdf'' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') ELSE src END) WHERE element_type = 'heading')
+    FROM (SELECT DISTINCT font_size FROM query(concat(
+              CASE WHEN panduck_function_exists('pdf_text') THEN 'SELECT * FROM read_pdf(' ELSE 'SELECT * FROM read_pdf_elements(' END,
+              panduck_quote(CASE WHEN NOT panduck_reader_enabled('pdf') THEN error('panduck: reader for format ''pdf'' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') ELSE src END),
+              CASE WHEN panduck_function_exists('pdf_text') THEN ', grain := ''element''' ELSE '' END, ')')) WHERE element_type = 'heading')
 ), raw AS (
     SELECT page_number, element_idx, element_type, text, font_size
-    FROM read_pdf_elements(
-        CASE WHEN NOT panduck_reader_enabled('pdf') THEN error('panduck: reader for format ''pdf'' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') ELSE src END,
-        -- pages IS COALESCED IN BOTH error() MESSAGES BELOW (round-2 error() audit): a
-        -- caller can write read_pdf_blocks(src, pages := NULL) despite the '' default,
-        -- which matches neither the '' branch nor either regexp_matches branch (NULL
-        -- compared or matched against anything is NULL, not TRUE) and falls to ELSE with
-        -- pages itself NULL. Without the coalesce the concatenation is NULL and error(NULL)
-        -- silently returns NULL instead of raising, passing a NULL first_page/last_page
-        -- into read_pdf_elements rather than the named "pages must be N or N-M" refusal.
-        first_page := CASE WHEN pages = '' THEN 1
+    FROM query(concat(
+        CASE WHEN panduck_function_exists('pdf_text') THEN 'SELECT * FROM read_pdf(' ELSE 'SELECT * FROM read_pdf_elements(' END,
+        panduck_quote(CASE WHEN NOT panduck_reader_enabled('pdf') THEN error('panduck: reader for format ''pdf'' is disabled (see panduck_enabled_readers and panduck_disabled_readers)') ELSE src END),
+        CASE WHEN panduck_function_exists('pdf_text') THEN ', grain := ''element''' ELSE '' END,
+        -- Preserve NULL-page errors before rendering numeric arguments.
+        ', first_page := ', (CASE WHEN pages = '' THEN 1
                            WHEN regexp_matches(pages, '^[0-9]+(-[0-9]+)?$')
                                THEN split_part(pages, '-', 1)::INTEGER
-                           ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END,
-        last_page := CASE WHEN pages = '' THEN 2147483647
+                           ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END)::VARCHAR,
+        ', last_page := ', (CASE WHEN pages = '' THEN 2147483647
                           WHEN regexp_matches(pages, '^[0-9]+$') THEN pages::INTEGER
                           WHEN regexp_matches(pages, '^[0-9]+-[0-9]+$')
                               THEN split_part(pages, '-', 2)::INTEGER
-                          ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END)
+                          ELSE error('panduck: pages must be N or N-M, got ' || coalesce(pages, '<NULL>')) END)::VARCHAR,
+        ')'))
 ), e AS (
     -- A page_break BLOCK opens each page, which is how duck_block_utils models pagination:
     -- duck_blocks_get_pages and duck_blocks_page_rows scan for element_type='page_break'

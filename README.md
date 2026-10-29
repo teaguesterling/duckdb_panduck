@@ -24,9 +24,13 @@ SELECT * FROM doc_search_sections('report.docx', 'p < 0.05');  -- section BY ITS
 SELECT * FROM doc_toc('analysis.ipynb', expand_embedded := true);
 ```
 
-**PDF needs one more extension.** `read_pdf_blocks` is panduck's, but its body calls
-`read_pdf_elements`, which the [`pdf`](https://duckdb.org/community_extensions/extensions/pdf)
-community extension provides:
+**PDF needs one more extension.** `read_pdf_blocks` is panduck's; it delegates to
+`read_pdf(..., grain := 'element')` on the consolidated PDF API and to
+`read_pdf_elements(...)` on older releases. Both are provided by the
+[`pdf`](https://duckdb.org/community_extensions/extensions/pdf) community extension:
+
+The loaded catalog selects the API before the reader is bound. Page bounds,
+whole-document heading levels and dense block ordering remain the same.
 
 ```sql
 INSTALL pdf FROM community; LOAD pdf;   -- once; panduck does not bundle it

@@ -755,7 +755,9 @@ which the format guard alone would let through, since a glob of PDFs still resol
 `pdf`. Forward-safety rather than redundancy: the day any format grows a plural arm, that
 combination would otherwise start silently dropping `pages` again.
 
-This goes through `read_pdf_elements`, not `pdf_to_markdown`, because `pdf_to_markdown`
+This goes through the PDF element grain: `read_pdf(..., grain := 'element')`
+on the consolidated API, or `read_pdf_elements(...)` on older releases. It avoids
+`pdf_to_markdown`, because that scalar
 takes a path and nothing else and therefore cannot select pages at all. The trade is
 measured and real: the elements route **keeps list structure** that the markdown route
 flattens into one paragraph, and **loses inline emphasis** that the markdown route keeps.

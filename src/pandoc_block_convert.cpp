@@ -1324,6 +1324,35 @@ static yyjson_mut_val *ConvertUnhandledChildToPandocVal(yyjson_mut_doc *doc, con
 	return fallback;
 }
 
+// A list item's (or one of its paragraphs') inlines, converted at THEIR level. The
+// first collected inline is a direct child of whatever owns the run, so its level is
+// the run's top level whichever shape produced it: the builder's list_item -> inline
+// (list_level + 2) or the Pandoc reader's list_item -> paragraph -> inline (+ 3). A
+// fixed list_level + 2 made the converter skip every inline of the second shape.
+static yyjson_mut_val *ListInlinesToPandocVal(yyjson_mut_doc *doc, const vector<Value> &inlines) {
+	idx_t inl_end = 0;
+	return PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, inlines, 0, GetElementLevel(inlines[0]), inl_end, 1);
+}
+
+// One Plain or Para for a list item's paragraph: its inlines when it has them, else its
+// flattened text as a single Str.
+static yyjson_mut_val *ListParaToPandocVal(yyjson_mut_doc *doc, bool tight, const vector<Value> &inlines,
+                                           const string &text) {
+	yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
+	yyjson_mut_obj_add_str(doc, para_obj, "t", tight ? "Plain" : "Para");
+	if (!inlines.empty()) {
+		yyjson_mut_obj_add_val(doc, para_obj, "c", ListInlinesToPandocVal(doc, inlines));
+	} else {
+		yyjson_mut_val *pinl = yyjson_mut_arr(doc);
+		yyjson_mut_val *pstr = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
+		yyjson_mut_obj_add_strncpy(doc, pstr, "c", text.data(), text.size());
+		yyjson_mut_arr_add_val(pinl, pstr);
+		yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
+	}
+	return para_obj;
+}
+
 static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<Value> &blocks_list, idx_t &start_idx,
                                               int32_t list_level, idx_t depth) {
 	CheckPandocDepth(depth);
@@ -1358,8 +1387,17 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		struct ExtraPara {
 			string text;
 			bool tight;
+			// This paragraph's OWN inlines. Every inline of an item used to be pooled
+			// into ListItem::inlines, so a second, formatted paragraph had its words
+			// rendered into the FIRST paragraph's slot (and emptied it), while it came
+			// out itself as `Str ""`.
+			vector<Value> inlines;
 		};
 		vector<ExtraPara> extra_paragraphs;
+		// Which slot an inline belongs to: -1 is this item's own (its first paragraph,
+		// or the builder shape's direct inlines), k is extra_paragraphs[k].
+		int64_t inline_slot = -1;
+		bool first_para_seen = false;
 		// Block children this walk does not enumerate -- a code block, blockquote
 		// or horizontal rule inside a list item, all legal Pandoc and all silently
 		// dropped before. Carried through rather than skipped.
@@ -1418,13 +1456,22 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				// keeping only the first silently dropped the rest on export. Found by
 				// testing the multi-block case panduck asked about before answering
 				// them, rather than after.
+				//
+				// "First" is tracked, not inferred from an empty `content`: a FORMATTED
+				// first paragraph has empty content too, and a second paragraph then
+				// took its place.
 				auto para_text = GetElementStringField(child, DuckBlockTypes::CONTENT_IDX);
-				if (current_item.content.empty() && current_item.extra_paragraphs.empty()) {
+				if (!current_item.first_para_seen && current_item.content.empty() && current_item.inlines.empty() &&
+				    current_item.extra_paragraphs.empty()) {
 					current_item.tight = (child_type == DuckBlockTypes::TYPE_PLAIN);
 					current_item.content = para_text;
+					current_item.inline_slot = -1;
 				} else {
-					current_item.extra_paragraphs.push_back({para_text, child_type == DuckBlockTypes::TYPE_PLAIN});
+					current_item.extra_paragraphs.push_back(
+					    {para_text, child_type == DuckBlockTypes::TYPE_PLAIN, vector<Value>()});
+					current_item.inline_slot = static_cast<int64_t>(current_item.extra_paragraphs.size()) - 1;
 				}
+				current_item.first_para_seen = true;
 				j++;
 			} else if (child_level <= list_level) {
 				break;
@@ -1486,12 +1533,27 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				j++;
 			}
 		} else if (child_kind == DuckBlockTypes::KIND_INLINE && in_item) {
-			// level+2 is the builder shape, level+3 the Pandoc one (under a
-			// paragraph).
-			if (child_level == list_level + 2 || child_level == list_level + 3) {
-				current_item.inlines.push_back(child);
+			// EVERY inline below the item, into the slot of the paragraph it follows.
+			// This took only level+2 (the builder shape) and level+3 (the Pandoc shape,
+			// under a paragraph), so the Str inside a Strong inside a Span -- level+5 --
+			// was never collected. The emit below targets the first inline's own level
+			// rather than a fixed level+2, which skipped every level+3 inline: a loose
+			// `- **Title**` exported as `Para []` (test/fixtures/lists.rtf).
+			if (child_level >= list_level + 2) {
+				if (current_item.inline_slot >= 0 &&
+				    current_item.inline_slot < static_cast<int64_t>(current_item.extra_paragraphs.size())) {
+					current_item.extra_paragraphs[current_item.inline_slot].inlines.push_back(child);
+				} else {
+					current_item.inlines.push_back(child);
+				}
 			}
 			j++;
+		} else if (child_kind != DuckBlockTypes::KIND_INLINE) {
+			// Neither a block nor an inline -- the kind='value' metadata rows after the
+			// body. The list ends here, as every other walk in this file ends at them:
+			// gathering inlines past this point would take a metadata value's inlines
+			// as an item's own.
+			break;
 		} else {
 			j++;
 		}
@@ -1547,10 +1609,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				if (!items[d].inlines.empty()) {
 					// Rich inline content -- a definition containing bold or a link kept
 					// only its flattened text before this.
-					idx_t inl_end = 0;
-					yyjson_mut_obj_add_val(doc, pl, "c",
-					                       PandocInlineConvert::ConvertDbInlinesToPandocVal(
-					                           doc, items[d].inlines, 0, list_level + 2, inl_end, 1));
+					yyjson_mut_obj_add_val(doc, pl, "c", ListInlinesToPandocVal(doc, items[d].inlines));
 				} else {
 					yyjson_mut_val *inl = yyjson_mut_arr(doc);
 					if (!items[d].content.empty()) {
@@ -1564,15 +1623,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				yyjson_mut_arr_add_val(one_def, pl);
 
 				for (auto &extra : items[d].extra_paragraphs) {
-					yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
-					yyjson_mut_obj_add_str(doc, para_obj, "t", extra.tight ? "Plain" : "Para");
-					yyjson_mut_val *pinl = yyjson_mut_arr(doc);
-					yyjson_mut_val *pstr = yyjson_mut_obj(doc);
-					yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
-					yyjson_mut_obj_add_strncpy(doc, pstr, "c", extra.text.data(), extra.text.size());
-					yyjson_mut_arr_add_val(pinl, pstr);
-					yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
-					yyjson_mut_arr_add_val(one_def, para_obj);
+					yyjson_mut_arr_add_val(one_def, ListParaToPandocVal(doc, extra.tight, extra.inlines, extra.text));
 				}
 				for (auto *extra : items[d].extra_blocks) {
 					yyjson_mut_arr_add_val(one_def, extra);
@@ -1631,10 +1682,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		yyjson_mut_obj_add_str(doc, plain_obj, "t", item.tight ? "Plain" : "Para");
 
 		if (!item.inlines.empty()) {
-			idx_t inl_end = 0;
-			yyjson_mut_val *inl_arr =
-			    PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, item.inlines, 0, list_level + 2, inl_end, 1);
-			yyjson_mut_obj_add_val(doc, plain_obj, "c", inl_arr);
+			yyjson_mut_obj_add_val(doc, plain_obj, "c", ListInlinesToPandocVal(doc, item.inlines));
 		} else if (!item.content.empty()) {
 			yyjson_mut_val *inl_arr = yyjson_mut_arr(doc);
 			yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
@@ -1654,15 +1702,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		// as a Para, so the very distinction `plain` was minted for was preserved
 		// in block one and discarded immediately after it.
 		for (auto &extra : item.extra_paragraphs) {
-			yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add_str(doc, para_obj, "t", extra.tight ? "Plain" : "Para");
-			yyjson_mut_val *pinl = yyjson_mut_arr(doc);
-			yyjson_mut_val *pstr = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
-			yyjson_mut_obj_add_strncpy(doc, pstr, "c", extra.text.data(), extra.text.size());
-			yyjson_mut_arr_add_val(pinl, pstr);
-			yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
-			yyjson_mut_arr_add_val(item_blocks, para_obj);
+			yyjson_mut_arr_add_val(item_blocks, ListParaToPandocVal(doc, extra.tight, extra.inlines, extra.text));
 		}
 
 		for (auto *extra : item.extra_blocks) {

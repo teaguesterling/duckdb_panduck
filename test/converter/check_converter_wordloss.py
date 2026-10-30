@@ -134,9 +134,11 @@ def round_trip(duckdb, path, extension=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--duckdb", default=str(ROOT / "build" / "release" / "duckdb"))
-    ap.add_argument("--extension", default=None,
-                    help="panduck.duckdb_extension to LOAD (implies -unsigned); "
-                         "omit when panduck is linked in")
+    ap.add_argument(
+        "--extension",
+        default=None,
+        help="panduck.duckdb_extension to LOAD (implies -unsigned); " "omit when panduck is linked in",
+    )
     args = ap.parse_args()
 
     if not Path(args.duckdb).exists():

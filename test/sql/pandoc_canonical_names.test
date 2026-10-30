@@ -86,21 +86,32 @@ true
 # ---------------------------------------------------------------------------
 # THROUGH DUCKDB'S FILE SYSTEM, not std::ifstream / std::ofstream (#136, #144).
 #
-# file:// is served by DuckDB's LocalFileSystem. A C++ stream treats it as a relative
-# path with a colon in it and fails to open it. So these two calls succeed only if the
-# read and the write go through the VFS, and need no network and no fixture server.
+# DuckDB's file system expands `~` to the home_directory setting. A C++ stream does not
+# expand it, and fails to open `~/...` ("Could not open file for writing: ~/..." from
+# the std::ofstream version, measured on a 4bc8548 build). So these calls succeed only
+# if the read and the write go through the VFS, with no network and no fixture server.
+# (file:// does not work for this: __TEST_DIR__ is relative, and file:// needs an
+# absolute path.)
+statement ok
+SET home_directory = '__TEST_DIR__';
+
 query I
-SELECT write_pandoc_ast('file://__TEST_DIR__/canonical_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
+SELECT write_pandoc_ast('~/canonical_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
 ----
 true
 
 query I
-SELECT read_pandoc_ast('file://__TEST_DIR__/canonical_roundtrip.json') = pandoc_ast_to_blocks(j) FROM ast;
+SELECT read_pandoc_ast('~/canonical_roundtrip.json') = pandoc_ast_to_blocks(j) FROM ast;
 ----
 true
 
 query I
-SELECT panduck_write_pandoc_ast('file://__TEST_DIR__/panduck_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
+SELECT panduck_write_pandoc_ast('~/panduck_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
+----
+true
+
+query I
+SELECT read_pandoc_ast('~/panduck_roundtrip.json') = pandoc_ast_to_blocks(j) FROM ast;
 ----
 true
 

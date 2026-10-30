@@ -1923,6 +1923,52 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 		if (switch_type && switch_arr && child_kind == DuckBlockTypes::KIND_BLOCK && child_type == switch_type &&
 		    child_level == parent_level + 1) {
 			child_blocks_arr = switch_arr;
+			// THE SWITCHING BLOCK'S OWN TEXT. A figure's caption is skipped here as a
+			// marker, and nobody read what it carried, so the Figure exported as
+			// `Caption []`. Measured on 10 of 59 round-tripped pandoc ASTs -- every
+			// fixture with an ordinary captioned image.
+			//
+			// Two shapes, both written as a lone Plain, the rule the walk already applies
+			// to a container's own content above:
+			//   - text in `content`: the content rule's tight form, and what the reader
+			//     produces for a plain caption. Ported from duck_block_utils 1c5f2a6.
+			//   - text in INLINE CHILDREN with empty content: a formatted caption. The
+			//     walk skips inlines, so this was lost too -- in duck_block_utils as well,
+			//     whose arm reads only `content` (measured).
+			// The inlines are taken only up to the next non-inline row, so a caption's
+			// BLOCK children (which follow, at a deeper level) are never mistaken for
+			// inlines; they reach switch_arr through the walk as before.
+			vector<Value> switch_inlines;
+			for (idx_t k = j + 1; k < blocks_list.size(); k++) {
+				auto &inl = blocks_list[k];
+				if (inl.IsNull()) {
+					continue;
+				}
+				if (GetElementStringField(inl, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_INLINE) {
+					break;
+				}
+				switch_inlines.push_back(inl);
+			}
+			auto switch_content = GetElementStringField(child, DuckBlockTypes::CONTENT_IDX);
+			if (!switch_inlines.empty() || !switch_content.empty()) {
+				yyjson_mut_val *inl_arr = nullptr;
+				if (!switch_inlines.empty()) {
+					idx_t inl_end = 0;
+					inl_arr = PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, switch_inlines, 0, child_level + 1,
+					                                                           inl_end, depth + 1);
+				}
+				if (!inl_arr || yyjson_mut_arr_size(inl_arr) == 0) {
+					inl_arr = yyjson_mut_arr(doc);
+					yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
+					yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
+					yyjson_mut_obj_add_strncpy(doc, str_obj, "c", switch_content.data(), switch_content.size());
+					yyjson_mut_arr_add_val(inl_arr, str_obj);
+				}
+				yyjson_mut_val *plain_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, plain_obj, "t", "Plain");
+				yyjson_mut_obj_add_val(doc, plain_obj, "c", inl_arr);
+				yyjson_mut_arr_add_val(child_blocks_arr, plain_obj);
+			}
 			j++;
 			continue;
 		}

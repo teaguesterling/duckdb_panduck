@@ -1990,13 +1990,18 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 				if (inl.IsNull()) {
 					continue;
 				}
-				auto inl_kind = GetElementStringField(inl, DuckBlockTypes::KIND_IDX);
-				if (inl_kind == DuckBlockTypes::KIND_BLOCK) {
+				// STOP at anything that is not an inline, the rule BuildBlocksJson
+				// already applies to top-level blocks. This stopped only at a BLOCK, so
+				// for the LAST paragraph of a container it walked on past the
+				// kind='value' metadata rows and took the title's inline as the
+				// paragraph's own; that inline sits at the wrong level, and the
+				// paragraph exported as `Para []`. Measured on constructs.html (`a
+				// quote`) and pandoc.epub (its Unicode line) -- duck_block_utils loses
+				// both the same way.
+				if (GetElementStringField(inl, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_INLINE) {
 					break;
 				}
-				if (inl_kind == DuckBlockTypes::KIND_INLINE) {
-					inline_children.push_back(inl);
-				}
+				inline_children.push_back(inl);
 			}
 
 			if (child_type == DuckBlockTypes::TYPE_PARAGRAPH || child_type == DuckBlockTypes::TYPE_PLAIN) {

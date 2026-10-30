@@ -94,12 +94,12 @@ void PandocAstMapScan(ClientContext &, TableFunctionInput &input, DataChunk &out
 	while (state.offset < pandoc_ast::MAPPING_COUNT && count < STANDARD_VECTOR_SIZE) {
 		const auto &m = pandoc_ast::MAPPINGS[state.offset];
 
-		output.SetValue(0, count, Value(m.pandoc_type));
-		output.SetValue(1, count, Value(m.kind));
+		output.data[0].SetValue(count, Value(m.pandoc_type));
+		output.data[1].SetValue(count, Value(m.kind));
 		// A dropped constructor has no duck_block counterpart -- NULL, not "".
-		output.SetValue(2, count, m.element_type ? Value(m.element_type) : Value(LogicalType::VARCHAR));
-		output.SetValue(3, count, Value(m.status));
-		output.SetValue(4, count, Value(m.notes));
+		output.data[2].SetValue(count, m.element_type ? Value(m.element_type) : Value(LogicalType::VARCHAR));
+		output.data[3].SetValue(count, Value(m.status));
+		output.data[4].SetValue(count, Value(m.notes));
 
 		state.offset++;
 		count++;

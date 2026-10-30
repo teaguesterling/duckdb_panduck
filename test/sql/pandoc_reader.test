@@ -34,11 +34,12 @@ paragraph	1	Hello
 # docs/superpowers/plans/2026-10-30-converter-handoff-step4.md). duck_block_utils removes
 # its copy in the release paired with this one.
 #
-# A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY. Measured: when two loaded
-# extensions register the same name, BOTH registrations survive as ambiguous overloads and
-# every call then fails at BIND TIME with "Could not choose a best candidate function" --
-# naming a construct the caller never wrote. It does not degrade, it breaks. Until the
-# two-copy window closed, this asserted 0. It now asserts that panduck registers each
+# A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY. Measured 2026-10-30, in both
+# load orders: when both extensions register these names, the one that LOADS SECOND fails
+# its init ("Failed to add new function overloads to function "pandoc_ast": function
+# already exists"). An earlier note here said the overlap left ambiguous overloads that
+# fail at bind time; that does not hold once pandoc_ast is in both. Until the two-copy
+# window closed, this asserted 0. It now asserts that panduck registers each
 # name exactly once; test/sql/pandoc_canonical_names.test pins the whole surface.
 query I
 SELECT count(*) FROM duckdb_functions()

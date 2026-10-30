@@ -209,6 +209,35 @@ SELECT panduck_write_pandoc_ast('doc.json',
     (SELECT list(b) FROM read_odt_blocks('doc.odt') b));
 ```
 
+### The converter names that moved from duck_block_utils
+
+duck_block_utils used to register the Pandoc converter under these names, and panduck
+registers them now. Add `LOAD panduck`; the SQL does not change. Each is an alias of the
+`panduck_` function beside it, which stays.
+
+| Name | panduck equivalent |
+|---|---|
+| `pandoc_ast_to_blocks(json)` | `panduck_pandoc_ast_to_blocks` |
+| `read_pandoc_ast(path)` | `panduck_pandoc_ast_to_blocks` over the file; reads through DuckDB's file system |
+| `duck_blocks_to_pandoc_ast(blocks)` | `panduck_blocks_to_pandoc_ast`, with `meta` and `blocks` typed `JSON` |
+| `duck_blocks_to_pandoc_blocks(blocks)` | `panduck_blocks_to_pandoc_blocks` |
+| `write_pandoc_ast(path, blocks)` | `panduck_write_pandoc_ast` |
+| `pandoc_ast(blocks, meta :=, api_version :=)` | table form, for `COPY ... (FORMAT JSON)` |
+| `pandoc_inlines_to_db_inlines`, `pandoc_inlines_to_text`, `duck_blocks_inlines_to_pandoc` | the inline converters |
+
+The output is panduck's, which differs from duck_block_utils' in seven places. The first
+six were measured over 68 Pandoc ASTs, and the seventh by the converter round-trip sweep:
+
+- a footnote keeps its text, as the note's children; duck_block_utils dropped it
+- a code block's content loses its trailing newline
+- a link loses pandoc's `wikilink` title marker
+- an image loses a `title` that only repeats its alt text
+- a citation is kept as text (`[@knuth1984]`); duck_block_utils dropped it
+- writing an image with no alt text gives an empty alt, not the placeholder `image`
+- writing a bare `deflist` block (a superseded type) gives a `Div`, not a `Para`
+
+Errors are the same, including the nesting limit of 128.
+
 > **Do not reach for `to_json()` on the AST struct.** Its `meta` and `blocks` fields hold
 > JSON in `VARCHAR`, so `to_json()` escapes them as strings while `pandoc-api-version`
 > serialises as a real array — producing a document that looks right and that pandoc

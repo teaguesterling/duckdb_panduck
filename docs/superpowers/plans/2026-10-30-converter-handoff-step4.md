@@ -58,11 +58,20 @@ and unknown-constructor inputs give the same result from both.
 | image `title` equal to its alt | keeps it | drops it | 1 |
 | citation | dropped | `[@knuth1984]` kept as text | 1 |
 | write: image with no alt | writes a placeholder `Str "image"` | writes an empty alt | 1 |
+| write: bare `deflist` block (superseded type) | `Para` | `Div` | sweep |
+
+The seventh row is not from the differential: pandoc never emits the superseded `deflist`
+type, so no AST in the corpus contains it. `test/converter/check_roundtrip_sweep.py` found
+it, run against panduck's own converter for the first time. Its `INHERENT` entry for
+`deflist` records `paragraph`, which was dbu's behaviour, and needs re-baselining to `div`.
+The sweep also needs dbu's vocabulary functions (`duck_block_type_names`), so it can run
+only with the NEW dbu loaded next to panduck. Phase 3 runs it.
 
 The other `to_blocks` differences are `element_order` shifts that follow from these. The
 inline converters (`pandoc_inlines_to_*`, `duck_blocks_inlines_to_pandoc`) are not
-registered in panduck, so this check does not cover them. The script is
-`differential.py` in the session scratchpad; it should be committed with phase 1.
+registered in panduck, so this check does not cover them; their expected values in
+`test/sql/pandoc_canonical_names.test` come from community duck_block_utils instead. The
+script is `test/converter/check_converter_differential.py`.
 
 ## Phases
 

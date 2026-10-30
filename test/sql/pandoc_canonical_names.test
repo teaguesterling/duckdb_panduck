@@ -1,0 +1,161 @@
+# name: test/sql/pandoc_canonical_names.test
+# description: the Pandoc converter's canonical names, taken over from duck_block_utils
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# CONVERTER HANDOFF STEP 4 (docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
+#
+# duck_block_utils registered these nine names, and its paired release removes them.
+# Callers -- duckeye routes thirteen formats through pandoc_ast_to_blocks -- keep their
+# SQL unchanged and add `LOAD panduck`. So the surface must match what they call today:
+# the same names, argument types, return types and stability. The rows below were
+# measured with duckdb_functions() on a duck_block_utils build and on community
+# duck_block_utils e00db69.
+#
+# The canonical names are ALIASES of panduck's implementation, not a second copy. Where
+# panduck's output differs from duck_block_utils' (footnote bodies kept, code block
+# trailing newline stripped, and four more, listed in the plan), the canonical names give
+# panduck's output. Teague's decision, 2026-10-30.
+query IIII
+SELECT function_name, function_type, len(parameter_types), stability
+FROM duckdb_functions()
+WHERE function_name IN ('pandoc_ast_to_blocks', 'read_pandoc_ast', 'write_pandoc_ast',
+                        'duck_blocks_to_pandoc_ast', 'duck_blocks_to_pandoc_blocks',
+                        'pandoc_inlines_to_db_inlines', 'pandoc_inlines_to_text',
+                        'duck_blocks_inlines_to_pandoc', 'pandoc_ast')
+ORDER BY function_name, len(parameter_types), parameter_types::VARCHAR;
+----
+duck_blocks_inlines_to_pandoc	scalar	1	CONSISTENT
+duck_blocks_inlines_to_pandoc	scalar	1	CONSISTENT
+duck_blocks_to_pandoc_ast	scalar	1	CONSISTENT
+duck_blocks_to_pandoc_blocks	scalar	1	CONSISTENT
+pandoc_ast	table	3	NULL
+pandoc_ast_to_blocks	scalar	1	CONSISTENT
+pandoc_inlines_to_db_inlines	scalar	1	CONSISTENT
+pandoc_inlines_to_text	scalar	1	CONSISTENT
+pandoc_inlines_to_text	scalar	2	CONSISTENT
+read_pandoc_ast	scalar	1	VOLATILE
+write_pandoc_ast	scalar	2	VOLATILE
+
+# duck_blocks_to_pandoc_ast returns meta and blocks as JSON, as duck_block_utils' did.
+# panduck_blocks_to_pandoc_ast returns VARCHAR there, and keeps doing so.
+query I
+SELECT return_type FROM duckdb_functions() WHERE function_name = 'duck_blocks_to_pandoc_ast';
+----
+STRUCT("pandoc-api-version" INTEGER[], meta JSON, blocks JSON)
+
+# A file write must never be CONSISTENT: the optimiser may then fold or deduplicate the
+# call, and the write happens fewer times than the query says. duck_block_utils marked
+# write_pandoc_ast VOLATILE. panduck_write_pandoc_ast was CONSISTENT, and is fixed with
+# the canonical name, since both are one implementation.
+query I
+SELECT stability FROM duckdb_functions() WHERE function_name = 'panduck_write_pandoc_ast';
+----
+VOLATILE
+
+# ---------------------------------------------------------------------------
+# ONE IMPLEMENTATION. Each canonical name gives the same result as its panduck_ form.
+statement ok
+CREATE TABLE ast AS SELECT content AS j FROM read_text('test/fixtures/handwritten.org.pandoc.json');
+
+query I
+SELECT pandoc_ast_to_blocks(j) = panduck_pandoc_ast_to_blocks(j) FROM ast;
+----
+true
+
+query I
+SELECT duck_blocks_to_pandoc_blocks(pandoc_ast_to_blocks(j))
+     = panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(j)) FROM ast;
+----
+true
+
+query I
+SELECT duck_blocks_to_pandoc_ast(pandoc_ast_to_blocks(j)).blocks::VARCHAR
+     = panduck_blocks_to_pandoc_ast(panduck_pandoc_ast_to_blocks(j)).blocks FROM ast;
+----
+true
+
+# read_pandoc_ast(path) is pandoc_ast_to_blocks over the file's content.
+query I
+SELECT read_pandoc_ast('test/fixtures/handwritten.org.pandoc.json') = pandoc_ast_to_blocks(j) FROM ast;
+----
+true
+
+# ---------------------------------------------------------------------------
+# THROUGH DUCKDB'S FILE SYSTEM, not std::ifstream / std::ofstream (#136, #144).
+#
+# file:// is served by DuckDB's LocalFileSystem. A C++ stream treats it as a relative
+# path with a colon in it and fails to open it. So these two calls succeed only if the
+# read and the write go through the VFS, and need no network and no fixture server.
+query I
+SELECT write_pandoc_ast('file://__TEST_DIR__/canonical_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
+----
+true
+
+query I
+SELECT read_pandoc_ast('file://__TEST_DIR__/canonical_roundtrip.json') = pandoc_ast_to_blocks(j) FROM ast;
+----
+true
+
+query I
+SELECT panduck_write_pandoc_ast('file://__TEST_DIR__/panduck_roundtrip.json', pandoc_ast_to_blocks(j)) FROM ast;
+----
+true
+
+# A missing file is an IO error that names the path, not an empty result.
+statement error
+SELECT read_pandoc_ast('test/fixtures/does_not_exist.pandoc.json');
+----
+does_not_exist.pandoc.json
+
+# ---------------------------------------------------------------------------
+# THE INLINE CONVERTERS. panduck did not register these before, so the differential in
+# the plan could not cover them. Expected values are community duck_block_utils e00db69's
+# output for the same input.
+query I
+SELECT pandoc_inlines_to_text('[{"t":"Str","c":"An"},{"t":"Space"},{"t":"Underline","c":[{"t":"Str","c":"underlined"}]},{"t":"Space"},{"t":"Str","c":"here."}]');
+----
+An underlined here.
+
+query I
+SELECT pandoc_inlines_to_text('[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Emph","c":[{"t":"Str","c":"b"}]}]', 'markdown');
+----
+a *b*
+
+# Spaces in content are shown as '_', because a one-space string does not survive the
+# result display intact: space carries ' ', and bold carries ''.
+query IIII
+SELECT b.element_type, replace(b.content, ' ', '_'), b.level, b.element_order
+FROM (SELECT unnest(pandoc_inlines_to_db_inlines('[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Strong","c":[{"t":"Str","c":"b"}]}]')) AS b);
+----
+text	a	1	0
+space	_	1	1
+bold	(empty)	1	2
+text	b	2	3
+
+query I
+SELECT duck_blocks_inlines_to_pandoc(pandoc_inlines_to_db_inlines('[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Strong","c":[{"t":"Str","c":"b"}]}]'));
+----
+[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Strong","c":[{"t":"Str","c":"b"}]}]
+
+query I
+SELECT duck_blocks_inlines_to_pandoc([pandoc_inlines_to_db_inlines('[{"t":"Str","c":"a"}]'), pandoc_inlines_to_db_inlines('[{"t":"Str","c":"b"}]')]);
+----
+[{"t":"Str","c":"a"},{"t":"Str","c":"b"}]
+
+# ---------------------------------------------------------------------------
+# pandoc_ast(): the table form, for COPY ... (FORMAT JSON).
+query III
+SELECT "pandoc-api-version"::VARCHAR, meta, blocks
+FROM pandoc_ast(pandoc_ast_to_blocks('{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Para","c":[{"t":"Str","c":"hi"}]}]}'));
+----
+[1, 23, 1]	{}	[{"t":"Para","c":[{"t":"Str","c":"hi"}]}]
+
+query II
+SELECT "pandoc-api-version"::VARCHAR, meta
+FROM pandoc_ast(pandoc_ast_to_blocks('{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[]}'),
+                meta := MAP {'title': 'My Document'}, api_version := [1, 23]);
+----
+[1, 23]	{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"My Document"}]}}

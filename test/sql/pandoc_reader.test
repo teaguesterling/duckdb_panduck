@@ -30,19 +30,21 @@ paragraph	1	Hello
 # a converter walking Pandoc's tree cannot know at the run whether it applies; panduck's
 # native readers enforce it at emission instead, where they do know.
 
-# THE NAMES ARE PANDUCK'S OWN and deliberately do not match duck_block_utils'
-# pandoc_ast_to_blocks / read_pandoc_ast.
+# THE CANONICAL CONVERTER NAMES ARE NOW PANDUCK'S (converter handoff step 4,
+# docs/superpowers/plans/2026-10-30-converter-handoff-step4.md). duck_block_utils removes
+# its copy in the release paired with this one.
 #
 # A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY. Measured: when two loaded
 # extensions register the same name, BOTH registrations survive as ambiguous overloads and
 # every call then fails at BIND TIME with "Could not choose a best candidate function" --
-# naming a construct the caller never wrote. It does not degrade, it breaks. So for the
-# window in which both copies exist, the two surfaces must not overlap.
+# naming a construct the caller never wrote. It does not degrade, it breaks. Until the
+# two-copy window closed, this asserted 0. It now asserts that panduck registers each
+# name exactly once; test/sql/pandoc_canonical_names.test pins the whole surface.
 query I
 SELECT count(*) FROM duckdb_functions()
 WHERE function_name IN ('pandoc_ast_to_blocks', 'read_pandoc_ast', 'duck_blocks_to_pandoc_ast');
 ----
-0
+3
 
 # ---------------------------------------------------------------------------
 # THE CONVERTER AND THE NATIVE READER MUST AGREE. Reading one document two ways is the

@@ -34,7 +34,7 @@ caught a real defect the other two could not see:
 |---|---|---|
 | `scripts/check_libpanduck_seam.py` | no DuckDB **name** appears | a type arriving transitively |
 | `cmake -S libpanduck` (standalone project) | the engine **compiles** with no duckdb on the include path, **at C++11** | whether the output is correct |
-| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB — 125 checks | behaviour the fixtures do not reach |
+| `libpanduck/test/` via `ctest` | the engine **works** without DuckDB — 130 or 229 checks, by configure | behaviour the fixtures do not reach |
 
 The middle one is why the standalone CMake project exists at all. panduck's own
 `CMakeLists.txt` applies DuckDB's include paths **directory-wide**, so a child
@@ -182,11 +182,21 @@ Not yet moved:
 
 `libpanduck/test/` is a dependency-free, C++11, assert-based runner wired into
 `ctest` — no gtest, no Catch2, because adding a framework to prove libpanduck has
-almost no dependencies would be self-defeating. **125 checks on the default configure** --
-which is exactly what CI runs -- across five format modules plus an always-compiled
-`engine` module covering `SpecVersion()` and `HasModule()`. ipynb's own test file
-adds 22 more but CI never runs them -- see the yyjson gap below -- so that total is
-not quoted here.
+almost no dependencies would be self-defeating.
+
+CI runs the suite in two tiers, so it has two check counts, not one. Measured on
+`main` `b762217` (run 41003383971):
+
+| CI job | configure | modules with tests | checks |
+|---|---|---|---|
+| `libpanduck names no DuckDB` | dependency-free default | 6: `engine`, latex, mediawiki, org, rst, textile | **130** |
+| `libpanduck standalone, every module ON` | all eleven modules ON, dependencies from vcpkg | 8: those six, `byte_source`, ipynb | **229** |
+
+`engine` is always compiled and covers `SpecVersion()` and `HasModule()`. The
+default configure turns ipynb, docx, odt, epub and zip OFF, because a bare runner
+has no yyjson, miniz or pugixml. rtf, docx, odt, epub and zip carry no standalone
+tests in either tier (#129). Quote the tier with any count: a single figure is how
+the old "125 checks" went stale unnoticed.
 
 Each module asserts: it returns rows at all through the DuckDB-free entry point;
 an exact row count for its fixture (so a silently dropped construct fails here
@@ -312,8 +322,10 @@ re-exported the structs and functions but not `enum class LineKind`, because the
 grep used to enumerate the header's surface matched only `^std::|^struct`. 26
 build errors. Enumerate with a pattern covering
 **`struct|class|enum|using|constexpr`** plus function signatures. The counts
-differ per reader for real reasons: mediawiki's scanner shim needs four
-`using`-declarations (`SplitCells` as well) where org's and rst's need three.
+differed per reader for real reasons: mediawiki's scanner shim needed four
+`using`-declarations (`SplitCells` as well) where org's and rst's needed three.
+The scanner shims were later deleted as callerless (#132); the enumeration rule
+still applies to the `src/include/<fmt>_reader.hpp` shims that remain.
 
 **3. Transitive includes — only the standalone build sees it.** textile's core
 called `strlen`/`strchr` and the original file never included `<cstring>`; it
@@ -381,12 +393,13 @@ cited. Capture `$?` on every gate — never `| grep -c error` as the success tes
 and compare the artifact's mtime against every changed source before citing a
 green run.
 
-## The two known gaps
+## The known gap, and an open dependency question
 
-The seam script prints these on every clean run, so "seam holds" is never read as
-more than it is. Both are dependencies on DuckDB's *build*, not its API —
-nothing behind the seam would break on a DuckDB API change, which is the property
-the seam exists to buy — but a standalone build has to answer both.
+The seam script prints the known gap on every clean run, so "seam holds" is never
+read as more than it is. It used to print two; #123 closed the yyjson one, and
+what remains of it is a dependency question rather than a gap. Both are about
+DuckDB's *build*, not its API — nothing behind the seam would break on a DuckDB
+API change, which is the property the seam exists to buy.
 
 **1. The vocabulary's namespace.** `duck_block_vocabulary.hpp` is a vendored
 byte-exact copy of duck_block_utils' header, and it declares everything inside
@@ -397,26 +410,21 @@ would take the real leaks with it. A vocabulary intended for consumers outside
 DuckDB would be more useful in a neutral namespace, or offered in both; that is
 upstream's call, since the copy here must stay byte-exact.
 
-**2. yyjson — and ipynb cannot build standalone at all today.** DuckDB's
-vendored copy is not reusable outside DuckDB: its header includes
-`duckdb/common/fast_mem.hpp`, so pointing at it configures fine and then fails to
-compile. But the gap is larger than a missing dependency, and three blockers
-stack:
+**2. yyjson — the build gap is closed; the dependency question is open.**
+ipynb used to be unbuildable standalone: `ipynb.cpp` included DuckDB's wrapper
+`"yyjson.hpp"` and did `using namespace duckdb_yyjson`, while a vcpkg or system
+yyjson ships `yyjson.h` at global scope. #123 moved both halves into
+`libpanduck/include/panduck/yyjson_compat.hpp`. The extension build defines
+`PANDUCK_YYJSON_VENDORED_DUCKDB` and keeps DuckDB's vendored copy; the standalone
+build links `yyjson::yyjson`. ipynb now builds standalone, and its 22 checks run in
+CI's every-module-ON job (see [the standalone test suite](#the-standalone-test-suite)).
 
-- `libpanduck/src/ipynb.cpp` includes `"yyjson.hpp"` — DuckDB's *wrapper* name.
-  vcpkg ships `yyjson.h`.
-- it does `using namespace duckdb_yyjson`, so it depends on DuckDB's
-  **namespaced build** of the library, not merely on yyjson. A system yyjson puts
-  those symbols at global scope.
-- `PANDUCK_YYJSON_INCLUDE_DIR` adds an include directory but links no library.
-
-So `-DPANDUCK_WITH_IPYNB=ON` does not work standalone, and **CI does not execute
-`libpanduck/test/test_ipynb.cpp`** — it was verified through an out-of-repo shim.
-Resolving this is a source change to `ipynb.cpp` plus a real dependency decision,
-not a flag flip. Separately, the `vcpkg.json` entry costs a dependency on every
-platform build (Wasm included) for a target only the standalone configure uses;
-either drop it once libpanduck links its own copy another way, or make it
-conditional so the extension build keeps using DuckDB's.
+What is still open is the dependency itself. `vcpkg.json` lists yyjson for every
+platform build, Wasm included, but only the standalone configure consumes it: the
+extension build compiles these sources against DuckDB's vendored copy. The TODO in
+`libpanduck/CMakeLists.txt` records the two ways out: drop the manifest entry once
+libpanduck gets its own copy by another route, or make it conditional so only a
+standalone build pulls vcpkg's.
 
 ## Gaps in the guards themselves — closed
 

@@ -16,7 +16,7 @@ require panduck
 #
 # The canonical names are ALIASES of panduck's implementation, not a second copy. Where
 # panduck's output differs from duck_block_utils' (footnote bodies kept, code block
-# trailing newline stripped, and four more, listed in the plan), the canonical names give
+# trailing newline stripped, and the rest listed in the plan), the canonical names give
 # panduck's output. Teague's decision, 2026-10-30.
 query IIII
 SELECT function_name, function_type, len(parameter_types), stability

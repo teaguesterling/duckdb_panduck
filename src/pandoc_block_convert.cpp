@@ -12,14 +12,14 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb_compat.hpp"
 #include "pandoc_convert_util.hpp"
 #include "pandoc_inline_convert.hpp"
+#include "reader_registry.hpp"
 #include <set>
 
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -1324,6 +1324,35 @@ static yyjson_mut_val *ConvertUnhandledChildToPandocVal(yyjson_mut_doc *doc, con
 	return fallback;
 }
 
+// A list item's (or one of its paragraphs') inlines, converted at THEIR level. The
+// first collected inline is a direct child of whatever owns the run, so its level is
+// the run's top level whichever shape produced it: the builder's list_item -> inline
+// (list_level + 2) or the Pandoc reader's list_item -> paragraph -> inline (+ 3). A
+// fixed list_level + 2 made the converter skip every inline of the second shape.
+static yyjson_mut_val *ListInlinesToPandocVal(yyjson_mut_doc *doc, const vector<Value> &inlines) {
+	idx_t inl_end = 0;
+	return PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, inlines, 0, GetElementLevel(inlines[0]), inl_end, 1);
+}
+
+// One Plain or Para for a list item's paragraph: its inlines when it has them, else its
+// flattened text as a single Str.
+static yyjson_mut_val *ListParaToPandocVal(yyjson_mut_doc *doc, bool tight, const vector<Value> &inlines,
+                                           const string &text) {
+	yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
+	yyjson_mut_obj_add_str(doc, para_obj, "t", tight ? "Plain" : "Para");
+	if (!inlines.empty()) {
+		yyjson_mut_obj_add_val(doc, para_obj, "c", ListInlinesToPandocVal(doc, inlines));
+	} else {
+		yyjson_mut_val *pinl = yyjson_mut_arr(doc);
+		yyjson_mut_val *pstr = yyjson_mut_obj(doc);
+		yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
+		yyjson_mut_obj_add_strncpy(doc, pstr, "c", text.data(), text.size());
+		yyjson_mut_arr_add_val(pinl, pstr);
+		yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
+	}
+	return para_obj;
+}
+
 static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<Value> &blocks_list, idx_t &start_idx,
                                               int32_t list_level, idx_t depth) {
 	CheckPandocDepth(depth);
@@ -1358,8 +1387,17 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		struct ExtraPara {
 			string text;
 			bool tight;
+			// This paragraph's OWN inlines. Every inline of an item used to be pooled
+			// into ListItem::inlines, so a second, formatted paragraph had its words
+			// rendered into the FIRST paragraph's slot (and emptied it), while it came
+			// out itself as `Str ""`.
+			vector<Value> inlines;
 		};
 		vector<ExtraPara> extra_paragraphs;
+		// Which slot an inline belongs to: -1 is this item's own (its first paragraph,
+		// or the builder shape's direct inlines), k is extra_paragraphs[k].
+		int64_t inline_slot = -1;
+		bool first_para_seen = false;
 		// Block children this walk does not enumerate -- a code block, blockquote
 		// or horizontal rule inside a list item, all legal Pandoc and all silently
 		// dropped before. Carried through rather than skipped.
@@ -1418,13 +1456,22 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				// keeping only the first silently dropped the rest on export. Found by
 				// testing the multi-block case panduck asked about before answering
 				// them, rather than after.
+				//
+				// "First" is tracked, not inferred from an empty `content`: a FORMATTED
+				// first paragraph has empty content too, and a second paragraph then
+				// took its place.
 				auto para_text = GetElementStringField(child, DuckBlockTypes::CONTENT_IDX);
-				if (current_item.content.empty() && current_item.extra_paragraphs.empty()) {
+				if (!current_item.first_para_seen && current_item.content.empty() && current_item.inlines.empty() &&
+				    current_item.extra_paragraphs.empty()) {
 					current_item.tight = (child_type == DuckBlockTypes::TYPE_PLAIN);
 					current_item.content = para_text;
+					current_item.inline_slot = -1;
 				} else {
-					current_item.extra_paragraphs.push_back({para_text, child_type == DuckBlockTypes::TYPE_PLAIN});
+					current_item.extra_paragraphs.push_back(
+					    {para_text, child_type == DuckBlockTypes::TYPE_PLAIN, vector<Value>()});
+					current_item.inline_slot = static_cast<int64_t>(current_item.extra_paragraphs.size()) - 1;
 				}
+				current_item.first_para_seen = true;
 				j++;
 			} else if (child_level <= list_level) {
 				break;
@@ -1486,12 +1533,27 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				j++;
 			}
 		} else if (child_kind == DuckBlockTypes::KIND_INLINE && in_item) {
-			// level+2 is the builder shape, level+3 the Pandoc one (under a
-			// paragraph).
-			if (child_level == list_level + 2 || child_level == list_level + 3) {
-				current_item.inlines.push_back(child);
+			// EVERY inline below the item, into the slot of the paragraph it follows.
+			// This took only level+2 (the builder shape) and level+3 (the Pandoc shape,
+			// under a paragraph), so the Str inside a Strong inside a Span -- level+5 --
+			// was never collected. The emit below targets the first inline's own level
+			// rather than a fixed level+2, which skipped every level+3 inline: a loose
+			// `- **Title**` exported as `Para []` (test/fixtures/lists.rtf).
+			if (child_level >= list_level + 2) {
+				if (current_item.inline_slot >= 0 &&
+				    current_item.inline_slot < static_cast<int64_t>(current_item.extra_paragraphs.size())) {
+					current_item.extra_paragraphs[current_item.inline_slot].inlines.push_back(child);
+				} else {
+					current_item.inlines.push_back(child);
+				}
 			}
 			j++;
+		} else if (child_kind != DuckBlockTypes::KIND_INLINE) {
+			// Neither a block nor an inline -- the kind='value' metadata rows after the
+			// body. The list ends here, as every other walk in this file ends at them:
+			// gathering inlines past this point would take a metadata value's inlines
+			// as an item's own.
+			break;
 		} else {
 			j++;
 		}
@@ -1547,10 +1609,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				if (!items[d].inlines.empty()) {
 					// Rich inline content -- a definition containing bold or a link kept
 					// only its flattened text before this.
-					idx_t inl_end = 0;
-					yyjson_mut_obj_add_val(doc, pl, "c",
-					                       PandocInlineConvert::ConvertDbInlinesToPandocVal(
-					                           doc, items[d].inlines, 0, list_level + 2, inl_end, 1));
+					yyjson_mut_obj_add_val(doc, pl, "c", ListInlinesToPandocVal(doc, items[d].inlines));
 				} else {
 					yyjson_mut_val *inl = yyjson_mut_arr(doc);
 					if (!items[d].content.empty()) {
@@ -1564,15 +1623,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 				yyjson_mut_arr_add_val(one_def, pl);
 
 				for (auto &extra : items[d].extra_paragraphs) {
-					yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
-					yyjson_mut_obj_add_str(doc, para_obj, "t", extra.tight ? "Plain" : "Para");
-					yyjson_mut_val *pinl = yyjson_mut_arr(doc);
-					yyjson_mut_val *pstr = yyjson_mut_obj(doc);
-					yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
-					yyjson_mut_obj_add_strncpy(doc, pstr, "c", extra.text.data(), extra.text.size());
-					yyjson_mut_arr_add_val(pinl, pstr);
-					yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
-					yyjson_mut_arr_add_val(one_def, para_obj);
+					yyjson_mut_arr_add_val(one_def, ListParaToPandocVal(doc, extra.tight, extra.inlines, extra.text));
 				}
 				for (auto *extra : items[d].extra_blocks) {
 					yyjson_mut_arr_add_val(one_def, extra);
@@ -1631,10 +1682,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		yyjson_mut_obj_add_str(doc, plain_obj, "t", item.tight ? "Plain" : "Para");
 
 		if (!item.inlines.empty()) {
-			idx_t inl_end = 0;
-			yyjson_mut_val *inl_arr =
-			    PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, item.inlines, 0, list_level + 2, inl_end, 1);
-			yyjson_mut_obj_add_val(doc, plain_obj, "c", inl_arr);
+			yyjson_mut_obj_add_val(doc, plain_obj, "c", ListInlinesToPandocVal(doc, item.inlines));
 		} else if (!item.content.empty()) {
 			yyjson_mut_val *inl_arr = yyjson_mut_arr(doc);
 			yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
@@ -1654,15 +1702,7 @@ static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<
 		// as a Para, so the very distinction `plain` was minted for was preserved
 		// in block one and discarded immediately after it.
 		for (auto &extra : item.extra_paragraphs) {
-			yyjson_mut_val *para_obj = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add_str(doc, para_obj, "t", extra.tight ? "Plain" : "Para");
-			yyjson_mut_val *pinl = yyjson_mut_arr(doc);
-			yyjson_mut_val *pstr = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add_str(doc, pstr, "t", "Str");
-			yyjson_mut_obj_add_strncpy(doc, pstr, "c", extra.text.data(), extra.text.size());
-			yyjson_mut_arr_add_val(pinl, pstr);
-			yyjson_mut_obj_add_val(doc, para_obj, "c", pinl);
-			yyjson_mut_arr_add_val(item_blocks, para_obj);
+			yyjson_mut_arr_add_val(item_blocks, ListParaToPandocVal(doc, extra.tight, extra.inlines, extra.text));
 		}
 
 		for (auto *extra : item.extra_blocks) {
@@ -1923,6 +1963,52 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 		if (switch_type && switch_arr && child_kind == DuckBlockTypes::KIND_BLOCK && child_type == switch_type &&
 		    child_level == parent_level + 1) {
 			child_blocks_arr = switch_arr;
+			// THE SWITCHING BLOCK'S OWN TEXT. A figure's caption is skipped here as a
+			// marker, and nobody read what it carried, so the Figure exported as
+			// `Caption []`. Measured on 10 of 59 round-tripped pandoc ASTs -- every
+			// fixture with an ordinary captioned image.
+			//
+			// Two shapes, both written as a lone Plain, the rule the walk already applies
+			// to a container's own content above:
+			//   - text in `content`: the content rule's tight form, and what the reader
+			//     produces for a plain caption. Ported from duck_block_utils 1c5f2a6.
+			//   - text in INLINE CHILDREN with empty content: a formatted caption. The
+			//     walk skips inlines, so this was lost too -- in duck_block_utils as well,
+			//     whose arm reads only `content` (measured).
+			// The inlines are taken only up to the next non-inline row, so a caption's
+			// BLOCK children (which follow, at a deeper level) are never mistaken for
+			// inlines; they reach switch_arr through the walk as before.
+			vector<Value> switch_inlines;
+			for (idx_t k = j + 1; k < blocks_list.size(); k++) {
+				auto &inl = blocks_list[k];
+				if (inl.IsNull()) {
+					continue;
+				}
+				if (GetElementStringField(inl, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_INLINE) {
+					break;
+				}
+				switch_inlines.push_back(inl);
+			}
+			auto switch_content = GetElementStringField(child, DuckBlockTypes::CONTENT_IDX);
+			if (!switch_inlines.empty() || !switch_content.empty()) {
+				yyjson_mut_val *inl_arr = nullptr;
+				if (!switch_inlines.empty()) {
+					idx_t inl_end = 0;
+					inl_arr = PandocInlineConvert::ConvertDbInlinesToPandocVal(doc, switch_inlines, 0, child_level + 1,
+					                                                           inl_end, depth + 1);
+				}
+				if (!inl_arr || yyjson_mut_arr_size(inl_arr) == 0) {
+					inl_arr = yyjson_mut_arr(doc);
+					yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
+					yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
+					yyjson_mut_obj_add_strncpy(doc, str_obj, "c", switch_content.data(), switch_content.size());
+					yyjson_mut_arr_add_val(inl_arr, str_obj);
+				}
+				yyjson_mut_val *plain_obj = yyjson_mut_obj(doc);
+				yyjson_mut_obj_add_str(doc, plain_obj, "t", "Plain");
+				yyjson_mut_obj_add_val(doc, plain_obj, "c", inl_arr);
+				yyjson_mut_arr_add_val(child_blocks_arr, plain_obj);
+			}
 			j++;
 			continue;
 		}
@@ -1944,13 +2030,18 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 				if (inl.IsNull()) {
 					continue;
 				}
-				auto inl_kind = GetElementStringField(inl, DuckBlockTypes::KIND_IDX);
-				if (inl_kind == DuckBlockTypes::KIND_BLOCK) {
+				// STOP at anything that is not an inline, the rule BuildBlocksJson
+				// already applies to top-level blocks. This stopped only at a BLOCK, so
+				// for the LAST paragraph of a container it walked on past the
+				// kind='value' metadata rows and took the title's inline as the
+				// paragraph's own; that inline sits at the wrong level, and the
+				// paragraph exported as `Para []`. Measured on constructs.html (`a
+				// quote`) and pandoc.epub (its Unicode line) -- duck_block_utils loses
+				// both the same way.
+				if (GetElementStringField(inl, DuckBlockTypes::KIND_IDX) != DuckBlockTypes::KIND_INLINE) {
 					break;
 				}
-				if (inl_kind == DuckBlockTypes::KIND_INLINE) {
-					inline_children.push_back(inl);
-				}
+				inline_children.push_back(inl);
 			}
 
 			if (child_type == DuckBlockTypes::TYPE_PARAGRAPH || child_type == DuckBlockTypes::TYPE_PLAIN) {
@@ -2079,10 +2170,17 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 				// pandoc's grammar demands an array -- which made pandoc reject the
 				// whole document. Tables therefore go through the shared converter,
 				// which tells the two forms apart by shape.
+				//
+				// A PANDOC table prefers its PRESERVED tuple, exactly as the top-level
+				// arm in BuildBlocksJson does. This arm converted the projection
+				// unconditionally, so a pandoc table inside a Div lost its alignment,
+				// widths and cell blocks (AlignRight became AlignDefault, each cell's
+				// Plain became Para) while the same table at top level kept them.
 				yyjson_mut_val *obj = yyjson_mut_obj(doc);
 				if (child_type == DuckBlockTypes::TYPE_TABLE) {
 					yyjson_mut_obj_add_str(doc, obj, "t", "Table");
-					yyjson_mut_obj_add_val(doc, obj, "c", NativeTableToPandocVal(doc, content));
+					auto tuple = GetElementAttribute(child, DuckBlockTypes::ATTR_PANDOC_AST);
+					yyjson_mut_obj_add_val(doc, obj, "c", NativeTableToPandocVal(doc, tuple.empty() ? content : tuple));
 				} else {
 					yyjson_mut_obj_add_str(doc, obj, "t", "DefinitionList");
 					yyjson_doc *sub_doc = yyjson_read(content.c_str(), content.size(), 0);
@@ -3084,16 +3182,15 @@ void PandocBlockConvert::ReadPandocAstFun(DataChunk &args, ExpressionState &stat
 			continue;
 		}
 
-		string file_path = path_val.GetValue<string>();
-
-		std::ifstream file(file_path);
-		if (!file.is_open()) {
-			throw IOException("Could not open file: " + file_path);
-		}
-
-		std::stringstream buffer;
-		buffer << file.rdbuf();
-		string json = buffer.str();
+		// THROUGH DUCKDB'S FILE SYSTEM, like read_pandoc_blocks (#136). This
+		// read std::ifstream while nothing could reach it; registering it as
+		// read_pandoc_ast made it reachable, and a local-disk-only reader would
+		// have been the one file-reading function that ignores httpfs, s3 and
+		// every other registered filesystem. The policy gate is
+		// read_pandoc_blocks' too: one reader, one switch.
+		auto &context = state.GetContext();
+		readers::RequireReaderEnabled(context, "pandoc");
+		string json = readers::ReadFileThroughVFS(context, path_val.GetValue<string>(), "read_pandoc_ast");
 
 		vector<Value> blocks;
 		ConvertPandocAstToBlocks(json, blocks);
@@ -3286,6 +3383,16 @@ static void PandocAstJsonFun(DataChunk &args, ExpressionState &state, Vector &re
 	}
 }
 
+// THROUGH DUCKDB'S FILE SYSTEM, not std::ofstream (#144), so a write reaches
+// whatever filesystem the client has registered, as every read in panduck does.
+// FILE_CREATE_NEW truncates an existing file, which is what ofstream did.
+static void WriteFileThroughVFS(ClientContext &context, const string &path, const string &contents) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto handle = fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_WRITE | FileOpenFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	fs.Write(*handle, const_cast<char *>(contents.data()), static_cast<int64_t>(contents.size()));
+	handle->Close();
+}
+
 static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &path_vec = args.data[0];
 	auto &blocks_vec = args.data[1];
@@ -3307,14 +3414,10 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		}
 
 		string file_path = path_val.GetValue<string>();
-		std::ofstream file(file_path);
-		if (!file.is_open()) {
-			throw IOException("Could not open file for writing: " + file_path);
-		}
 
 		if (blocks_val.IsNull()) {
-			file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":{},\"blocks\":[]}";
-			file.close();
+			WriteFileThroughVFS(state.GetContext(), file_path,
+			                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":{},\"blocks\":[]}");
 			result.SetValue(i, Value(true));
 			continue;
 		}
@@ -3335,40 +3438,108 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		// you wrote the file.
 		string meta_json = BuildMetaJson(blocks_list);
 
-		file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":" << meta_json << ",\"blocks\":" << blocks_json
-		     << "}";
-		file.close();
+		WriteFileThroughVFS(state.GetContext(), file_path,
+		                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":" + meta_json +
+		                        ",\"blocks\":" + blocks_json + "}");
 		result.SetValue(i, Value(true));
 	}
 }
 
+// One registration, with its description, for each canonical block-level name.
+static void RegisterCanonicalScalar(ExtensionLoader &loader, ScalarFunction fn, vector<string> parameter_names,
+                                    const string &description, const string &example) {
+	fn.SetFallible();
+	CreateScalarFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = std::move(parameter_names);
+	desc.description = description;
+	desc.examples = {example};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
+// THE CANONICAL NAMES ARE PANDUCK'S (converter handoff step 4,
+// docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
+//
+// duck_block_utils registered these, and its paired release removes them. The
+// signatures, return types and stability are duck_block_utils' exactly, as
+// measured with duckdb_functions(), so a caller's SQL does not change -- only its
+// LOAD. test/sql/pandoc_canonical_names.test pins them.
+//
+// They are ALIASES of the panduck_ functions above, not a second copy: the same
+// implementation, so the output is panduck's wherever the two copies had
+// diverged (footnote bodies kept, and the rest listed in the plan). Teague's decision,
+// 2026-10-30. pandoc_ast_to_blocks is registered beside its panduck_ form in
+// pandoc_reader.cpp, because that is where the reader policy gate lives.
+void PandocBlockConvert::RegisterCanonicalNames(ExtensionLoader &loader) {
+	auto blocks_type = DuckBlockTypes::DuckBlockListType();
+
+	// JSON, not VARCHAR, for meta and blocks: duck_block_utils' return type, which
+	// panduck_blocks_to_pandoc_ast does not share.
+	auto to_ast =
+	    ScalarFunction("duck_blocks_to_pandoc_ast", {blocks_type}, GetPandocAstType(), DuckBlocksToPandocAstFun);
+	panduck::SetNullHandling(to_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	RegisterCanonicalScalar(loader, std::move(to_ast), {"blocks"},
+	                        "Convert a list of duck_blocks into a Pandoc AST document struct.",
+	                        "duck_blocks_to_pandoc_ast(blocks)");
+
+	RegisterCanonicalScalar(loader,
+	                        ScalarFunction("duck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
+	                                       PandocBlockConvert::DuckBlocksToPandocBlocksFun),
+	                        {"blocks"}, "Convert a list of duck_blocks into a JSON array of Pandoc blocks.",
+	                        "duck_blocks_to_pandoc_blocks(blocks)");
+
+	// VOLATILE, both: each touches a file, so neither may be folded or cached.
+	auto read_ast = ScalarFunction("read_pandoc_ast", {LogicalType::VARCHAR}, blocks_type, ReadPandocAstFun);
+	read_ast.SetStability(FunctionStability::VOLATILE);
+	RegisterCanonicalScalar(loader, std::move(read_ast), {"file_path"},
+	                        "Read a Pandoc AST JSON file into a list of duck_blocks.",
+	                        "read_pandoc_ast('document.json')");
+
+	auto write_ast = ScalarFunction("write_pandoc_ast", {LogicalType::VARCHAR, blocks_type}, LogicalType::BOOLEAN,
+	                                WritePandocAstFun);
+	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	write_ast.SetStability(FunctionStability::VOLATILE);
+	RegisterCanonicalScalar(loader, std::move(write_ast), {"file_path", "blocks"},
+	                        "Write a list of duck_blocks out as a Pandoc AST JSON file.",
+	                        "write_pandoc_ast('output.json', blocks)");
+
+	// pandoc_ast(blocks, meta := MAP, api_version := INTEGER[]): the table form,
+	// for COPY ... (FORMAT JSON).
+	TableFunction pandoc_ast("pandoc_ast", {blocks_type}, PandocAstFunction, PandocAstBind);
+	panduck::AddNamedParameter(pandoc_ast, "meta", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
+	panduck::AddNamedParameter(pandoc_ast, "api_version", LogicalType::LIST(LogicalType::INTEGER));
+	CreateTableFunctionInfo info(std::move(pandoc_ast));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"blocks"};
+	desc.description = "Return a list of duck_blocks as one Pandoc AST row.";
+	desc.examples = {"SELECT * FROM pandoc_ast(blocks)"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
 void PandocBlockConvert::Register(ExtensionLoader &loader) {
-	// REGISTERS THE WRITE DIRECTION ONLY, UNDER PANDUCK-OWNED NAMES.
+	// THE panduck_ NAMES FIRST, THEN THE CANONICAL ONES (RegisterCanonicalNames).
 	//
-	// Every name this body registered upstream -- pandoc_ast_to_blocks,
-	// read_pandoc_ast, duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is
-	// still registered by duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE
-	// EXTENSION IN THIS FAMILY.
+	// The panduck_ names came first because, until converter handoff step 4, every
+	// canonical name -- pandoc_ast_to_blocks, read_pandoc_ast,
+	// duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- was registered by
+	// duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS
+	// FAMILY.
 	//
-	// Measured, not assumed: when two loaded extensions register the same name,
-	// BOTH registrations survive as ambiguous overloads and every call then fails
-	// at BIND TIME with "Could not choose a best candidate function" -- naming a
-	// construct the caller never wrote. It does not degrade, it breaks, and it
-	// would break duckeye's thirteen formats for anyone with both extensions
-	// loaded.
-	//
-	// So the names below are panduck_-prefixed, which is the same choice the read
-	// side made in taking read_pandoc_blocks rather than upstream's
-	// read_pandoc_ast. When upstream drops its copy after a RELEASED panduck
-	// (converter handoff, step 4), the canonical names can be added here as
-	// aliases. Not before: the two-copy window is safe and the zero-copy window
-	// is not.
-	//
-	// THE READ SIDE IS STILL NOT REGISTERED HERE. pandoc_ast_to_blocks and
-	// read_pandoc_ast remain upstream's; panduck's read surface is
-	// read_pandoc_blocks / read_pandoc_blocks_string in pandoc_reader.cpp, and
-	// the conversion is reached through ConvertPandocAstToBlocks() rather than
-	// through those SQL names.
+	// Measured 2026-10-30, in both load orders: when both extensions register
+	// these names, the extension that LOADS SECOND fails its init ("Failed to add
+	// new function overloads to function "pandoc_ast": function already exists"),
+	// so none of its functions exist. This comment used to say the overlap left
+	// ambiguous overloads that fail at bind time; that does not hold once the
+	// pandoc_ast table function is in both. Either way, it breaks duckeye's
+	// thirteen formats for anyone with both loaded. So the canonical names arrive
+	// here in the same release that duck_block_utils drops them from, and the
+	// panduck_ names stay.
 	//
 	// WHY THE WRITE DIRECTION IS REGISTERED AT ALL. panduck's readers are
 	// deliberately more faithful than pandoc in places -- richer attributes,
@@ -3512,6 +3683,11 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	// VOLATILE: a file write is a side effect, and a CONSISTENT function may be
+	// folded or deduplicated by the optimiser, so the file would be written fewer
+	// times than the query says. duck_block_utils marked write_pandoc_ast VOLATILE;
+	// this name was CONSISTENT until the canonical name below joined it.
+	write_ast.SetStability(FunctionStability::VOLATILE);
 	write_ast.SetFallible();
 	{
 		CreateScalarFunctionInfo info(std::move(write_ast));
@@ -3524,6 +3700,8 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 		info.descriptions.push_back(desc);
 		loader.RegisterFunction(std::move(info));
 	}
+
+	RegisterCanonicalNames(loader);
 }
 
 } // namespace duckdb

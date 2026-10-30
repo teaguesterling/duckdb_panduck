@@ -2,6 +2,7 @@
 #include "pandoc_convert_util.hpp"
 #include "duck_block_types.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 #include <sstream>
 
@@ -164,6 +165,13 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 					if (u && yyjson_is_str(u)) {
 						attrs["href"] = string(yyjson_get_str(u), yyjson_get_len(u));
 					}
+					// [url, TITLE] -- same omission as the Image arm, same fix.
+					if (yyjson_arr_size(target) >= 2) {
+						yyjson_val *t2 = yyjson_arr_get(target, 1);
+						if (t2 && yyjson_is_str(t2) && yyjson_get_len(t2) > 0) {
+							attrs["title"] = string(yyjson_get_str(t2), yyjson_get_len(t2));
+						}
+					}
 				}
 			}
 			result.push_back(CreateDocInline(inline_type, "", level, attrs, order++));
@@ -181,6 +189,16 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 					yyjson_val *s = yyjson_arr_get(target, 0);
 					if (s && yyjson_is_str(s)) {
 						attrs["src"] = string(yyjson_get_str(s), yyjson_get_len(s));
+					}
+					// Pandoc's target is [url, TITLE]. The title was read by nobody and
+					// written by nobody, so `<img title="...">` survived neither
+					// direction -- an absence that looks exactly like a document
+					// without one. Ported from duck_block_utils faaebf7.
+					if (yyjson_arr_size(target) >= 2) {
+						yyjson_val *t2 = yyjson_arr_get(target, 1);
+						if (t2 && yyjson_is_str(t2) && yyjson_get_len(t2) > 0) {
+							attrs["title"] = string(yyjson_get_str(t2), yyjson_get_len(t2));
+						}
 					}
 				}
 				if (alt_inlines) {
@@ -412,6 +430,26 @@ void PandocInlineConvert::PandocInlinesToDbInlinesFun(DataChunk &args, Expressio
 	}
 }
 
+// One attribute lookup. The Link and Image arms below each carried their own copy of
+// this loop reading a single key -- and the Image copy read `src` while never reading
+// `alt`, which is how every INLINE image lost its alt text on export. Ported from
+// duck_block_utils faaebf7.
+static string DbAttrLookup(const Value &attrs, const char *key) {
+	if (attrs.IsNull()) {
+		return "";
+	}
+	for (auto &entry : MapValue::GetChildren(attrs)) {
+		if (entry.IsNull()) {
+			continue;
+		}
+		auto &kv = StructValue::GetChildren(entry);
+		if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == key && !kv[1].IsNull()) {
+			return kv[1].GetValue<string>();
+		}
+	}
+	return "";
+}
+
 yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc *doc, const vector<Value> &inlines,
                                                                  idx_t start_idx, int32_t target_level, idx_t &end_idx,
                                                                  idx_t depth) {
@@ -513,22 +551,8 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(arr, obj);
 		} else if (inline_type == DuckBlockTypes::INLINE_LINK) {
 			auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-			string href = "";
-			if (!attrs.IsNull()) {
-				auto &map_entries = MapValue::GetChildren(attrs);
-				for (auto &entry : map_entries) {
-					if (entry.IsNull()) {
-						continue;
-					}
-					auto &kv = StructValue::GetChildren(entry);
-					if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == "href") {
-						if (!kv[1].IsNull()) {
-							href = kv[1].GetValue<string>();
-						}
-						break;
-					}
-				}
-			}
+			string href = DbAttrLookup(attrs, "href");
+			string link_title = DbAttrLookup(attrs, "title");
 			idx_t nested_end = i + 1;
 			yyjson_mut_val *nested = ConvertDbInlinesToPandocVal(doc, inlines, i + 1, level + 1, nested_end, depth + 1);
 			if (yyjson_mut_arr_size(nested) == 0 && !content.empty()) {
@@ -549,27 +573,33 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(c_arr, nested);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, href.data(), href.size());
-			yyjson_mut_arr_add_str(doc, target_arr, "");
+			yyjson_mut_arr_add_strncpy(doc, target_arr, link_title.data(), link_title.size());
 			yyjson_mut_arr_add_val(c_arr, target_arr);
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);
 			i = nested_end - 1;
 		} else if (inline_type == DuckBlockTypes::INLINE_IMAGE) {
 			auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-			string src = "";
-			if (!attrs.IsNull()) {
-				auto &map_entries = MapValue::GetChildren(attrs);
-				for (auto &entry : map_entries) {
-					if (entry.IsNull()) {
-						continue;
-					}
-					auto &kv = StructValue::GetChildren(entry);
-					if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == "src") {
-						if (!kv[1].IsNull()) {
-							src = kv[1].GetValue<string>();
-						}
-						break;
-					}
+			string src = DbAttrLookup(attrs, "src");
+			string img_title = DbAttrLookup(attrs, "title");
+			// THE ALT. This arm wrote an EMPTY array unconditionally, so every inline
+			// image lost its alt text on export -- while the BLOCK image arm read it.
+			// That asymmetry is why the roundtrip sweep passed: it probes `image` in
+			// block position, and a real document has its images inside paragraphs.
+			//
+			// Three sources in precedence order, because the reader writes the alt into
+			// BOTH content and attributes['alt'] and a foreign producer may write
+			// either: nested children, then content, then the attribute. Ported from
+			// duck_block_utils faaebf7.
+			idx_t img_end = i + 1;
+			yyjson_mut_val *alt = ConvertDbInlinesToPandocVal(doc, inlines, i + 1, level + 1, img_end, depth + 1);
+			if (yyjson_mut_arr_size(alt) == 0) {
+				string alt_text = content.empty() ? DbAttrLookup(attrs, "alt") : content;
+				if (!alt_text.empty()) {
+					yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
+					yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
+					yyjson_mut_obj_add_strncpy(doc, str_obj, "c", alt_text.data(), alt_text.size());
+					yyjson_mut_arr_add_val(alt, str_obj);
 				}
 			}
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
@@ -580,10 +610,10 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
 			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
 			yyjson_mut_arr_add_val(c_arr, attr_arr);
-			yyjson_mut_arr_add_val(c_arr, yyjson_mut_arr(doc));
+			yyjson_mut_arr_add_val(c_arr, alt);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, src.data(), src.size());
-			yyjson_mut_arr_add_str(doc, target_arr, "");
+			yyjson_mut_arr_add_strncpy(doc, target_arr, img_title.data(), img_title.size());
 			yyjson_mut_arr_add_val(c_arr, target_arr);
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);
@@ -988,29 +1018,64 @@ static void DbInlinesToPandocNestedFun(DataChunk &args, ExpressionState &state, 
 	}
 }
 
+// One registration, with its description, for each canonical inline name.
+static void RegisterInlineScalar(ExtensionLoader &loader, ScalarFunction fn, vector<string> parameter_names,
+                                 const string &description, const string &example) {
+	// FALLIBLE, like every converter entry point: the inline walkers raise
+	// InvalidInputException from the depth guard (CheckPandocDepth), and DuckDB
+	// v2.0 turns an execution error from an undeclared function into an INTERNAL one.
+	fn.SetFallible();
+	CreateScalarFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = std::move(parameter_names);
+	desc.description = description;
+	desc.examples = {example};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
 void PandocInlineConvert::Register(ExtensionLoader &loader) {
-	// DELIBERATELY REGISTERS NOTHING IN PANDUCK.
+	// THE CANONICAL INLINE NAMES ARE PANDUCK'S (converter handoff step 4,
+	// docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
 	//
-	// Every name this body registered upstream -- pandoc_ast_to_blocks,
-	// read_pandoc_ast, duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is
-	// still registered by duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE
-	// EXTENSION IN THIS FAMILY.
+	// duck_block_utils registered these five overloads, and its paired release
+	// removes them. A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY: when
+	// both register these names, the extension that LOADS SECOND fails its init
+	// ("Failed to add new function overloads to function "pandoc_ast": function
+	// already exists"; measured 2026-10-30, in both load orders). So this body
+	// stayed empty for the two-copy window, and fills now that the window closes.
 	//
-	// Measured, not assumed: when two loaded extensions register the same name,
-	// BOTH registrations survive as ambiguous overloads and every call then fails
-	// at BIND TIME with "Could not choose a best candidate function" -- naming a
-	// construct the caller never wrote. It does not degrade, it breaks, and it
-	// would break duckeye's thirteen formats for anyone with both extensions
-	// loaded.
-	//
-	// panduck's surface is read_pandoc_blocks / read_pandoc_blocks_string,
-	// registered in pandoc_reader.cpp under names nobody else owns. The
-	// conversion functions above are reached through ConvertPandocAstToBlocks()
-	// rather than through SQL names.
-	//
-	// Kept as an empty body rather than deleted so that wiring it up by mistake
-	// does nothing, instead of reintroducing the collision.
-	(void)loader;
+	// The signatures are duck_block_utils' exactly, as measured with
+	// duckdb_functions(), so a caller's SQL does not change -- only its LOAD.
+	// test/sql/pandoc_canonical_names.test pins them.
+	auto inlines = DuckBlockTypes::DuckBlockListType();
+
+	RegisterInlineScalar(
+	    loader,
+	    ScalarFunction("pandoc_inlines_to_db_inlines", {LogicalType::VARCHAR}, inlines, PandocInlinesToDbInlinesFun),
+	    {"json"}, "Parse a Pandoc inlines JSON array into inline duck_blocks.",
+	    "pandoc_inlines_to_db_inlines('[{\"t\":\"Str\",\"c\":\"hi\"}]')");
+	RegisterInlineScalar(
+	    loader, ScalarFunction("duck_blocks_inlines_to_pandoc", {inlines}, LogicalType::VARCHAR, DbInlinesToPandocFun),
+	    {"inlines"}, "Convert inline duck_blocks into a Pandoc inlines JSON array.",
+	    "duck_blocks_inlines_to_pandoc(inlines)");
+	RegisterInlineScalar(loader,
+	                     ScalarFunction("duck_blocks_inlines_to_pandoc", {LogicalType::LIST(inlines)},
+	                                    LogicalType::VARCHAR, DbInlinesToPandocNestedFun),
+	                     {"nested_inlines"}, "Flatten lists of inline duck_blocks into one Pandoc inlines JSON array.",
+	                     "duck_blocks_inlines_to_pandoc(nested_inlines)");
+	RegisterInlineScalar(
+	    loader,
+	    ScalarFunction("pandoc_inlines_to_text", {LogicalType::VARCHAR}, LogicalType::VARCHAR, PandocInlinesToTextFun),
+	    {"json"}, "Extract the plain text of a Pandoc inlines JSON array.",
+	    "pandoc_inlines_to_text('[{\"t\":\"Str\",\"c\":\"hi\"}]')");
+	RegisterInlineScalar(loader,
+	                     ScalarFunction("pandoc_inlines_to_text", {LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                    LogicalType::VARCHAR, PandocInlinesToTextFun),
+	                     {"json", "mode"}, "Render a Pandoc inlines JSON array as text in the given mode.",
+	                     "pandoc_inlines_to_text('[{\"t\":\"Str\",\"c\":\"hi\"}]', 'plain')");
 }
 
 } // namespace duckdb

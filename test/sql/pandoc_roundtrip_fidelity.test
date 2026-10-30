@@ -1,0 +1,226 @@
+# name: test/sql/pandoc_roundtrip_fidelity.test
+# description: pandoc AST -> duck_blocks -> pandoc AST keeps every word, and the link/image fields pandoc has
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------------------
+# WHY THIS FILE EXISTS.
+#
+# panduck copied the converter from duck_block_utils on 2026-09-01 (f07e76d, handoff step
+# 2). duck_block_utils went on repairing its copy, and those repairs never came across.
+# Handoff step 4 makes panduck's copy the only one, so on 2026-10-30 a word-level round
+# trip over 59 pandoc ASTs measured where the two copies disagree:
+#
+#     inputs losing words:  duck_block_utils 17   panduck 14
+#
+# panduck lost what duck_block_utils had fixed (figure captions, inline image alt), and
+# BOTH lost a further three shapes neither copy had noticed. Each section below is one
+# cause, with the duck_block_utils commit it ports where there is one. Expected values are
+# duck_block_utils' own output for the same input wherever duck_block_utils is right,
+# measured by running stock duckdb + duck_block_utils in a separate process (the two
+# extensions cannot share one session: their canonical names collide).
+#
+# test/converter/check_converter_wordloss.py is the permanent guard for the same property
+# over every fixture. These records are the small reproductions it points at.
+
+# ---------------------------------------------------------------------------------------
+# INLINE IMAGE ALT, and LINK / IMAGE TITLES (duck_block_utils faaebf7).
+#
+# The inline Image export wrote an EMPTY alt array unconditionally. It read neither the
+# image's children, nor `content`, nor attributes['alt'], so every image inside a
+# paragraph lost its alt text -- while the BLOCK image arm read it. The roundtrip sweep
+# probes `image` in BLOCK position, and a real document has its images inside paragraphs,
+# so nothing caught it. Measured on the fixtures: constructs.rst lost `pic.png` (rst's
+# default alt is the URI) and rich.rtf lost `image`.
+#
+# Pandoc's target is [url, TITLE]. Neither the read arm nor the write arm carried the
+# second element, so `<a title>` and `<img title>` survived neither direction: an absence
+# indistinguishable from a document that never had one.
+
+# The alt from `content`, which is where the vocabulary's content rule puts it.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'inline','element_type':'image','content':'ALT','level':2,
+   'encoding':'text','attributes':MAP{'src':'p.png'},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"ALT"}],["p.png",""]]}]}]
+
+# The alt from attributes['alt'] alone, which a foreign producer may write instead.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'inline','element_type':'image','content':NULL,'level':2,
+   'encoding':'text','attributes':MAP{'src':'p.png','alt':'ALT'},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"ALT"}],["p.png",""]]}]}]
+
+# The title survives a full round trip, on Link and on Image, and so does the alt.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Para","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"L"}],["u","T"]]},{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"A"}],["s.png","IT"]]}]}]'));
+----
+[{"t":"Para","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"L"}],["u","T"]]},{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"A"}],["s.png","IT"]]}]}]
+
+# The READ half on its own: the title lands in attributes['title'], next to href / src.
+query II
+SELECT b.element_type, b.attributes['title']
+FROM (SELECT unnest(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Para","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"L"}],["u","T"]]},{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"A"}],["s.png","IT"]]}]}]')) AS b)
+WHERE b.element_type IN ('link', 'image')
+ORDER BY b.element_order;
+----
+link	T
+image	IT
+
+# DISCRIMINATING: a document with NO title must not gain one. An assertion that only
+# checks that a title survives passes for an exporter that emits a constant.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Para","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"L"}],["u",""]]}]}]'));
+----
+[{"t":"Para","c":[{"t":"Link","c":[["",[],[]],[{"t":"Str","c":"L"}],["u",""]]}]}]
+
+# ---------------------------------------------------------------------------------------
+# A FIGURE'S CAPTION (duck_block_utils 1c5f2a6, the caption arm of the container walk).
+#
+# The figure walk switches its output to the caption list when it meets the `caption`
+# block, and skips that block itself. A caption carrying its text in `content` -- the
+# content rule's tight form, and what the reader produces for any plain caption -- had
+# that text read by nobody, so the Figure exported as `Caption []`. Measured on 10 of the
+# 59 inputs, every one a fixture with an ordinary captioned image.
+
+# A pandoc Figure round-trips its caption (and its image alt, from the section above).
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Str","c":"A"},{"t":"Space"},{"t":"Str","c":"caption"}]}]],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"alt"}],["p.png",""]]}]}]]}]'));
+----
+[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Str","c":"A caption"}]}]],[{"t":"Plain","c":[{"t":"Image","c":[["",[],[]],[{"t":"Str","c":"alt"}],["p.png",""]]}]}]]}]
+
+# A standalone caption is a fragment, wrapped in its implicit figure -- and its text
+# must be IN that figure. pandoc_writer.test asserts only that a Figure appears, which
+# an empty Figure satisfies; that is how the loss passed.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'caption','content':'cap','level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0}]);
+----
+[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Str","c":"cap"}]}]],[]]}]
+
+# A FORMATTED caption has empty `content` and its text in inline children, which the
+# walk skipped as inlines. duck_block_utils' arm reads only `content`, so it loses this
+# one too (measured): this goes one step past the port, in the same arm.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Emph","c":[{"t":"Str","c":"A"}]},{"t":"Space"},{"t":"Str","c":"caption"}]}]],[{"t":"Para","c":[{"t":"Str","c":"body"}]}]]}]'));
+----
+[{"t":"Figure","c":[["",[],[]],[null,[{"t":"Plain","c":[{"t":"Emph","c":[{"t":"Str","c":"A"}]},{"t":"Space"},{"t":"Str","c":"caption"}]}]],[{"t":"Para","c":[{"t":"Str","c":"body"}]}]]}]
+
+# CONTROL: a figure with no caption gains none.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Figure","c":[["",[],[]],[null,[]],[{"t":"Para","c":[{"t":"Str","c":"body"}]}]]}]'));
+----
+[{"t":"Figure","c":[["",[],[]],[null,[]],[{"t":"Para","c":[{"t":"Str","c":"body"}]}]]}]
+
+# ---------------------------------------------------------------------------------------
+# A LIST ITEM WITH FORMATTED TEXT (both copies lost it; not a port).
+#
+# The list walk collected an item's inlines only at list_level + 2 and + 3, then converted
+# them against target level list_level + 2. A pandoc item is list > list_item >
+# paragraph > inlines, so its inlines sit at list_level + 3 and the converter skipped
+# every one of them: `- **Title**` (loose) exported as `Para []`. Grandchildren -- the
+# Str inside a Strong inside a Span -- were never collected at all. A plain-text item
+# hides all of this, because its text is collapsed into `content` and no inline is
+# emitted. Measured on test/fixtures/lists.rtf, whose first item is `Title` in bold.
+
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"BulletList","c":[[{"t":"Para","c":[{"t":"Strong","c":[{"t":"Str","c":"Title"}]}]}]]}]'));
+----
+[{"t":"BulletList","c":[[{"t":"Para","c":[{"t":"Strong","c":[{"t":"Str","c":"Title"}]}]}]]}]
+
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Strong","c":[{"t":"Span","c":[["",[],[]],[{"t":"Str","c":"Title"}]]}]}]}]]}]'));
+----
+[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Strong","c":[{"t":"Span","c":[["",[],[]],[{"t":"Str","c":"Title"}]]}]}]}]]}]
+
+# TWO PARAGRAPHS IN ONE ITEM, the second formatted. Every inline of the item was pooled
+# onto the FIRST paragraph, so the plain first paragraph rendered empty and the formatted
+# second one came out as `Str ""`. Each paragraph keeps its own inlines.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"BulletList","c":[[{"t":"Para","c":[{"t":"Str","c":"one"}]},{"t":"Para","c":[{"t":"Emph","c":[{"t":"Str","c":"two"}]}]}]]}]'));
+----
+[{"t":"BulletList","c":[[{"t":"Para","c":[{"t":"Str","c":"one"}]},{"t":"Para","c":[{"t":"Emph","c":[{"t":"Str","c":"two"}]}]}]]}]
+
+# The definition-list path reads the same item struct, and lost the same words.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"DefinitionList","c":[[[{"t":"Str","c":"term"}],[[{"t":"Para","c":[{"t":"Strong","c":[{"t":"Str","c":"defword"}]}]}]]]]}]'));
+----
+[{"t":"DefinitionList","c":[[[{"t":"Str","c":"term"}],[[{"t":"Para","c":[{"t":"Strong","c":[{"t":"Str","c":"defword"}]}]}]]]]}]
+
+# ---------------------------------------------------------------------------------------
+# THE LAST PARAGRAPH IN A CONTAINER, IN A DOCUMENT WITH METADATA (both copies; not a port).
+#
+# The container walk gathered a child paragraph's inlines until the next BLOCK, so it
+# walked past the kind='value' metadata rows that follow the body and took the title's
+# inline as the paragraph's own. That inline is at the wrong level, so the paragraph
+# exported as `Para []`. BuildBlocksJson fixed exactly this for top-level blocks ("STOP at
+# anything that is not an inline"); the container walk never got the same fix. Measured on
+# test/fixtures/constructs.html (`a quote`) and test/fixtures/pandoc.epub (the Unicode
+# line): each is the last paragraph of a container, followed by metadata.
+
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '{"pandoc-api-version":[1,23,1],"meta":{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"T"}]}},"blocks":[{"t":"BlockQuote","c":[{"t":"Para","c":[{"t":"Str","c":"a"},{"t":"Space"},{"t":"Str","c":"quote"}]}]}]}'));
+----
+[{"t":"BlockQuote","c":[{"t":"Para","c":[{"t":"Str","c":"a quote"}]}]}]
+
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '{"pandoc-api-version":[1,23,1],"meta":{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"T"}]}},"blocks":[{"t":"Div","c":[["",[],[]],[{"t":"Para","c":[{"t":"Str","c":"Unicode:"},{"t":"Space"},{"t":"Str","c":"cafe"}]}]]}]}'));
+----
+[{"t":"Div","c":[["",[],[]],[{"t":"Para","c":[{"t":"Str","c":"Unicode: cafe"}]}]]}]
+
+# Through the whole-document writer: the title reaches `meta`, and the body keeps its own
+# text rather than the title's.
+query I
+SELECT panduck_blocks_to_pandoc_json(panduck_pandoc_ast_to_blocks(
+  '{"pandoc-api-version":[1,23,1],"meta":{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"T"}]}},"blocks":[{"t":"BlockQuote","c":[{"t":"Para","c":[{"t":"Str","c":"a"}]}]}]}'))
+  LIKE '%"meta":{"title":%"blocks":[{"t":"BlockQuote","c":[{"t":"Para","c":[{"t":"Str","c":"a"}]}]}]}';
+----
+true
+
+# ---------------------------------------------------------------------------------------
+# A PANDOC TABLE INSIDE A CONTAINER keeps its preserved tuple (not a port).
+#
+# The top-level table arm prefers attributes['pandoc_ast'], the tuple the reader kept, and
+# falls back to the {headers, rows} projection only for a table that never came from
+# pandoc. The nested arm converted the projection unconditionally, so a pandoc table in a
+# Div lost its alignment, widths and cell blocks (AlignRight became AlignDefault; each
+# cell's Plain became Para). duck_block_utils' nested arm reads the projection too and
+# loses the alignment the same way (measured); its cells come out as Plain only because its
+# projection converter writes Plain.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Div","c":[["",[],[]],[{"t":"Table","c":[["",[],[]],[null,[]],[[{"t":"AlignRight"},{"t":"ColWidthDefault"}]],[["",[],[]],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"h"}]}]]]]]],[[["",[],[]],0,[],[]]],[["",[],[]],[]]]}]]}]'));
+----
+[{"t":"Div","c":[["",[],[]],[{"t":"Table","c":[["",[],[]],[null,[]],[[{"t":"AlignRight"},{"t":"ColWidthDefault"}]],[["",[],[]],[[["",[],[]],[[["",[],[]],{"t":"AlignDefault"},1,1,[{"t":"Plain","c":[{"t":"Str","c":"h"}]}]]]]]],[[["",[],[]],0,[],[]]],[["",[],[]],[]]]}]]}]
+
+# CONTROL: a NATIVE table in a Div (no tuple) still converts from the projection into
+# pandoc's six-element ARRAY, not the {headers, rows} object pandoc refuses.
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'div','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{},'element_order':0},
+  {'kind':'block','element_type':'table','content':'{"headers":["a"],"rows":[["1"]]}','level':2,
+   'encoding':'json','attributes':MAP{},'element_order':1}])
+  LIKE '[{"t":"Div","c":[["",[],[]],[{"t":"Table","c":[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],%';
+----
+true

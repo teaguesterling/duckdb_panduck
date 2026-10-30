@@ -119,13 +119,17 @@ INHERENT = {
         "alt text.",
     ),
     "deflist": (
-        "paragraph",
+        "div",
         "SUPERSEDED, and the supported shape works: `list` with list_type='definition' "
         "round-trips to itself with role=term/definition intact (measured). The exporter "
         "has no deflist arm, so a producer still emitting deflist loses the structure -- "
         "which is what the deflist_superseded advisory rule exists to say before it "
         "happens. Not inherent to Pandoc, which has DefinitionList; inherent to the "
-        "deprecation.",
+        "deprecation.\n"
+        "      Reads back as `div`, not `paragraph`, since panduck's #81: an unmapped type "
+        "exports as a Div classed with its type name (`Div [\"deflist\"] [Para x]`) rather "
+        "than as a bare Para, so the text and the original type both survive (measured "
+        "2026-10-30). duck_block_utils' copy still writes the Para, hence its `paragraph`.",
     ),
     "caption": (
         "figure",

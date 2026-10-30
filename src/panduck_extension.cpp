@@ -12,6 +12,7 @@
 #include "org_reader.hpp"
 #include "pandoc_ast_map.hpp"
 #include "pandoc_block_convert.hpp"
+#include "pandoc_inline_convert.hpp"
 #include "pandoc_reader.hpp"
 #include "reader_registry.hpp"
 #include "rst_reader.hpp"
@@ -128,12 +129,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 	mediawiki::RegisterMediaWikiReader(loader);
 	textile::RegisterTextileReader(loader);
 	RegisterPandocReader(loader);
-	// The WRITE direction -- panduck_blocks_to_pandoc_ast and friends. Registered
-	// here rather than from RegisterPandocReader because the two are independent
-	// surfaces: the reader is a table function over a path, this is scalars over
-	// a block list. See the comment on PandocBlockConvert::Register for why these
-	// carry panduck_ names while duck_block_utils still owns the canonical ones.
+	// The converter scalars -- panduck_blocks_to_pandoc_ast and friends, and the
+	// canonical names panduck took over from duck_block_utils in converter handoff
+	// step 4. Registered here rather than from RegisterPandocReader because the
+	// two are independent surfaces: the reader is a table function over a path,
+	// these are scalars over a JSON string or a block list.
 	PandocBlockConvert::Register(loader);
+	PandocInlineConvert::Register(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

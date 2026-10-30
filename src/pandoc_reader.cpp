@@ -99,9 +99,9 @@ void PandocScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 //! non-zero exit -- and a Binder Error is also non-zero.
 //!
 //! Returns a LIST rather than rows: that is what a scalar can do, and it
-//! composes with unnest() when rows are wanted. Named panduck_-prefixed because
-//! duck_block_utils owns the bare `pandoc_ast_to_blocks`, and a name belongs to
-//! exactly one extension in this family.
+//! composes with unnest() when rows are wanted. Registered as
+//! panduck_pandoc_ast_to_blocks and, since converter handoff step 4, as the bare
+//! `pandoc_ast_to_blocks` that duck_block_utils used to own.
 static void PandocAstToBlocksFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	readers::RequireReaderEnabled(context, "pandoc");
@@ -153,20 +153,23 @@ void RegisterPandocReader(ExtensionLoader &loader) {
 		loader.RegisterFunction(std::move(info));
 	}
 
-	{
+	// Under its panduck_ name and under the canonical name duck_block_utils used,
+	// which panduck owns from converter handoff step 4
+	// (docs/superpowers/plans/2026-10-30-converter-handoff-step4.md). One function
+	// for both, so the policy gate and the depth guard cannot differ between them.
+	for (const char *name : {"panduck_pandoc_ast_to_blocks", "pandoc_ast_to_blocks"}) {
 		// FALLIBLE: it raises InvalidInputException from the reader policy gate
 		// and from the AST depth guard. DuckDB v2.0.0 turns an execution error from
 		// a function not marked SetFallible() into an INTERNAL error.
-		auto to_blocks = ScalarFunction("panduck_pandoc_ast_to_blocks", {LogicalType::VARCHAR},
-		                                DuckBlockTypes::DuckBlockListType(), PandocAstToBlocksFun);
+		auto to_blocks =
+		    ScalarFunction(name, {LogicalType::VARCHAR}, DuckBlockTypes::DuckBlockListType(), PandocAstToBlocksFun);
 		to_blocks.SetFallible();
 		CreateScalarFunctionInfo info(std::move(to_blocks));
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 		FunctionDescription desc;
 		desc.parameter_names = {"pandoc_ast_json"};
 		desc.description = "Convert a Pandoc AST JSON string into a list of duck_blocks.";
-		desc.examples = {"panduck_pandoc_ast_to_blocks('{\"pandoc-api-version\": "
-		                 "[1,23,1], \"meta\": {}, \"blocks\": []}')"};
+		desc.examples = {string(name) + "('{\"pandoc-api-version\": [1,23,1], \"meta\": {}, \"blocks\": []}')"};
 		desc.categories = {"panduck"};
 		info.descriptions.push_back(desc);
 		loader.RegisterFunction(std::move(info));

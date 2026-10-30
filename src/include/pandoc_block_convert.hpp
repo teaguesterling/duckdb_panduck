@@ -25,6 +25,10 @@ private:
 	// read_pandoc_ast(file_path VARCHAR) -> LIST(duck_block)
 	// Read a Pandoc JSON file and convert to duck_blocks
 	static void ReadPandocAstFun(DataChunk &args, ExpressionState &state, Vector &result);
+
+	// The canonical names taken over from duck_block_utils (converter handoff
+	// step 4). A member so it can reach the private converters above.
+	static void RegisterCanonicalNames(ExtensionLoader &loader);
 };
 
 } // namespace duckdb

@@ -62,6 +62,10 @@ the test now states the invariant directly instead of naming an example.
 | `panduck_blocks_to_pandoc_blocks(blocks)` | the blocks array alone, for splicing |
 | `panduck_write_pandoc_ast(path, blocks)` | `BOOLEAN` |
 
+duck_block_utils' converter names (`pandoc_ast_to_blocks`, `read_pandoc_ast`,
+`duck_blocks_to_pandoc_ast` and the rest) are panduck's now. The README lists them and the
+seven places their output changed.
+
 panduck's readers are deliberately **more faithful than pandoc** in places. The rule that
 keeps that from becoming incompatibility: diverge where the source justifies it, discard
 nothing, but the mapping back to *valid* pandoc JSON stays total. `make check-writeback`

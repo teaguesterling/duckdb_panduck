@@ -794,6 +794,19 @@ jobs:
           python3 scripts/check_word_loss.py \
             --strict --duckdb ./duckdb-cli/duckdb --extension "$EXT"
 
+      # CONVERTER WORD LOSS: the export half the step above never looks at. Every word a
+      # pandoc AST carries must survive pandoc -> duck_blocks -> pandoc. panduck's copy of
+      # the converter lost figure captions and image alt text for every 0.6.x release
+      # (#158), because nothing in CI compared the words that went in with the words that
+      # came out; check-writeback asserts only that pandoc ACCEPTS the output, and an empty
+      # caption is valid. No --strict here: this guard has no skip path, and a missing
+      # pandoc, CLI or extension is already exit 1.
+      - name: Converter word loss (a word goes in and does not come out)
+        run: |
+          EXT=$(find ext -name 'panduck.duckdb_extension' | head -1)
+          python3 test/converter/check_converter_wordloss.py \
+            --duckdb ./duckdb-cli/duckdb --extension "$EXT"
+
   # FIXTURE DRIFT AT THE pdf / markdown / webbed BOUNDARY.
   #
   # panduck's markdown, html and pdf readers are not panduck's code -- they dispatch to

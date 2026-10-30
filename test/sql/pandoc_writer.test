@@ -268,10 +268,13 @@ true
 # and it passed while the function was mis-declared.
 #
 # RawMessage() drops the exception's TYPE PREFIX, and that is the discriminator: the
-# correct build's message begins "IO Error: Could not open file for writing", while the
-# internal one begins "INTERNAL Error: Scalar function ..." and never contains the
-# "IO Error: " prefix immediately before the text. So the expectation below includes it
-# deliberately. Do not shorten it.
+# correct build's message begins "IO Error: Cannot open file", while the internal one
+# begins "INTERNAL Error: Scalar function ..." and never contains the "IO Error: " prefix
+# immediately before the text. So the expectation below includes it deliberately. Do not
+# shorten it.
+#
+# The text is DuckDB's own since the write went through its FileSystem (#144). The
+# std::ofstream version said "Could not open file for writing".
 #
 # Verified live rather than assumed: with the expected text replaced by a string this
 # build never emits, this assertion fails -- so it is being checked, not skipped.
@@ -290,7 +293,7 @@ SELECT panduck_write_pandoc_ast('{TEST_DIR}/no_such_directory/written.json', lis
   ORDER BY element_order))
 FROM read_org_blocks_string('Body.');
 ----
-IO Error: Could not open file for writing
+IO Error: Cannot open file
 
 # "All three" above was one short: panduck_blocks_to_pandoc_json and its alias
 # panduck_pandoc_ast_json call BuildBlocksJson too, and were not marked. A Div nested

@@ -209,6 +209,48 @@ SELECT panduck_write_pandoc_ast('doc.json',
     (SELECT list(b) FROM read_odt_blocks('doc.odt') b));
 ```
 
+### The converter names that moved from duck_block_utils
+
+duck_block_utils used to register the Pandoc converter under these names, and panduck
+registers them now. Add `LOAD panduck`; the SQL does not change. Each is an alias of the
+`panduck_` function beside it, which stays.
+
+| Name | panduck equivalent |
+|---|---|
+| `pandoc_ast_to_blocks(json)` | `panduck_pandoc_ast_to_blocks` |
+| `read_pandoc_ast(path)` | `panduck_pandoc_ast_to_blocks` over the file; reads through DuckDB's file system |
+| `duck_blocks_to_pandoc_ast(blocks)` | `panduck_blocks_to_pandoc_ast`, with `meta` and `blocks` typed `JSON` |
+| `duck_blocks_to_pandoc_blocks(blocks)` | `panduck_blocks_to_pandoc_blocks` |
+| `write_pandoc_ast(path, blocks)` | `panduck_write_pandoc_ast` |
+| `pandoc_ast(blocks, meta :=, api_version :=)` | table form, for `COPY ... (FORMAT JSON)` |
+| `pandoc_inlines_to_db_inlines`, `pandoc_inlines_to_text`, `duck_blocks_inlines_to_pandoc` | the inline converters |
+
+The output is panduck's, which differs from duck_block_utils' in seven places, all
+measured on 2026-10-30 with both copies in separate processes. The first four come from 59
+Pandoc ASTs (pandoc 3.1.3 over the fixtures under `test/`, plus the `*.pandoc.json`
+fixtures). The two table items come from hand-built tables, because every table in those
+ASTs came from pandoc and takes another path. The last item comes from the converter
+round-trip sweep:
+
+- a footnote keeps its body, as the note's children; duck_block_utils writes `[note]`
+- a citation keeps its text (`[@knuth1984]`) in a `Cite`; duck_block_utils writes `[cite]`
+- a code block's content loses its trailing newline
+- a raw block inside a container stays a `RawBlock` with its format; duck_block_utils
+  writes a `Div` classed `raw`
+- a table that did not come from pandoc writes each cell as `Para`; duck_block_utils
+  writes `Plain`
+- in a table that did not come from pandoc, a row shorter than the others stays short,
+  and the column count is the widest row's. duck_block_utils pads short rows to the
+  header's count. pandoc 3.1.3 reads both.
+- writing a bare `deflist` block (a superseded type) gives a `Div`, not a `Para`
+
+panduck also keeps text that duck_block_utils' copy loses: a list item with formatted
+text, a formatted figure caption, and the last paragraph of a container in a document
+with metadata. A pandoc table inside a container keeps its alignment. `make
+check-converter-wordloss` checks that a round trip loses no word.
+
+Errors are the same, including the nesting limit of 128.
+
 > **Do not reach for `to_json()` on the AST struct.** Its `meta` and `blocks` fields hold
 > JSON in `VARCHAR`, so `to_json()` escapes them as strings while `pandoc-api-version`
 > serialises as a real array — producing a document that looks right and that pandoc

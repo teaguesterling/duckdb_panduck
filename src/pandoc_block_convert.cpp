@@ -3372,7 +3372,7 @@ static void RegisterCanonicalScalar(ExtensionLoader &loader, ScalarFunction fn, 
 //
 // They are ALIASES of the panduck_ functions above, not a second copy: the same
 // implementation, so the output is panduck's wherever the two copies had
-// diverged (footnote bodies kept, and five more; see the plan). Teague's decision,
+// diverged (footnote bodies kept, and the rest listed in the plan). Teague's decision,
 // 2026-10-30. pandoc_ast_to_blocks is registered beside its panduck_ form in
 // pandoc_reader.cpp, because that is where the reader policy gate lives.
 void PandocBlockConvert::RegisterCanonicalNames(ExtensionLoader &loader) {

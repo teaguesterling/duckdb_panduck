@@ -91,10 +91,10 @@ loses words on 17.
 | dbu commit | in panduck? |
 |---|---|
 | faaebf7 inline image alt, link/image title | ported, e56b59b |
-| 442ac16 inline flattener recurses (formatted table cells) | already in (probe: a `Link`+`Code` cell gives `text and co**de`, with no URL) |
+| 442ac16 inline flattener recurses (formatted table cells) | already in (probes, dbu's three inputs: a `Strong` cell gives `BoldCell`; a `Link`+`Code` cell gives `text and co**de`, with no URL; an `Image` cell gives `alt text`, with no `pic.png`) |
 | fb4a7c9 `read_pandoc_ast` VOLATILE | already in, and superseded by the VFS read (`duckdb_functions()`: VOLATILE) |
 | b3c9183 a rich heading keeps its flattened title and its children | already in (probe: `heading 1 Bold title` plus children) |
-| 1243c77 a native table exports a real pandoc Table | already in, as panduck's own shape-keyed `NativeTableToPandocVal` |
+| 1243c77 a native table exports a real pandoc Table | already in, as panduck's own shape-keyed `NativeTableToPandocVal`, except row padding: dbu pads a short row to the header's column count, panduck leaves it short and widens the colspecs to the widest row. pandoc 3.1.3 reads panduck's output (exit 0, both shapes), so it is not ported |
 | e6a1f79 the writers skip the document root | already in (`pandoc_writer.test`, the document-root records) |
 | cfd8e28 v2.0 compatibility: `SetFallible`, `SetStability` | already in (the registrations) |
 | 1c5f2a6 fragments wrapped; the caption `switch_content` arm | wrapping already in (`pandoc_writer.test`); caption arm ported, 751b6f5, and extended to a formatted caption |
@@ -106,7 +106,7 @@ in a document with metadata (49c8157); a list or definition item with formatted 
 (f9f4a37); a pandoc table inside a container losing its preserved tuple (ad564bc). Each has
 a few-line reproduction in `test/sql/pandoc_roundtrip_fidelity.test`.
 
-**What still differs from dbu, measured after the port:** the six places listed in the
+**What still differs from dbu, measured after the port:** the seven places listed in the
 README, under "The converter names that moved from duck_block_utils".
 
 The other `to_blocks` differences are `element_order` shifts that follow from these. The

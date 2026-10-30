@@ -2170,10 +2170,17 @@ static void ConvertContainerChildrenToPandocVal(yyjson_mut_doc *doc, const vecto
 				// pandoc's grammar demands an array -- which made pandoc reject the
 				// whole document. Tables therefore go through the shared converter,
 				// which tells the two forms apart by shape.
+				//
+				// A PANDOC table prefers its PRESERVED tuple, exactly as the top-level
+				// arm in BuildBlocksJson does. This arm converted the projection
+				// unconditionally, so a pandoc table inside a Div lost its alignment,
+				// widths and cell blocks (AlignRight became AlignDefault, each cell's
+				// Plain became Para) while the same table at top level kept them.
 				yyjson_mut_val *obj = yyjson_mut_obj(doc);
 				if (child_type == DuckBlockTypes::TYPE_TABLE) {
 					yyjson_mut_obj_add_str(doc, obj, "t", "Table");
-					yyjson_mut_obj_add_val(doc, obj, "c", NativeTableToPandocVal(doc, content));
+					auto tuple = GetElementAttribute(child, DuckBlockTypes::ATTR_PANDOC_AST);
+					yyjson_mut_obj_add_val(doc, obj, "c", NativeTableToPandocVal(doc, tuple.empty() ? content : tuple));
 				} else {
 					yyjson_mut_obj_add_str(doc, obj, "t", "DefinitionList");
 					yyjson_doc *sub_doc = yyjson_read(content.c_str(), content.size(), 0);

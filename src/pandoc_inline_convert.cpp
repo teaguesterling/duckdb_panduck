@@ -2,6 +2,7 @@
 #include "pandoc_convert_util.hpp"
 #include "duck_block_types.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 #include <sstream>
 
@@ -988,29 +989,64 @@ static void DbInlinesToPandocNestedFun(DataChunk &args, ExpressionState &state, 
 	}
 }
 
+// One registration, with its description, for each canonical inline name.
+static void RegisterInlineScalar(ExtensionLoader &loader, ScalarFunction fn, vector<string> parameter_names,
+                                 const string &description, const string &example) {
+	// FALLIBLE, like every converter entry point: the inline walkers raise
+	// InvalidInputException from the depth guard (CheckPandocDepth), and DuckDB
+	// v2.0 turns an execution error from an undeclared function into an INTERNAL one.
+	fn.SetFallible();
+	CreateScalarFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = std::move(parameter_names);
+	desc.description = description;
+	desc.examples = {example};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
 void PandocInlineConvert::Register(ExtensionLoader &loader) {
-	// DELIBERATELY REGISTERS NOTHING IN PANDUCK.
+	// THE CANONICAL INLINE NAMES ARE PANDUCK'S (converter handoff step 4,
+	// docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
 	//
-	// Every name this body registered upstream -- pandoc_ast_to_blocks,
-	// read_pandoc_ast, duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is
-	// still registered by duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE
-	// EXTENSION IN THIS FAMILY.
+	// duck_block_utils registered these five overloads, and its paired release
+	// removes them. A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY:
+	// measured, when two loaded extensions register the same name, BOTH
+	// registrations survive as ambiguous overloads and every call fails at BIND
+	// TIME with "Could not choose a best candidate function". So this body stayed
+	// empty for the two-copy window, and fills now that the window closes.
 	//
-	// Measured, not assumed: when two loaded extensions register the same name,
-	// BOTH registrations survive as ambiguous overloads and every call then fails
-	// at BIND TIME with "Could not choose a best candidate function" -- naming a
-	// construct the caller never wrote. It does not degrade, it breaks, and it
-	// would break duckeye's thirteen formats for anyone with both extensions
-	// loaded.
-	//
-	// panduck's surface is read_pandoc_blocks / read_pandoc_blocks_string,
-	// registered in pandoc_reader.cpp under names nobody else owns. The
-	// conversion functions above are reached through ConvertPandocAstToBlocks()
-	// rather than through SQL names.
-	//
-	// Kept as an empty body rather than deleted so that wiring it up by mistake
-	// does nothing, instead of reintroducing the collision.
-	(void)loader;
+	// The signatures are duck_block_utils' exactly, as measured with
+	// duckdb_functions(), so a caller's SQL does not change -- only its LOAD.
+	// test/sql/pandoc_canonical_names.test pins them.
+	auto inlines = DuckBlockTypes::DuckBlockListType();
+
+	RegisterInlineScalar(
+	    loader,
+	    ScalarFunction("pandoc_inlines_to_db_inlines", {LogicalType::VARCHAR}, inlines, PandocInlinesToDbInlinesFun),
+	    {"json"}, "Parse a Pandoc inlines JSON array into inline duck_blocks.",
+	    "pandoc_inlines_to_db_inlines('[{\"t\":\"Str\",\"c\":\"hi\"}]')");
+	RegisterInlineScalar(
+	    loader, ScalarFunction("duck_blocks_inlines_to_pandoc", {inlines}, LogicalType::VARCHAR, DbInlinesToPandocFun),
+	    {"inlines"}, "Convert inline duck_blocks into a Pandoc inlines JSON array.",
+	    "duck_blocks_inlines_to_pandoc(inlines)");
+	RegisterInlineScalar(loader,
+	                     ScalarFunction("duck_blocks_inlines_to_pandoc", {LogicalType::LIST(inlines)},
+	                                    LogicalType::VARCHAR, DbInlinesToPandocNestedFun),
+	                     {"nested_inlines"}, "Flatten lists of inline duck_blocks into one Pandoc inlines JSON array.",
+	                     "duck_blocks_inlines_to_pandoc(nested_inlines)");
+	RegisterInlineScalar(
+	    loader,
+	    ScalarFunction("pandoc_inlines_to_text", {LogicalType::VARCHAR}, LogicalType::VARCHAR, PandocInlinesToTextFun),
+	    {"json"}, "Extract the plain text of a Pandoc inlines JSON array.",
+	    "pandoc_inlines_to_text('[{\"t\":\"Str\",\"c\":\"hi\"}]')");
+	RegisterInlineScalar(loader,
+	                     ScalarFunction("pandoc_inlines_to_text", {LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                    LogicalType::VARCHAR, PandocInlinesToTextFun),
+	                     {"json", "mode"}, "Render a Pandoc inlines JSON array as text in the given mode.",
+	                     "pandoc_inlines_to_text('[{\"t\":\"Str\",\"c\":\"hi\"}]', 'plain')");
 }
 
 } // namespace duckdb

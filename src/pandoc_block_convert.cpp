@@ -12,14 +12,14 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb_compat.hpp"
 #include "pandoc_convert_util.hpp"
 #include "pandoc_inline_convert.hpp"
+#include "reader_registry.hpp"
 #include <set>
 
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -3084,16 +3084,15 @@ void PandocBlockConvert::ReadPandocAstFun(DataChunk &args, ExpressionState &stat
 			continue;
 		}
 
-		string file_path = path_val.GetValue<string>();
-
-		std::ifstream file(file_path);
-		if (!file.is_open()) {
-			throw IOException("Could not open file: " + file_path);
-		}
-
-		std::stringstream buffer;
-		buffer << file.rdbuf();
-		string json = buffer.str();
+		// THROUGH DUCKDB'S FILE SYSTEM, like read_pandoc_blocks (#136). This
+		// read std::ifstream while nothing could reach it; registering it as
+		// read_pandoc_ast made it reachable, and a local-disk-only reader would
+		// have been the one file-reading function that ignores httpfs, s3 and
+		// every other registered filesystem. The policy gate is
+		// read_pandoc_blocks' too: one reader, one switch.
+		auto &context = state.GetContext();
+		readers::RequireReaderEnabled(context, "pandoc");
+		string json = readers::ReadFileThroughVFS(context, path_val.GetValue<string>(), "read_pandoc_ast");
 
 		vector<Value> blocks;
 		ConvertPandocAstToBlocks(json, blocks);
@@ -3286,6 +3285,16 @@ static void PandocAstJsonFun(DataChunk &args, ExpressionState &state, Vector &re
 	}
 }
 
+// THROUGH DUCKDB'S FILE SYSTEM, not std::ofstream (#144), so a write reaches
+// whatever filesystem the client has registered, as every read in panduck does.
+// FILE_CREATE_NEW truncates an existing file, which is what ofstream did.
+static void WriteFileThroughVFS(ClientContext &context, const string &path, const string &contents) {
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto handle = fs.OpenFile(path, FileOpenFlags::FILE_FLAGS_WRITE | FileOpenFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	fs.Write(*handle, const_cast<char *>(contents.data()), static_cast<int64_t>(contents.size()));
+	handle->Close();
+}
+
 static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &path_vec = args.data[0];
 	auto &blocks_vec = args.data[1];
@@ -3307,14 +3316,10 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		}
 
 		string file_path = path_val.GetValue<string>();
-		std::ofstream file(file_path);
-		if (!file.is_open()) {
-			throw IOException("Could not open file for writing: " + file_path);
-		}
 
 		if (blocks_val.IsNull()) {
-			file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":{},\"blocks\":[]}";
-			file.close();
+			WriteFileThroughVFS(state.GetContext(), file_path,
+			                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":{},\"blocks\":[]}");
 			result.SetValue(i, Value(true));
 			continue;
 		}
@@ -3335,40 +3340,106 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		// you wrote the file.
 		string meta_json = BuildMetaJson(blocks_list);
 
-		file << "{\"pandoc-api-version\":" << api_version << ",\"meta\":" << meta_json << ",\"blocks\":" << blocks_json
-		     << "}";
-		file.close();
+		WriteFileThroughVFS(state.GetContext(), file_path,
+		                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":" + meta_json +
+		                        ",\"blocks\":" + blocks_json + "}");
 		result.SetValue(i, Value(true));
 	}
 }
 
+// One registration, with its description, for each canonical block-level name.
+static void RegisterCanonicalScalar(ExtensionLoader &loader, ScalarFunction fn, vector<string> parameter_names,
+                                    const string &description, const string &example) {
+	fn.SetFallible();
+	CreateScalarFunctionInfo info(std::move(fn));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = std::move(parameter_names);
+	desc.description = description;
+	desc.examples = {example};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
+// THE CANONICAL NAMES ARE PANDUCK'S (converter handoff step 4,
+// docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
+//
+// duck_block_utils registered these, and its paired release removes them. The
+// signatures, return types and stability are duck_block_utils' exactly, as
+// measured with duckdb_functions(), so a caller's SQL does not change -- only its
+// LOAD. test/sql/pandoc_canonical_names.test pins them.
+//
+// They are ALIASES of the panduck_ functions above, not a second copy: the same
+// implementation, so the output is panduck's wherever the two copies had
+// diverged (footnote bodies kept, and five more; see the plan). Teague's decision,
+// 2026-10-30. pandoc_ast_to_blocks is registered beside its panduck_ form in
+// pandoc_reader.cpp, because that is where the reader policy gate lives.
+void PandocBlockConvert::RegisterCanonicalNames(ExtensionLoader &loader) {
+	auto blocks_type = DuckBlockTypes::DuckBlockListType();
+
+	// JSON, not VARCHAR, for meta and blocks: duck_block_utils' return type, which
+	// panduck_blocks_to_pandoc_ast does not share.
+	auto to_ast =
+	    ScalarFunction("duck_blocks_to_pandoc_ast", {blocks_type}, GetPandocAstType(), DuckBlocksToPandocAstFun);
+	panduck::SetNullHandling(to_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	RegisterCanonicalScalar(loader, std::move(to_ast), {"blocks"},
+	                        "Convert a list of duck_blocks into a Pandoc AST document struct.",
+	                        "duck_blocks_to_pandoc_ast(blocks)");
+
+	RegisterCanonicalScalar(loader,
+	                        ScalarFunction("duck_blocks_to_pandoc_blocks", {blocks_type}, LogicalType::VARCHAR,
+	                                       PandocBlockConvert::DuckBlocksToPandocBlocksFun),
+	                        {"blocks"}, "Convert a list of duck_blocks into a JSON array of Pandoc blocks.",
+	                        "duck_blocks_to_pandoc_blocks(blocks)");
+
+	// VOLATILE, both: each touches a file, so neither may be folded or cached.
+	auto read_ast = ScalarFunction("read_pandoc_ast", {LogicalType::VARCHAR}, blocks_type, ReadPandocAstFun);
+	read_ast.SetStability(FunctionStability::VOLATILE);
+	RegisterCanonicalScalar(loader, std::move(read_ast), {"file_path"},
+	                        "Read a Pandoc AST JSON file into a list of duck_blocks.",
+	                        "read_pandoc_ast('document.json')");
+
+	auto write_ast = ScalarFunction("write_pandoc_ast", {LogicalType::VARCHAR, blocks_type}, LogicalType::BOOLEAN,
+	                                WritePandocAstFun);
+	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	write_ast.SetStability(FunctionStability::VOLATILE);
+	RegisterCanonicalScalar(loader, std::move(write_ast), {"file_path", "blocks"},
+	                        "Write a list of duck_blocks out as a Pandoc AST JSON file.",
+	                        "write_pandoc_ast('output.json', blocks)");
+
+	// pandoc_ast(blocks, meta := MAP, api_version := INTEGER[]): the table form,
+	// for COPY ... (FORMAT JSON).
+	TableFunction pandoc_ast("pandoc_ast", {blocks_type}, PandocAstFunction, PandocAstBind);
+	panduck::AddNamedParameter(pandoc_ast, "meta", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
+	panduck::AddNamedParameter(pandoc_ast, "api_version", LogicalType::LIST(LogicalType::INTEGER));
+	CreateTableFunctionInfo info(std::move(pandoc_ast));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"blocks"};
+	desc.description = "Return a list of duck_blocks as one Pandoc AST row.";
+	desc.examples = {"SELECT * FROM pandoc_ast(blocks)"};
+	desc.categories = {"panduck"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
+}
+
 void PandocBlockConvert::Register(ExtensionLoader &loader) {
-	// REGISTERS THE WRITE DIRECTION ONLY, UNDER PANDUCK-OWNED NAMES.
+	// THE panduck_ NAMES FIRST, THEN THE CANONICAL ONES (RegisterCanonicalNames).
 	//
-	// Every name this body registered upstream -- pandoc_ast_to_blocks,
-	// read_pandoc_ast, duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- is
-	// still registered by duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE
-	// EXTENSION IN THIS FAMILY.
+	// The panduck_ names came first because, until converter handoff step 4, every
+	// canonical name -- pandoc_ast_to_blocks, read_pandoc_ast,
+	// duck_blocks_to_pandoc_ast, pandoc_ast and the rest -- was registered by
+	// duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS
+	// FAMILY.
 	//
 	// Measured, not assumed: when two loaded extensions register the same name,
 	// BOTH registrations survive as ambiguous overloads and every call then fails
 	// at BIND TIME with "Could not choose a best candidate function" -- naming a
 	// construct the caller never wrote. It does not degrade, it breaks, and it
 	// would break duckeye's thirteen formats for anyone with both extensions
-	// loaded.
-	//
-	// So the names below are panduck_-prefixed, which is the same choice the read
-	// side made in taking read_pandoc_blocks rather than upstream's
-	// read_pandoc_ast. When upstream drops its copy after a RELEASED panduck
-	// (converter handoff, step 4), the canonical names can be added here as
-	// aliases. Not before: the two-copy window is safe and the zero-copy window
-	// is not.
-	//
-	// THE READ SIDE IS STILL NOT REGISTERED HERE. pandoc_ast_to_blocks and
-	// read_pandoc_ast remain upstream's; panduck's read surface is
-	// read_pandoc_blocks / read_pandoc_blocks_string in pandoc_reader.cpp, and
-	// the conversion is reached through ConvertPandocAstToBlocks() rather than
-	// through those SQL names.
+	// loaded. So the canonical names arrive here in the same release that
+	// duck_block_utils drops them from, and the panduck_ names stay.
 	//
 	// WHY THE WRITE DIRECTION IS REGISTERED AT ALL. panduck's readers are
 	// deliberately more faithful than pandoc in places -- richer attributes,
@@ -3512,6 +3583,11 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	auto write_ast = ScalarFunction("panduck_write_pandoc_ast", {LogicalType::VARCHAR, blocks_type},
 	                                LogicalType::BOOLEAN, WritePandocAstFun);
 	panduck::SetNullHandling(write_ast, FunctionNullHandling::SPECIAL_HANDLING);
+	// VOLATILE: a file write is a side effect, and a CONSISTENT function may be
+	// folded or deduplicated by the optimiser, so the file would be written fewer
+	// times than the query says. duck_block_utils marked write_pandoc_ast VOLATILE;
+	// this name was CONSISTENT until the canonical name below joined it.
+	write_ast.SetStability(FunctionStability::VOLATILE);
 	write_ast.SetFallible();
 	{
 		CreateScalarFunctionInfo info(std::move(write_ast));
@@ -3524,6 +3600,8 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 		info.descriptions.push_back(desc);
 		loader.RegisterFunction(std::move(info));
 	}
+
+	RegisterCanonicalNames(loader);
 }
 
 } // namespace duckdb

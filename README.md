@@ -225,16 +225,24 @@ registers them now. Add `LOAD panduck`; the SQL does not change. Each is an alia
 | `pandoc_ast(blocks, meta :=, api_version :=)` | table form, for `COPY ... (FORMAT JSON)` |
 | `pandoc_inlines_to_db_inlines`, `pandoc_inlines_to_text`, `duck_blocks_inlines_to_pandoc` | the inline converters |
 
-The output is panduck's, which differs from duck_block_utils' in seven places. The first
-six were measured over 68 Pandoc ASTs, and the seventh by the converter round-trip sweep:
+The output is panduck's, which differs from duck_block_utils' in six places. Measured on
+2026-10-30 over 59 Pandoc ASTs (pandoc 3.1.3 over the fixtures under `test/`, plus the
+`*.pandoc.json` fixtures), each run through both copies in separate processes; the last
+item is from the converter round-trip sweep:
 
-- a footnote keeps its text, as the note's children; duck_block_utils dropped it
+- a footnote keeps its body, as the note's children; duck_block_utils writes `[note]`
+- a citation keeps its text (`[@knuth1984]`) in a `Cite`; duck_block_utils writes `[cite]`
 - a code block's content loses its trailing newline
-- a link loses pandoc's `wikilink` title marker
-- an image loses a `title` that only repeats its alt text
-- a citation is kept as text (`[@knuth1984]`); duck_block_utils dropped it
-- writing an image with no alt text gives an empty alt, not the placeholder `image`
+- a raw block inside a container stays a `RawBlock` with its format; duck_block_utils
+  writes a `Div` classed `raw`
+- a table that did not come from pandoc writes each cell as `Para`; duck_block_utils
+  writes `Plain`
 - writing a bare `deflist` block (a superseded type) gives a `Div`, not a `Para`
+
+panduck also keeps text that duck_block_utils' copy loses: a list item with formatted
+text, a formatted figure caption, and the last paragraph of a container in a document
+with metadata. A pandoc table inside a container keeps its alignment. `make
+check-converter-wordloss` checks that a round trip loses no word.
 
 Errors are the same, including the nesting limit of 128.
 

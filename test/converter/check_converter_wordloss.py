@@ -112,12 +112,19 @@ def corpus(tmp):
     return cases, refused
 
 
-def round_trip(duckdb, path):
+def round_trip(duckdb, path, extension=None):
     sql = (
         "SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks("
         f"(SELECT content FROM read_text('{path}'))));"
     )
-    r = subprocess.run([duckdb, "-noheader", "-list", "-c", sql], capture_output=True, text=True)
+    # CI runs a stock duckdb against the extension artifact the build matrix produced:
+    # -unsigned is required to LOAD a locally built .duckdb_extension. Locally, the
+    # statically linked build needs neither. Same shape as scripts/check_word_loss.py.
+    cmd = [duckdb]
+    if extension:
+        cmd.append("-unsigned")
+        sql = f"LOAD '{extension}'; " + sql
+    r = subprocess.run(cmd + ["-noheader", "-list", "-c", sql], capture_output=True, text=True)
     if r.returncode != 0:
         lines = (r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}").splitlines()
         raise RuntimeError(lines[0])
@@ -127,6 +134,9 @@ def round_trip(duckdb, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--duckdb", default=str(ROOT / "build" / "release" / "duckdb"))
+    ap.add_argument("--extension", default=None,
+                    help="panduck.duckdb_extension to LOAD (implies -unsigned); "
+                         "omit when panduck is linked in")
     args = ap.parse_args()
 
     if not Path(args.duckdb).exists():
@@ -138,6 +148,9 @@ def main():
         ver = None
     if ver is None or ver.returncode != 0:
         print("FAIL: pandoc is not installed. This guard needs it to build its corpus.")
+        return 1
+    if args.extension and not Path(args.extension).exists():
+        print(f"FAIL: no extension at {args.extension}.")
         return 1
     print(f"{ver.stdout.splitlines()[0]}; converter from {args.duckdb}")
 
@@ -155,7 +168,7 @@ def main():
             if isinstance(blocks_in, dict):
                 blocks_in = blocks_in.get("blocks", [])
             try:
-                blocks_out = round_trip(args.duckdb, path)
+                blocks_out = round_trip(args.duckdb, path, args.extension)
             except (RuntimeError, json.JSONDecodeError) as e:
                 print(f"  ERROR {rel}: {e}")
                 failures += 1

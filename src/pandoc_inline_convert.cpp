@@ -165,6 +165,13 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 					if (u && yyjson_is_str(u)) {
 						attrs["href"] = string(yyjson_get_str(u), yyjson_get_len(u));
 					}
+					// [url, TITLE] -- same omission as the Image arm, same fix.
+					if (yyjson_arr_size(target) >= 2) {
+						yyjson_val *t2 = yyjson_arr_get(target, 1);
+						if (t2 && yyjson_is_str(t2) && yyjson_get_len(t2) > 0) {
+							attrs["title"] = string(yyjson_get_str(t2), yyjson_get_len(t2));
+						}
+					}
 				}
 			}
 			result.push_back(CreateDocInline(inline_type, "", level, attrs, order++));
@@ -182,6 +189,16 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 					yyjson_val *s = yyjson_arr_get(target, 0);
 					if (s && yyjson_is_str(s)) {
 						attrs["src"] = string(yyjson_get_str(s), yyjson_get_len(s));
+					}
+					// Pandoc's target is [url, TITLE]. The title was read by nobody and
+					// written by nobody, so `<img title="...">` survived neither
+					// direction -- an absence that looks exactly like a document
+					// without one. Ported from duck_block_utils faaebf7.
+					if (yyjson_arr_size(target) >= 2) {
+						yyjson_val *t2 = yyjson_arr_get(target, 1);
+						if (t2 && yyjson_is_str(t2) && yyjson_get_len(t2) > 0) {
+							attrs["title"] = string(yyjson_get_str(t2), yyjson_get_len(t2));
+						}
 					}
 				}
 				if (alt_inlines) {
@@ -413,6 +430,26 @@ void PandocInlineConvert::PandocInlinesToDbInlinesFun(DataChunk &args, Expressio
 	}
 }
 
+// One attribute lookup. The Link and Image arms below each carried their own copy of
+// this loop reading a single key -- and the Image copy read `src` while never reading
+// `alt`, which is how every INLINE image lost its alt text on export. Ported from
+// duck_block_utils faaebf7.
+static string DbAttrLookup(const Value &attrs, const char *key) {
+	if (attrs.IsNull()) {
+		return "";
+	}
+	for (auto &entry : MapValue::GetChildren(attrs)) {
+		if (entry.IsNull()) {
+			continue;
+		}
+		auto &kv = StructValue::GetChildren(entry);
+		if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == key && !kv[1].IsNull()) {
+			return kv[1].GetValue<string>();
+		}
+	}
+	return "";
+}
+
 yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc *doc, const vector<Value> &inlines,
                                                                  idx_t start_idx, int32_t target_level, idx_t &end_idx,
                                                                  idx_t depth) {
@@ -514,22 +551,8 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(arr, obj);
 		} else if (inline_type == DuckBlockTypes::INLINE_LINK) {
 			auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-			string href = "";
-			if (!attrs.IsNull()) {
-				auto &map_entries = MapValue::GetChildren(attrs);
-				for (auto &entry : map_entries) {
-					if (entry.IsNull()) {
-						continue;
-					}
-					auto &kv = StructValue::GetChildren(entry);
-					if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == "href") {
-						if (!kv[1].IsNull()) {
-							href = kv[1].GetValue<string>();
-						}
-						break;
-					}
-				}
-			}
+			string href = DbAttrLookup(attrs, "href");
+			string link_title = DbAttrLookup(attrs, "title");
 			idx_t nested_end = i + 1;
 			yyjson_mut_val *nested = ConvertDbInlinesToPandocVal(doc, inlines, i + 1, level + 1, nested_end, depth + 1);
 			if (yyjson_mut_arr_size(nested) == 0 && !content.empty()) {
@@ -550,27 +573,33 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(c_arr, nested);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, href.data(), href.size());
-			yyjson_mut_arr_add_str(doc, target_arr, "");
+			yyjson_mut_arr_add_strncpy(doc, target_arr, link_title.data(), link_title.size());
 			yyjson_mut_arr_add_val(c_arr, target_arr);
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);
 			i = nested_end - 1;
 		} else if (inline_type == DuckBlockTypes::INLINE_IMAGE) {
 			auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-			string src = "";
-			if (!attrs.IsNull()) {
-				auto &map_entries = MapValue::GetChildren(attrs);
-				for (auto &entry : map_entries) {
-					if (entry.IsNull()) {
-						continue;
-					}
-					auto &kv = StructValue::GetChildren(entry);
-					if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == "src") {
-						if (!kv[1].IsNull()) {
-							src = kv[1].GetValue<string>();
-						}
-						break;
-					}
+			string src = DbAttrLookup(attrs, "src");
+			string img_title = DbAttrLookup(attrs, "title");
+			// THE ALT. This arm wrote an EMPTY array unconditionally, so every inline
+			// image lost its alt text on export -- while the BLOCK image arm read it.
+			// That asymmetry is why the roundtrip sweep passed: it probes `image` in
+			// block position, and a real document has its images inside paragraphs.
+			//
+			// Three sources in precedence order, because the reader writes the alt into
+			// BOTH content and attributes['alt'] and a foreign producer may write
+			// either: nested children, then content, then the attribute. Ported from
+			// duck_block_utils faaebf7.
+			idx_t img_end = i + 1;
+			yyjson_mut_val *alt = ConvertDbInlinesToPandocVal(doc, inlines, i + 1, level + 1, img_end, depth + 1);
+			if (yyjson_mut_arr_size(alt) == 0) {
+				string alt_text = content.empty() ? DbAttrLookup(attrs, "alt") : content;
+				if (!alt_text.empty()) {
+					yyjson_mut_val *str_obj = yyjson_mut_obj(doc);
+					yyjson_mut_obj_add_str(doc, str_obj, "t", "Str");
+					yyjson_mut_obj_add_strncpy(doc, str_obj, "c", alt_text.data(), alt_text.size());
+					yyjson_mut_arr_add_val(alt, str_obj);
 				}
 			}
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
@@ -581,10 +610,10 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
 			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
 			yyjson_mut_arr_add_val(c_arr, attr_arr);
-			yyjson_mut_arr_add_val(c_arr, yyjson_mut_arr(doc));
+			yyjson_mut_arr_add_val(c_arr, alt);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, src.data(), src.size());
-			yyjson_mut_arr_add_str(doc, target_arr, "");
+			yyjson_mut_arr_add_strncpy(doc, target_arr, img_title.data(), img_title.size());
 			yyjson_mut_arr_add_val(c_arr, target_arr);
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);

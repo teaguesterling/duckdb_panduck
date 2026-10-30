@@ -29,6 +29,10 @@ EPUB.
 explicitly by `element_order` — section slicing depends on position, so the order is
 guaranteed rather than incidental.
 
+The `read_` prefix is reserved for table functions: every `read_*` name panduck registers
+returns rows. `panduck_read_blocks` returns one value, so it takes the `panduck_` prefix
+that panduck's other functions use, of every kind.
+
 ## The registry
 
 ```sql

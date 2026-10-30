@@ -14,6 +14,11 @@ nav:
   - Validation: validation.md
   - Updating: UPDATING.md
 
+# Design specs and plans are working notes, not user documentation. mkdocs publishes
+# every file under docs/, in the nav or not, so they are excluded explicitly.
+exclude_docs: |
+  superpowers/
+
 markdown_extensions:
   - admonition
   - tables

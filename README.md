@@ -361,6 +361,8 @@ went unverified".
 
 ## Documentation
 
+The documentation is published at <https://duckdb-panduck.readthedocs.io/>.
+
 - [Architecture](docs/architecture.md) — the layering, and why nothing depends upward
 - [Readers](docs/readers.md) — every reader, and what real writers actually emit
 - [Dispatch](docs/dispatch.md) — the derived registry and runtime reader registration

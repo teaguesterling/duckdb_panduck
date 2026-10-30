@@ -3433,13 +3433,15 @@ void PandocBlockConvert::Register(ExtensionLoader &loader) {
 	// duck_block_utils, and A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS
 	// FAMILY.
 	//
-	// Measured, not assumed: when two loaded extensions register the same name,
-	// BOTH registrations survive as ambiguous overloads and every call then fails
-	// at BIND TIME with "Could not choose a best candidate function" -- naming a
-	// construct the caller never wrote. It does not degrade, it breaks, and it
-	// would break duckeye's thirteen formats for anyone with both extensions
-	// loaded. So the canonical names arrive here in the same release that
-	// duck_block_utils drops them from, and the panduck_ names stay.
+	// Measured 2026-10-30, in both load orders: when both extensions register
+	// these names, the extension that LOADS SECOND fails its init ("Failed to add
+	// new function overloads to function "pandoc_ast": function already exists"),
+	// so none of its functions exist. This comment used to say the overlap left
+	// ambiguous overloads that fail at bind time; that does not hold once the
+	// pandoc_ast table function is in both. Either way, it breaks duckeye's
+	// thirteen formats for anyone with both loaded. So the canonical names arrive
+	// here in the same release that duck_block_utils drops them from, and the
+	// panduck_ names stay.
 	//
 	// WHY THE WRITE DIRECTION IS REGISTERED AT ALL. panduck's readers are
 	// deliberately more faithful than pandoc in places -- richer attributes,

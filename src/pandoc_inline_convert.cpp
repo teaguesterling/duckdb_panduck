@@ -1012,11 +1012,11 @@ void PandocInlineConvert::Register(ExtensionLoader &loader) {
 	// docs/superpowers/plans/2026-10-30-converter-handoff-step4.md).
 	//
 	// duck_block_utils registered these five overloads, and its paired release
-	// removes them. A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY:
-	// measured, when two loaded extensions register the same name, BOTH
-	// registrations survive as ambiguous overloads and every call fails at BIND
-	// TIME with "Could not choose a best candidate function". So this body stayed
-	// empty for the two-copy window, and fills now that the window closes.
+	// removes them. A NAME IS OWNED BY EXACTLY ONE EXTENSION IN THIS FAMILY: when
+	// both register these names, the extension that LOADS SECOND fails its init
+	// ("Failed to add new function overloads to function "pandoc_ast": function
+	// already exists"; measured 2026-10-30, in both load orders). So this body
+	// stayed empty for the two-copy window, and fills now that the window closes.
 	//
 	// The signatures are duck_block_utils' exactly, as measured with
 	// duckdb_functions(), so a caller's SQL does not change -- only its LOAD.

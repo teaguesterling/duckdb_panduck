@@ -90,7 +90,7 @@ SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
 # The figure walk switches its output to the caption list when it meets the `caption`
 # block, and skips that block itself. A caption carrying its text in `content` -- the
 # content rule's tight form, and what the reader produces for any plain caption -- had
-# that text read by nobody, so the Figure exported as `Caption []`. Measured on 12 of the
+# that text read by nobody, so the Figure exported as `Caption []`. Measured on 10 of the
 # 59 inputs, every one a fixture with an ordinary captioned image.
 
 # A pandoc Figure round-trips its caption (and its image alt, from the section above).

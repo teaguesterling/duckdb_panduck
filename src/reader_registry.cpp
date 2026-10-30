@@ -946,12 +946,12 @@ void RegistryScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 	idx_t count = 0;
 	while (state.offset < data.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		const auto &e = data.rows[state.offset];
-		output.SetValue(0, count, Value(e.ext));
-		output.SetValue(1, count, Value(e.format));
-		output.SetValue(2, count, Value(e.reader_ext));
-		output.SetValue(3, count, e.function.empty() ? Value(LogicalType::VARCHAR) : Value(e.function));
-		output.SetValue(4, count, Value(e.kind));
-		output.SetValue(5, count, Value(e.source));
+		output.data[0].SetValue(count, Value(e.ext));
+		output.data[1].SetValue(count, Value(e.format));
+		output.data[2].SetValue(count, Value(e.reader_ext));
+		output.data[3].SetValue(count, e.function.empty() ? Value(LogicalType::VARCHAR) : Value(e.function));
+		output.data[4].SetValue(count, Value(e.kind));
+		output.data[5].SetValue(count, Value(e.source));
 		state.offset++;
 		count++;
 	}
@@ -1099,10 +1099,10 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 		entry.options = data.options;
 		ReaderRegistry::Get().Register(entry);
 
-		output.SetValue(0, count, Value(entry.ext));
-		output.SetValue(1, count, Value(entry.reader_ext));
-		output.SetValue(2, count, Value(entry.function));
-		output.SetValue(3, count, Value(entry.kind));
+		output.data[0].SetValue(count, Value(entry.ext));
+		output.data[1].SetValue(count, Value(entry.reader_ext));
+		output.data[2].SetValue(count, Value(entry.function));
+		output.data[3].SetValue(count, Value(entry.kind));
 		count++;
 	}
 	state.done = true;

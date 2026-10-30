@@ -53,8 +53,8 @@ void LatexTokensScan(ClientContext &, TableFunctionInput &input, DataChunk &outp
 		if (tok.kind == latex::TokenKind::END) {
 			continue;
 		}
-		output.SetValue(0, count, Value(latex::KindName(tok.kind)));
-		output.SetValue(1, count, Value(tok.text));
+		output.data[0].SetValue(count, Value(latex::KindName(tok.kind)));
+		output.data[1].SetValue(count, Value(tok.text));
 		count++;
 	}
 	output.SetCardinality(count);

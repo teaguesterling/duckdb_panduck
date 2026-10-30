@@ -288,13 +288,13 @@ void SupportedExtensionsScan(ClientContext &, TableFunctionInput &input, DataChu
 			extensions.push_back(Value(*ext));
 		}
 
-		output.SetValue(0, count, Value(f.format));
-		output.SetValue(1, count, Value::LIST(LogicalType::VARCHAR, extensions));
+		output.data[0].SetValue(count, Value(f.format));
+		output.data[1].SetValue(count, Value::LIST(LogicalType::VARCHAR, extensions));
 		// A format with no reader in this build has no function to name -- NULL,
 		// not "".
-		output.SetValue(2, count, f.reader ? Value(f.reader) : Value(LogicalType::VARCHAR));
-		output.SetValue(3, count, Value(f.status));
-		output.SetValue(4, count, Value(f.notes));
+		output.data[2].SetValue(count, f.reader ? Value(f.reader) : Value(LogicalType::VARCHAR));
+		output.data[3].SetValue(count, Value(f.status));
+		output.data[4].SetValue(count, Value(f.notes));
 
 		state.offset++;
 		count++;

@@ -66,7 +66,7 @@ void PandocScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 	while (state.offset < data.blocks.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &children = StructValue::GetChildren(data.blocks[state.offset]);
 		for (idx_t col = 0; col < 7 && col < children.size(); col++) {
-			output.SetValue(col, count, children[col]);
+			output.data[col].SetValue(count, children[col]);
 		}
 		state.offset++;
 		count++;

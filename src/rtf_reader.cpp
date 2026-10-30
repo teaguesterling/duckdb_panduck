@@ -83,8 +83,8 @@ void RtfReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &output
 	while (state.offset < data.rows.size() && count < STANDARD_VECTOR_SIZE) {
 		const auto &row = data.rows[state.offset];
 
-		output.SetValue(0, count, Value(row.kind));
-		output.SetValue(1, count, Value(row.element_type));
+		output.data[0].SetValue(count, Value(row.kind));
+		output.data[1].SetValue(count, Value(row.element_type));
 		// Empty content is NULL, per the duck_block convention for containers whose
 		// text lives in structured inline children. Behaviour unchanged:
 		// HasContent() is `present AND non-empty`, so absent and empty still both
@@ -93,11 +93,12 @@ void RtfReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &output
 		// ruled on 2026-09-01 that consumers MUST treat NULL and '' as the same
 		// absence and producers SHOULD emit NULL, with `coalesce(content,'') <> ''`
 		// as the portable test. HasContent() is that test. See panduck/block.hpp.
-		output.SetValue(2, count, row.content.HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR));
-		output.SetValue(3, count, Value::INTEGER(row.level));
-		output.SetValue(4, count, Value(row.encoding));
-		output.SetValue(5, count, DuckBlockTypes::CreateAttributesMap(row.attributes));
-		output.SetValue(6, count, Value::INTEGER(row.element_order));
+		output.data[2].SetValue(count,
+		                        row.content.HasContent() ? Value(row.content.value) : Value(LogicalType::VARCHAR));
+		output.data[3].SetValue(count, Value::INTEGER(row.level));
+		output.data[4].SetValue(count, Value(row.encoding));
+		output.data[5].SetValue(count, DuckBlockTypes::CreateAttributesMap(row.attributes));
+		output.data[6].SetValue(count, Value::INTEGER(row.element_order));
 
 		state.offset++;
 		count++;

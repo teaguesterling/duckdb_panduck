@@ -368,7 +368,7 @@ export VCPKG_TOOLCHAIN_PATH=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 make release
 ```
 
-Targets DuckDB **v1.5.6**.
+Targets DuckDB **v2.0.0**.
 
 ```sh
 make test           # sqllogictests

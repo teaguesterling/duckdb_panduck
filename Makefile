@@ -134,7 +134,7 @@ check-converter:
 #     python3 scripts/check_duck_block_conformance.py --upstream <path>
 #
 # They are pure SQL, which matters because panduck's duckdb submodule tracks the BRANCH
-# v1.5-variegata rather than a tag. It sits on the v1.5.5 release commit today, so the
+# v2.0-cyanoptera rather than a tag. It sits on the v2.0.0 release commit today, so the
 # real validator loads; one `git submodule update --remote` moves it off-release and the
 # validator becomes unloadable by any route, while these keep working.
 #

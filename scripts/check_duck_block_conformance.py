@@ -7,7 +7,7 @@ this repo came from a human loading duck_block_utils by hand and running it once
 Nothing ran in CI, so nothing would notice a regression.
 
 WHY VENDORED MACROS RATHER THAN THE REAL VALIDATOR. panduck's duckdb submodule tracks
-the BRANCH v1.5-variegata, not a tag. It currently sits on the v1.5.5 release commit, so
+the BRANCH v2.0-cyanoptera, not a tag. It currently sits on the v2.0.0 release commit, so
 duck_block_utils loads today -- measured, not assumed. One `git submodule update
 --remote` moves it off-release, DuckDB's exact-version ABI match fails, and the
 validator becomes unloadable by INSTALL, by LOAD '<path>', by any route. The vendored

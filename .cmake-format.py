@@ -7,5 +7,8 @@
 # formatter is not entitled to rewrite prose it does not understand.
 #
 # Layout of the CMake code itself is still checked and enforced.
-enable_markup: false
-line_width: 100
+#
+# A .py file, not YAML: DuckDB v2.0.0's format venv has no PyYAML, and cmake-format then
+# fails on a YAML config with ModuleNotFoundError (measured on panduck PR #161).
+enable_markup = False
+line_width = 100

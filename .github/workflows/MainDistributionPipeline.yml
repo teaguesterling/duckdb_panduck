@@ -411,10 +411,15 @@ jobs:
       # draft of this step installed `clang-format cmake-format` unpinned and no
       # black, which would have failed on the version gate and looked like a
       # formatting problem.
+      # A VENV, because format.py at v2.0.0 puts its OWN interpreter's directory first on
+      # PATH (duckdb/scripts/format.py:25-26). A bare pip install lands in ~/.local/bin,
+      # so /usr/bin/python3 finds the runner's clang-format 21 and format.py rejects it.
       - name: Install the formatters format.py requires
-        run: pip install "black>=24" clang_format==11.0.1 cmake-format
+        run: |
+          python3 -m venv .format-venv
+          .format-venv/bin/pip install "black>=24" clang_format==11.0.1 cmake-format
       - name: Check libpanduck formatting
-        run: make format-check-libpanduck
+        run: PATH="$PWD/.format-venv/bin:$PATH" make format-check-libpanduck
 
   # THE libpanduck SEAM (#104): the format engine must not name DuckDB.
   #

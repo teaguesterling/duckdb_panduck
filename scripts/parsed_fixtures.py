@@ -151,7 +151,7 @@ class Duck:
         # bare LOAD, so in any clean environment -- including every CI runner -- it failed and
         # wrote `unavailable` into every manifest row (#62).
         install = "FORCE INSTALL" if not self._fetched else "INSTALL"
-        prelude = f"SET extension_directory = '{EXTENSION_DIR}';\n" \
+        prelude = f"SET extension_directories = ['{EXTENSION_DIR}'];\n" \
                   f"{install} markdown FROM community; {install} webbed FROM community; " \
                   f"{install} pdf FROM community; {install} duck_block_utils FROM community; " \
                   "LOAD markdown; LOAD webbed; LOAD pdf;\n"

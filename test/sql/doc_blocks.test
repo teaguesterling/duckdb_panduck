@@ -1,0 +1,258 @@
+# name: test/sql/doc_blocks.test
+# description: doc_section_blocks and doc_search_sections_blocks narrow a duck_blocks LIST (#162)
+# group: [sql]
+
+#
+# WHY A LIST INPUT EXISTS. duckeye narrows blocks that never were a file: a zim entry,
+# stdin, a Pandoc AST, a code AST. doc_section and doc_search_sections take a path, so they
+# cannot serve those routes. The _blocks variants take the list itself.
+#
+# THE CONTRACT THESE TESTS HOLD:
+#   1. PARITY. Over the list a path reads to, a _blocks variant returns exactly what the path
+#      function returns. Both share one span body; this is what proves the heads agree.
+#   2. element_order IN THE RESULT IS THE BLOCK'S OWN. The span is keyed on list position,
+#      but a caller who passes a slice must get back the numbers the slice carried.
+#   3. A REPEATED element_order DOES NOT CROSS SPANS. A list joining two documents repeats
+#      element_order, because it restarts per document. Keying on position keeps each
+#      document's spans its own.
+#
+# Fixture: test/fixtures/search_sections.textile (textile is read natively, so CI can run
+# this; see doc_search.test for why that matters). Its blocks:
+#
+#   0  paragraph  Preamble prose that belongs to no heading.
+#   1  heading    Alpha            level 1   id alpha
+#   2  paragraph  alpha body
+#   3  heading    Alpha One        level 2   id alpha-one
+#   4  paragraph  alpha one body
+#   5  heading    Beta             level 1   id beta
+#   6  paragraph  beta body
+#   7  heading    Beta One         level 2   id beta-one
+#   8  paragraph  beta one body
+
+require panduck
+
+statement ok
+CREATE TABLE d AS SELECT list(b ORDER BY b.element_order) AS blocks
+FROM read_panduck_doc('test/fixtures/search_sections.textile') b;
+
+statement ok
+CREATE TABLE dx AS SELECT list(b ORDER BY b.element_order) AS blocks
+FROM read_panduck_doc('test/fixtures/constructs.docx') b;
+
+#
+# ---------------------------------------------------------------------------------------
+# 1. PARITY with the path functions, compared as whole ordered lists of whole rows.
+# ---------------------------------------------------------------------------------------
+#
+# A list compare, not a count: a wrong-but-equal-sized result cannot pass. The cases cover
+# exact title, exact id, the exact-mode first-match rule, contains with the containment
+# drop, contains across two disjoint spans, a miss, and the preamble and straddling-phrase
+# cases of the search.
+#
+# ONE LITERAL QUERY PER CASE, not a VALUES table of cases. The path function reads through
+# query(), which takes only literals, so it cannot take its pattern from a lateral row.
+
+foreach sec Alpha alpha-one Beta nosuch
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '${sec}') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '${sec}') s);
+----
+true
+
+endloop
+
+foreach sec Alph One nosuch
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '${sec}', match := 'contains') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '${sec}', match := 'contains') s);
+----
+true
+
+endloop
+
+# The search patterns hold spaces and an empty string, which foreach cannot carry, so each
+# is written out.
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', '') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), '') s);
+----
+true
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', 'Preamble') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'Preamble') s);
+----
+true
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', 'alpha body') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'alpha body') s);
+----
+true
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', 'one body') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'one body') s);
+----
+true
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', 'ALPHA ONE') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'ALPHA ONE') s);
+----
+true
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/search_sections.textile', 'nosuch') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'nosuch') s);
+----
+true
+
+# THE PARITY IS NOT VACUOUS. Two NULL lists would also compare as not distinct, so the
+# non-miss cases must actually return rows.
+query II
+SELECT (SELECT count(*) FROM doc_section_blocks((SELECT blocks FROM d), 'Alph', match := 'contains')),
+       (SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM d), ''));
+----
+4	9
+
+# METADATA IS NEVER BODY holds for a list too, because the list head feeds the same body CTE.
+# constructs.docx carries an author in its metadata tree; the path function finds no section
+# for it (doc_body.test), and the list variant must agree.
+query II
+SELECT
+  (SELECT count(*) FROM doc_search_sections('test/fixtures/constructs.docx', 'Test Author')),
+  (SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM dx), 'Test Author'));
+----
+0	0
+
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/constructs.docx', '') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections_blocks((SELECT blocks FROM dx), '') s);
+----
+true
+
+#
+# ---------------------------------------------------------------------------------------
+# The call shape duckeye uses: a scalar subquery over a CTE, as the first argument.
+# ---------------------------------------------------------------------------------------
+
+query II
+WITH doc AS (SELECT list(b ORDER BY b.element_order) AS blocks
+             FROM read_panduck_doc('test/fixtures/search_sections.textile') b)
+SELECT element_order, content FROM doc_section_blocks((SELECT blocks FROM doc), 'Beta', match := 'contains');
+----
+5	Beta
+6	beta body
+7	Beta One
+8	beta one body
+
+#
+# ---------------------------------------------------------------------------------------
+# 2. element_order in the result is the block's own, not its list position.
+# ---------------------------------------------------------------------------------------
+#
+# The slice [5:9] is blocks 4..8. 'Beta One' sits at list position 3 of the slice, and its
+# own element_order is 7. The result must say 7.
+
+query II
+SELECT element_order, content FROM doc_section_blocks((SELECT blocks[5:9] FROM d), 'Beta One');
+----
+7	Beta One
+8	beta one body
+
+query II
+SELECT element_order, content FROM doc_search_sections_blocks((SELECT blocks[5:9] FROM d), 'beta body');
+----
+5	Beta
+6	beta body
+
+#
+# ---------------------------------------------------------------------------------------
+# 3. A REPEATED element_order DOES NOT CROSS SPANS.
+# ---------------------------------------------------------------------------------------
+#
+# The document twice in one list: every element_order 0..8 appears two times. Keyed on
+# element_order, the 'Alpha' heading in copy 1 (order 1) would find its span end at the
+# first later heading of level 1 BY element_order -- which copy 2 also supplies at order 5,
+# and the two copies' rows would interleave. Keyed on position, each copy is separate.
+#
+# contains 'Alpha One' matches once per copy: two spans of two blocks, in list order.
+
+query II
+SELECT element_order, content
+FROM doc_section_blocks((SELECT list_concat(blocks, blocks) FROM d), 'Alpha One', match := 'contains');
+----
+3	Alpha One
+4	alpha one body
+3	Alpha One
+4	alpha one body
+
+# exact keeps its first-match rule over a list: only copy 1's span.
+query I
+SELECT count(*) FROM doc_section_blocks((SELECT list_concat(blocks, blocks) FROM d), 'Alpha');
+----
+4
+
+# The search: copy 2's preamble is the 10th list entry. Its segment key comes from copy 1's
+# last heading (Beta One), so the search treats it as part of that section. That is the
+# correct reading of ONE list: a list is one document to these functions.
+query II
+SELECT element_order, content
+FROM doc_search_sections_blocks((SELECT list_concat(blocks, blocks) FROM d), 'beta one body');
+----
+7	Beta One
+8	beta one body
+0	Preamble prose that belongs to no heading.
+7	Beta One
+8	beta one body
+
+#
+# ---------------------------------------------------------------------------------------
+# Edges: a miss, an empty list, a NULL list, and a bad mode.
+# ---------------------------------------------------------------------------------------
+
+# A miss is ZERO ROWS, not one NULL row. A caller that wraps the result in list() gets NULL
+# from the aggregate, and that NULL is the caller's, not panduck's.
+query I
+SELECT count(*) FROM doc_section_blocks((SELECT blocks FROM d), 'nosuch', match := 'contains');
+----
+0
+
+query I
+SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM d), 'nosuch');
+----
+0
+
+query I
+SELECT count(*) FROM doc_section_blocks((SELECT blocks[1:0] FROM d), 'Alpha');
+----
+0
+
+query I
+SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks[1:0] FROM d), '');
+----
+0
+
+query I
+SELECT count(*) FROM doc_section_blocks(NULL, 'Alpha');
+----
+0
+
+# The mode is checked before the span, so a typo is refused even on an empty list.
+statement error
+SELECT count(*) FROM doc_section_blocks((SELECT blocks[1:0] FROM d), 'Alpha', match := 'contians');
+----
+doc_section_blocks match must be

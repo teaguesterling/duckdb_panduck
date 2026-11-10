@@ -1,0 +1,90 @@
+# name: test/sql/doc_id_and_miss.test
+# description: the id arm and what a miss returns, written down for duckeye (#166)
+# group: [sql]
+
+#
+# duckeye asked panduck to agree with it on two things, and to write them down:
+#
+#   1. THE id ARM. duckeye's -S also matches a heading whose id equals the pattern. In
+#      panduck the id is compared WHOLE and RAW in every mode: no wildcard, no escape.
+#   2. A MISS. duckeye accepts zero rows or a NULL it can test. panduck returns ZERO ROWS
+#      from all four functions. A NULL appears only when the CALLER aggregates zero rows.
+#
+# Fixtures: glob_patterns.textile (textile slugs heading ids), and handwritten.org (org
+# headings carry no id). Both are read natively.
+
+require panduck
+
+#
+# ---------------------------------------------------------------------------------------
+# 1. The id arm: whole, raw, case-sensitive, in every mode.
+# ---------------------------------------------------------------------------------------
+#
+# 'a_b-and-a-b' is the id of the heading "a_b and a-b" and no title's substring. Every mode
+# finds it through the id arm, and finds the same span.
+
+foreach m exact contains glob
+
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', 'a_b-and-a-b', match := '{m}');
+----
+6	a_b and a-b
+7	underscore body
+
+# Case-sensitive in every mode: the id is a value, not text to search.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'A_B-AND-A-B', match := '{m}');
+----
+0
+
+endloop
+
+# NOT ESCAPED. duckeye compares the id with duckeye_like(arg), so for it 'a_b-and-a-b'
+# becomes 'a\_b-and-a-b' and the id arm cannot match. panduck compares the raw pattern;
+# this is the assertion that it does not copy duckeye's escape.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'a\_b-and-a-b', match := 'contains');
+----
+0
+
+# A heading with no id is reachable only by its title. org headings carry no id, and panduck
+# derives no slug for them.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/handwritten.org')
+WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+----
+0
+
+query I
+SELECT count(*) FROM doc_section('test/fixtures/handwritten.org', 'heading-one', match := 'contains');
+----
+0
+
+query I
+SELECT count(*) > 0 FROM doc_section('test/fixtures/handwritten.org', 'Heading One');
+----
+true
+
+#
+# ---------------------------------------------------------------------------------------
+# 2. A miss is zero rows, from all four functions.
+# ---------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE g AS SELECT list(b ORDER BY b.element_order) AS blocks
+FROM read_panduck_doc('test/fixtures/glob_patterns.textile') b;
+
+query IIII
+SELECT (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'nosuch', match := 'glob')),
+       (SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'nosuch', match := 'glob')),
+       (SELECT count(*) FROM doc_section_blocks((SELECT blocks FROM g), 'nosuch', match := 'glob')),
+       (SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM g), 'nosuch', match := 'glob'));
+----
+0	0	0	0
+
+# The NULL duckeye's deviation script saw is the AGGREGATE's: list() over zero rows is NULL.
+# A caller tests it with IS NULL. panduck itself emitted no row.
+query I
+SELECT list(s) IS NULL FROM doc_section('test/fixtures/glob_patterns.textile', 'nosuch', match := 'glob') s;
+----
+true

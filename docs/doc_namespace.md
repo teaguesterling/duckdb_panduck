@@ -209,6 +209,35 @@ after it are not doubled. It is SQL in the extension, not C++ behind the libpand
 because its output is an ILIKE pattern and means nothing outside SQL. A matcher for a
 libpanduck consumer is #164.
 
+### The id arm, and what a miss returns (#166)
+
+**A heading's id is matched whole and raw, in every mode.** `section` is compared with
+`attributes['id']` as written: no wildcard, no escape, case-sensitive. A slug is a value the
+caller has or does not have, so a part of one is not a request.
+
+The id is the one the reader set. panduck derives no slug for a heading that has none.
+Measured on `test/fixtures/` on 2026-11-10:
+
+| readers | headings carry `attributes['id']` |
+|---|---|
+| markdown, html, rst, textile | yes |
+| docx, odt, org, latex, rtf, epub | no |
+
+For the second group, the id arm never matches, and only the title can. duckeye's own heading
+list (`duck_blocks_headings_structs`) also gives an empty id for those headings, so the two
+tools agree there.
+
+**duckeye's `-S` compares the id with the ESCAPED pattern**, `id = duckeye_like(arg)`, so
+`-S my_id` compares the id with `my\_id`. duckeye's `docs/dev/sql-core.md` records this as
+probably a bug. panduck does not copy it. On duckeye's parity fixtures the two compares give
+the same result for every pattern. No pattern that holds `\ % _ * ?` equals a fixture id, and
+the patterns with none of those characters escape to themselves.
+
+**A miss returns zero rows**, from all four functions, and never an error or a NULL row. A NULL
+appears only when the caller aggregates zero rows, for example
+`SELECT list(b) FROM doc_section(...) b`. That NULL is the aggregate's, so test it with
+`IS NULL`, or count the rows first.
+
 ## `expand_embedded := true` — parse a document held inside another
 
 A `.ipynb` markdown cell is held as one `raw` block, deliberately: panduck's delegation

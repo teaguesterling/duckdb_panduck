@@ -3,6 +3,8 @@
 #include "panduck/vocabulary.hpp"
 
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <string>
@@ -93,6 +95,22 @@ void CheckVocabularyShape(const char *label, const std::vector<::panduck::Block>
 	CHECK_MSG(bad_level == rows.size(), std::string("level < 1, ") + RowDescription(label, bad_level, rows));
 	CHECK_MSG(bad_order == rows.size(),
 	          std::string("element_order not sequential from 0, ") + RowDescription(label, bad_order, rows));
+}
+
+#ifndef PANDUCK_TEST_FIXTURE_DIR
+#error "PANDUCK_TEST_FIXTURE_DIR must be defined; libpanduck/CMakeLists.txt sets it"
+#endif
+
+std::string FixturePath(const char *name) {
+	return std::string(PANDUCK_TEST_FIXTURE_DIR) + "/" + name;
+}
+
+std::string Slurp(const std::string &path) {
+	std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+	if (!in) {
+		return std::string();
+	}
+	return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 } // namespace panduck_test

@@ -167,6 +167,48 @@ as `doc_section`, in the same order — so it is the same shape and composes wit
 different thing: it returns one row per section as `(section, start_order, blocks)`, which
 is the right shape for enumerating matches and the wrong one for slicing a document.
 
+### `match := 'glob'` — duckeye's pattern language
+
+`'glob'` is `'contains'` with a different pattern language (#163). It is the language of
+duckeye's `-S` and `-s`:
+
+| pattern | means |
+|---|---|
+| `*` | any run of characters |
+| `?` | one character |
+| `%`, `_`, `\` | themselves |
+
+The match is case-insensitive and substring, as `'contains'` is. The id arm is whole and
+raw, as in every mode: `'a_b-and-a-b'` finds the heading whose id is exactly that.
+
+The difference from `'contains'` shows on exactly the characters a heading often holds:
+
+```sql
+-- headings: "50% done", "500 done", "a_b and a-b", "A backslash", "back\slash"
+doc_section(f, '50%',        match := 'contains')  -- "50% done" AND "500 done"
+doc_section(f, '50%',        match := 'glob')      -- "50% done"
+doc_section(f, 'a_b',        match := 'contains')  -- "a_b and a-b" AND "A backslash"
+doc_section(f, 'a_b',        match := 'glob')      -- "a_b and a-b"
+doc_section(f, 'back\slash', match := 'contains')  -- "A backslash" (\s escapes s)
+doc_section(f, 'back\slash', match := 'glob')      -- "back\slash"
+```
+
+`'contains'` keeps live `%` and `_`. That is its documented contract, so it does not change.
+
+The translation is a function of its own, `panduck_glob_like(pattern)`, which returns the
+ILIKE pattern. duckeye needs the translation outside these functions too, so it is named
+rather than hidden in a mode. The caller adds the `'%'` on each side and `ESCAPE '\'`:
+
+```sql
+SELECT panduck_glob_like('\%_*?');   -- \\\%\_%_
+SELECT title FROM t WHERE title ILIKE '%' || panduck_glob_like('Al*a') || '%' ESCAPE '\';
+```
+
+**The order of the replacements is the contract**: backslash first, so the escapes added
+after it are not doubled. It is SQL in the extension, not C++ behind the libpanduck seam,
+because its output is an ILIKE pattern and means nothing outside SQL. A matcher for a
+libpanduck consumer is #164.
+
 ## `expand_embedded := true` — parse a document held inside another
 
 A `.ipynb` markdown cell is held as one `raw` block, deliberately: panduck's delegation
@@ -214,7 +256,7 @@ Two details worth knowing:
   starts at 0 still starts at 0. Normalising here would silently rewrite one reader's
   numbering to match another's.
 
-## `doc_search_sections(src, pattern, format := 'auto')`
+## `doc_search_sections(src, pattern, format := 'auto', match := 'contains')`
 
 **Find the section by its content**, where `doc_section` finds it by its heading. The
 difference is the bound:
@@ -237,6 +279,10 @@ The pattern is `ILIKE '%pattern%' ESCAPE '\'` against the section's **flattened 
 every block's content joined in document order, including the heading's own — so a phrase
 that straddles two blocks still selects the section. No match returns no rows rather than
 an error.
+
+`match := 'glob'` takes duckeye's pattern language instead, as for `doc_section` above.
+`'exact'` is refused: the pattern is compared with a section's whole text, so an exact
+compare would not be a search.
 
 > **The separator is a single space, and a block with no content contributes no
 > separator.** Blocks whose content is `NULL` or `''` are skipped entirely rather than
@@ -278,7 +324,7 @@ a block with no preceding heading simply has none.
 The segments **partition the document**: an empty pattern matches every segment and returns
 the whole document exactly once, with no block missed and none repeated.
 
-## `doc_section_blocks(blocks, section, match := 'exact')` and `doc_search_sections_blocks(blocks, pattern)`
+## `doc_section_blocks(blocks, section, match := 'exact')` and `doc_search_sections_blocks(blocks, pattern, match := 'contains')`
 
 **The same two narrows, over a `duck_blocks` list instead of a path** (#162). Use them for
 blocks that never were a file: a zim entry, stdin, a Pandoc AST, a code AST, or the output

@@ -1262,6 +1262,24 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
     // through the filesystem: a caller naming one file must keep today's
     // behaviour, including the reader's own error if it is missing, rather than
     // getting a glob-shaped error from panduck.
+    // duckeye's -S/-s glob, as an ILIKE pattern (#163): `*` is any run, `?` is one
+    // character, and `%`, `_` and `\` are literal. Taken from duckeye_like() so there is
+    // ONE copy; duckeye also needs the translation outside doc_section (its zim paths and
+    // its id compare), which is why it is a named function and not only a mode.
+    //
+    // THE ORDER OF THE REPLACEMENTS IS THE CONTRACT: backslash first, so the escapes added
+    // after it are not doubled. The caller adds the '%' on each side and ESCAPE '\'.
+    //
+    // SQL, not C++ behind the libpanduck seam (Teague, 2026-11-10: "SQL now, C++ later").
+    // The output is an ILIKE pattern, which means nothing outside SQL; a libpanduck
+    // matcher for a consumer without SQL is #164.
+    {DEFAULT_SCHEMA,
+     "panduck_glob_like",
+     {"pattern", nullptr},
+     {{nullptr, nullptr}},
+     "replace(replace(replace(replace(replace(pattern, '\\', '\\\\'), '%', '\\%'), '_', '\\_'), "
+     "'*', '%'), '?', '_')"},
+
     {DEFAULT_SCHEMA,
      "panduck_is_glob",
      {"s", nullptr},
@@ -2052,8 +2070,8 @@ WITH b AS MATERIALIZED (SELECT *, element_order AS src_order FROM read_panduck_d
          -- would have returned 0 rows and read as "no such section" -- the silent-wrong
          -- answer this guard exists to prevent. `match IS NULL` is tested separately
          -- because lower(NULL) NOT IN (...) is NULL, not TRUE, and would fall through.
-         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains')
-         THEN error('panduck: doc_section match must be exact or contains; ' ||
+         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains', 'glob')
+         THEN error('panduck: doc_section match must be exact, contains or glob; ' ||
                     coalesce(match, '<NULL>') || ' is not one of them')
          -- The RESOLVED path, not src::VARCHAR: a single-element list would otherwise
          -- stringify to '[path]' and fail to open. Resolving also normalises the three
@@ -2068,8 +2086,8 @@ static const std::string DOC_SECTION_BLOCKS_HEAD = R"SQL(
 WITH lst AS MATERIALIZED (SELECT CASE
          -- Validated before the span, for the reason given in DOC_SECTION_PATH_HEAD: in the
          -- predicate a typo'd mode on a list with no headings would read as "no such section".
-         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains')
-         THEN error('panduck: doc_section_blocks match must be exact or contains; ' ||
+         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains', 'glob')
+         THEN error('panduck: doc_section_blocks match must be exact, contains or glob; ' ||
                     coalesce(match, '<NULL>') || ' is not one of them')
          ELSE blocks END AS blocks_in),
 -- POSITION IS THE KEY, the block's own element_order is the answer. See DOC_SECTION_PATH_HEAD.
@@ -2149,12 +2167,20 @@ hits AS (SELECT element_order AS o,
                    -- widening the result for a reason the caller could not see.
                    THEN (content ILIKE '%' || section || '%' ESCAPE '\'
                          OR attributes['id'] = section)
+                 -- GLOB (#163) is contains with duckeye's pattern language. The id arm is
+                 -- whole and RAW, as in the other modes: duckeye compares the id with the
+                 -- ESCAPED pattern, which its own docs call probably a bug, and no
+                 -- duckeye parity case depends on it (measured: no pattern containing
+                 -- \ % _ * ? equals a fixture id).
+                 WHEN 'glob'
+                   THEN (content ILIKE '%' || panduck_glob_like(section) || '%' ESCAPE '\'
+                         OR attributes['id'] = section)
                  ELSE (content = section OR attributes['id'] = section)
                END),
 -- EXACT KEEPS TAKING ONLY THE FIRST MATCH. Two headings can share a title, and exact mode
 -- returned just the first before this change; rn = 1 preserves that rather than quietly
 -- turning a duplicated title into two spans.
-h AS (SELECT o, lvl FROM hits WHERE lower(match) = 'contains' OR rn = 1),
+h AS (SELECT o, lvl FROM hits WHERE lower(match) IN ('contains', 'glob') OR rn = 1),
 -- Each match's span ends at the nearest following heading of the SAME OR HIGHER level, so
 -- a chapter carries its subsections. LEFT JOIN rather than the old correlated `stop`,
 -- because there are now many spans and each needs its own end.
@@ -2253,12 +2279,23 @@ WITH b AS MATERIALIZED (SELECT *, element_order AS src_order FROM read_panduck_d
          THEN error('panduck: doc_search_sections takes a single document; element_order '
                     'restarts per document, so a glob or list interleaves them. Use '
                     'read_panduck_doc(src, filename := true) for multiple documents')
+         -- `match` is checked here, before the span, as doc_section checks it. 'exact'
+         -- is refused rather than accepted: the pattern is matched against a section's
+         -- whole flattened TEXT, so an exact compare would ask whether a section is
+         -- nothing but the pattern, which is not a search.
+         WHEN match IS NULL OR lower(match) NOT IN ('contains', 'glob')
+         THEN error('panduck: doc_search_sections match must be contains or glob; ' ||
+                    coalesce(match, '<NULL>') || ' is not one of them')
          ELSE panduck_source_list(src)[1] END, format := format,
     expand_embedded := expand_embedded)),)SQL";
 
-//! The list head: the same as doc_section_blocks' head, with no `match` to check.
+//! The list head: the same as doc_section_blocks' head.
 static const std::string DOC_SEARCH_BLOCKS_HEAD = R"SQL(
-WITH lst AS MATERIALIZED (SELECT blocks AS blocks_in),
+WITH lst AS MATERIALIZED (SELECT CASE
+         WHEN match IS NULL OR lower(match) NOT IN ('contains', 'glob')
+         THEN error('panduck: doc_search_sections_blocks match must be contains or glob; ' ||
+                    coalesce(match, '<NULL>') || ' is not one of them')
+         ELSE blocks END AS blocks_in),
 b AS MATERIALIZED (SELECT x.kind, x.element_type, x.content, x.level, x.encoding, x.attributes,
                           (i - 1)::INTEGER AS element_order, x.element_order AS src_order
                    FROM (SELECT unnest(blocks_in) AS x, generate_subscripts(blocks_in, 1) AS i
@@ -2311,7 +2348,11 @@ t AS (SELECT *, max(CASE WHEN element_type = 'heading' THEN element_order END)
 segs AS (SELECT seg, coalesce(string_agg(content, ' ' ORDER BY element_order)
                                 FILTER (WHERE content IS NOT NULL AND content <> ''), '') AS txt
          FROM t GROUP BY seg),
-m AS (SELECT seg FROM segs WHERE txt ILIKE '%' || pattern || '%' ESCAPE '\')
+-- contains (the default, unchanged) passes the pattern through, so % and _ are live; glob
+-- translates it first (#163).
+m AS (SELECT seg FROM segs
+      WHERE txt ILIKE '%' || CASE WHEN lower(match) = 'glob' THEN panduck_glob_like(pattern) ELSE pattern END
+                      || '%' ESCAPE '\')
 -- src_order, not element_order: see DOC_SECTION_PATH_HEAD.
 SELECT t.kind, t.element_type, t.content, t.level, t.encoding, t.attributes, t.src_order AS element_order
 FROM t
@@ -2328,13 +2369,13 @@ const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
     DEFAULT_SCHEMA,
     "doc_search_sections",
     {"src", "pattern", nullptr},
-    {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+    {{"format", "'auto'"}, {"match", "'contains'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
     DOC_SEARCH_SECTIONS_SQL.c_str()};
 
 const DefaultTableMacro DOC_SEARCH_SECTIONS_BLOCKS_MACRO = {DEFAULT_SCHEMA,
                                                             "doc_search_sections_blocks",
                                                             {"blocks", "pattern", nullptr},
-                                                            {{nullptr, nullptr}},
+                                                            {{"match", "'contains'"}, {nullptr, nullptr}},
                                                             DOC_SEARCH_SECTIONS_BLOCKS_SQL.c_str()};
 
 //! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.

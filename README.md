@@ -16,6 +16,7 @@ SELECT * FROM read_panduck_table('data.parquet'); -- any data file -> rows
 SELECT * FROM doc_toc('report.docx');             -- table of contents, by path
 SELECT * FROM doc_section('report.docx', 'Methods');  -- one section, as duck_blocks
 SELECT * FROM doc_section('report.docx', 'Meth', match := 'contains');  -- ...by fragment
+SELECT * FROM doc_section('report.docx', 'Meth*ds', match := 'glob');  -- ...by duckeye's glob
 SELECT * FROM doc_search_sections('report.docx', 'p < 0.05');  -- section BY ITS CONTENT
 SELECT * FROM doc_section_blocks((SELECT blocks FROM d), 'Methods');  -- ...of a blocks list
 

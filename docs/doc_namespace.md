@@ -278,6 +278,43 @@ a block with no preceding heading simply has none.
 The segments **partition the document**: an empty pattern matches every segment and returns
 the whole document exactly once, with no block missed and none repeated.
 
+## `doc_section_blocks(blocks, section, match := 'exact')` and `doc_search_sections_blocks(blocks, pattern)`
+
+**The same two narrows, over a `duck_blocks` list instead of a path** (#162). Use them for
+blocks that never were a file: a zim entry, stdin, a Pandoc AST, a code AST, or the output
+of another narrow.
+
+```sql
+WITH d AS (SELECT list(b ORDER BY b.element_order) AS blocks
+           FROM read_panduck_doc('report.docx') b)
+SELECT * FROM doc_section_blocks((SELECT blocks FROM d), 'Meth', match := 'contains');
+
+SELECT duck_blocks_to_md(list(s ORDER BY s.element_order))
+FROM doc_search_sections_blocks(panduck_pandoc_ast_to_blocks('<ast json>'), 'p < 0.05') s;
+```
+
+Each returns what its path form returns over the same blocks: the same rows, in the same
+order. The path form and the list form share one span implementation, and
+`test/sql/doc_blocks.test` asserts the parity.
+
+**They are table macros, not scalars.** A scalar macro over a 72,000-block list ran out of
+memory at 6.1 GiB (measured by duckeye, 2026-11-10). A table macro with the same body
+matched duckeye's own SQL in time and output.
+
+**A list is one document.** The span is keyed on **list position**, not on
+`element_order`. `element_order` restarts per document, so a list that joins two documents
+repeats it, and keying on it would interleave their spans. Each result row keeps the
+`element_order` the block arrived with:
+
+```sql
+-- blocks[5:9] is blocks 4..8; 'Beta One' is at position 3 of the slice
+SELECT element_order, content FROM doc_section_blocks((SELECT blocks[5:9] FROM d), 'Beta One');
+-- 7  Beta One
+-- 8  beta one body
+```
+
+An empty or `NULL` list returns no rows. A miss returns no rows, as for the path forms.
+
 ## `read_panduck_doc(src, …)` reads more than one document
 
 ```

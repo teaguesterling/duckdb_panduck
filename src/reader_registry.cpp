@@ -2003,13 +2003,26 @@ ORDER BY b.element_order
 //! nested headings". Spans here are properly nested or disjoint (that is what
 //! bounding on heading level gives you), so dropping the contained ones leaves
 //! a disjoint set and no block can be emitted twice.
-const DefaultTableMacro DOC_SECTION_MACRO = {
-    DEFAULT_SCHEMA,
-    "doc_section",
-    {"src", "section", nullptr},
-    {{"format", "'auto'"}, {"match", "'exact'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
-    R"SQL(
-WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
+//!
+//! TWO INPUTS, ONE SPAN (#162). doc_section reads a path; doc_section_blocks takes a
+//! duck_blocks LIST, for blocks that never were a file -- a zim entry, stdin, a Pandoc
+//! AST, a code AST. Each input is a HEAD that defines the CTE `b`, and both heads end in
+//! the same DOC_SECTION_SPAN text, so the span arithmetic exists once.
+//!
+//! THE HEAD'S CONTRACT. `b` has the seven duck_block columns plus `src_order`.
+//! `element_order` in `b` is the key the span walks, and it must be unique. `src_order`
+//! is what the result reports as element_order. A path reader numbers its blocks
+//! uniquely, so its head copies element_order to src_order. A LIST need not be unique:
+//! element_order restarts per document, so a list that joins two documents repeats it.
+//! The list head therefore keys on LIST POSITION and keeps the block's own
+//! element_order in src_order. Measured on duckeye's four routes (2026-11-10): each list
+//! was unique and sorted from 0, so position and element_order agree there.
+//!
+//! A TABLE MACRO, NOT A SCALAR. The duckeye session measured a scalar macro over a
+//! 72,000-block list: it ran out of memory at 6.1 GiB. A table macro with the same body
+//! matched duckeye's time and output.
+static const std::string DOC_SECTION_PATH_HEAD = R"SQL(
+WITH b AS MATERIALIZED (SELECT *, element_order AS src_order FROM read_panduck_doc(
     -- SINGLE DOCUMENT ONLY, refused by name rather than interleaved silently. This slices by
     -- element_order, which RESTARTS per document, so a glob or a list does not widen the
     -- section -- it stacks several documents at the same element_order values with no
@@ -2047,7 +2060,27 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
          -- spellings of one document -- plain path, one-match glob, one-element list -- to
          -- the identical string, measured.
          ELSE panduck_source_list(src)[1] END, format := format,
-    expand_embedded := expand_embedded)),
+    expand_embedded := expand_embedded)),)SQL";
+
+//! The list head. The one guard the path head carries that still applies is the `match`
+//! check; a list is already one value, so there is no source to count.
+static const std::string DOC_SECTION_BLOCKS_HEAD = R"SQL(
+WITH lst AS MATERIALIZED (SELECT CASE
+         -- Validated before the span, for the reason given in DOC_SECTION_PATH_HEAD: in the
+         -- predicate a typo'd mode on a list with no headings would read as "no such section".
+         WHEN match IS NULL OR lower(match) NOT IN ('exact', 'contains')
+         THEN error('panduck: doc_section_blocks match must be exact or contains; ' ||
+                    coalesce(match, '<NULL>') || ' is not one of them')
+         ELSE blocks END AS blocks_in),
+-- POSITION IS THE KEY, the block's own element_order is the answer. See DOC_SECTION_PATH_HEAD.
+b AS MATERIALIZED (SELECT x.kind, x.element_type, x.content, x.level, x.encoding, x.attributes,
+                          (i - 1)::INTEGER AS element_order, x.element_order AS src_order
+                   FROM (SELECT unnest(blocks_in) AS x, generate_subscripts(blocks_in, 1) AS i
+                         FROM lst)),)SQL";
+
+//! THE BODY SHARED BY BOTH HEADS. It defines `body`, the blocks that are not metadata, and
+//! is used by both doc_section heads and both doc_search_sections heads.
+static const std::string DOC_BODY_CTE = R"SQL(
 -- METADATA IS NEVER BODY (#54). A document's metadata arrives as a value tree -- `author` is a
 -- kind='value' row whose TEXT sits in a kind='inline' child -- or as one block/metadata row
 -- (markdown frontmatter). Readers append the value rows after the body, so segmenting by
@@ -2090,7 +2123,9 @@ meta_spans AS (SELECT r.r_o AS m_s,
                FROM meta_roots r JOIN meta_next x USING (r_l, r_o)),
 body AS MATERIALIZED (SELECT b.* FROM b LEFT JOIN meta_spans s ON s.m_s = b.element_order
          QUALIFY coalesce(max(s.m_e) OVER (ORDER BY b.element_order ROWS UNBOUNDED PRECEDING),
-                          b.element_order) <= b.element_order),
+                          b.element_order) <= b.element_order),)SQL";
+
+static const std::string DOC_SECTION_SPAN = DOC_BODY_CTE + R"SQL(
 -- ONE PAST THE LAST BLOCK, so an open-ended span (a section with no following heading at
 -- its level or above) gets a real number instead of NULL. The NULL end is what forced the
 -- old body's `... OR (SELECT o FROM stop) IS NULL` and it does not survive contact with
@@ -2134,14 +2169,33 @@ spans AS (SELECT h.o AS s_o, coalesce(min(nxt.element_order), (SELECT o FROM eod
 -- share a start.
 keep AS (SELECT s.s_o, s.e_o FROM spans s
          WHERE NOT EXISTS (SELECT 1 FROM spans p WHERE p.s_o < s.s_o AND p.e_o >= s.e_o))
-SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.element_order
+-- src_order, not element_order: the head's key is not always the block's own number.
+SELECT b.kind, b.element_type, b.content, b.level, b.encoding, b.attributes, b.src_order AS element_order
 FROM body b
 -- EXISTS, not a join: it emits each block at most once whatever the spans do. After the
 -- containment drop they are disjoint and a join would agree, but this does not depend on
 -- that argument holding.
 WHERE EXISTS (SELECT 1 FROM keep k WHERE b.element_order >= k.s_o AND b.element_order < k.e_o)
 ORDER BY b.element_order
-)SQL"};
+)SQL";
+
+// The strings above are complete before these are initialised: one translation unit
+// initialises in definition order, and every DefaultTableMacro below points into one.
+static const std::string DOC_SECTION_SQL = DOC_SECTION_PATH_HEAD + DOC_SECTION_SPAN;
+static const std::string DOC_SECTION_BLOCKS_SQL = DOC_SECTION_BLOCKS_HEAD + DOC_SECTION_SPAN;
+
+const DefaultTableMacro DOC_SECTION_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_section",
+    {"src", "section", nullptr},
+    {{"format", "'auto'"}, {"match", "'exact'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+    DOC_SECTION_SQL.c_str()};
+
+const DefaultTableMacro DOC_SECTION_BLOCKS_MACRO = {DEFAULT_SCHEMA,
+                                                    "doc_section_blocks",
+                                                    {"blocks", "section", nullptr},
+                                                    {{"match", "'exact'"}, {nullptr, nullptr}},
+                                                    DOC_SECTION_BLOCKS_SQL.c_str()};
 
 //! doc_search_sections -- FIND THE SECTION BY ITS CONTENT, not by its heading.
 //!
@@ -2163,12 +2217,8 @@ ORDER BY b.element_order
 //! a block before the first heading has no preceding heading, so its segment
 //! key is NULL, and in a document without headings every block takes that same
 //! NULL key.
-const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
-    DEFAULT_SCHEMA,
-    "doc_search_sections",
-    {"src", "pattern", nullptr},
-    {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
-    R"SQL(
+//! The path head. Its MATERIALIZED is load-bearing, which the comment inside says why.
+static const std::string DOC_SEARCH_PATH_HEAD = R"SQL(
 -- MATERIALIZED IS LOAD-BEARING ON DuckDB v2.0, and it is not a performance hint.
 --
 -- `b` wraps read_panduck_doc and is scanned TWICE below -- once through `t` into `segs`,
@@ -2195,7 +2245,7 @@ const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
 -- Found by the registry's test_against_latest job, which exists because the descriptor sets
 -- ref_next -- without it that job skips prerelease validation and passes green having never
 -- looked.
-WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
+WITH b AS MATERIALIZED (SELECT *, element_order AS src_order FROM read_panduck_doc(
     -- Same single-document guard, and for the same reason as doc_section: element_order
     -- restarts per document, so a glob interleaves two documents at the same values and
     -- every segment boundary below is computed across the seam.
@@ -2204,50 +2254,17 @@ WITH b AS MATERIALIZED (SELECT * FROM read_panduck_doc(
                     'restarts per document, so a glob or list interleaves them. Use '
                     'read_panduck_doc(src, filename := true) for multiple documents')
          ELSE panduck_source_list(src)[1] END, format := format,
-    expand_embedded := expand_embedded)),
--- METADATA IS NEVER BODY (#54). A document's metadata arrives as a value tree -- `author` is a
--- kind='value' row whose TEXT sits in a kind='inline' child -- or as one block/metadata row
--- (markdown frontmatter). Readers append the value rows after the body, so segmenting by
--- element_order alone put them inside the LAST section, and a search for an author's name
--- returned that section: constructs.docx gave 38 rows for 'Test Author'.
---
--- THE RULE IS A PROPERTY OF A SUBTREE, not of a row (duck_block_utils, #54). A value or metadata
--- row is a ROOT, and it and every following row with a GREATER level is not body; the subtree
--- ends at the next row whose level is at or above the root's. Spec 1.3's IsBody(kind,
--- element_type) is per row and calls those inline leaves body, so it cannot be the test.
---
--- THIS STAYS A NATIVE WALK. duck_block_utils 1.4 provides the same rule as duck_blocks_body(blocks),
--- but calling it here would make this macro fail for anyone who installed panduck alone -- the
--- vendored header carries constants, not that function. test/sql/doc_body_parity.test compares
--- the two encodings wherever both are installed.
---
--- NOT O(roots x rows) (#76). A root's span ends at the next row at or above its level: one
--- windowed min over the rows per DISTINCT root level (a handful). A row is inside a span when the
--- running max of the span ends opened at or before it exceeds its own element_order -- one window,
--- because a range NOT EXISTS over the spans was itself superlinear.
---
--- NOT AN ASOF JOIN, though ASOF is faster over a table the planner can size. DuckDB cannot estimate
--- read_panduck_doc's output, and below asof_loop_join_threshold (64 on 1.5.5) it plans an ASOF as a
--- nested loop: roots x rows again. Measured through an unestimable source, dense value roots in
--- 80,001 rows: ASOF 1.42 s, this window 0.076 s (main's walk: 10.97 s). duckeye hit the same
--- fallback. Every join below is an equality, or a cross product with the distinct root levels, so
--- no plan depends on an estimate. element_order is unique within one document; the joins rely on it.
---
--- `body` IS MATERIALIZED for the reason documented on doc_search_sections: re-reading this
--- document through several CTE references is the shape that returned zero rows on DuckDB v2.0.
-meta_roots AS (SELECT element_order AS r_o, coalesce(level, 1) AS r_l
-               FROM b WHERE kind = 'value' OR element_type = 'metadata'),
-meta_next AS (SELECT l.r_l, n.element_order AS r_o,
-                     min(CASE WHEN coalesce(n.level, 1) <= l.r_l THEN n.element_order END)
-                       OVER (PARTITION BY l.r_l ORDER BY n.element_order
-                             ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS nx
-              FROM (SELECT DISTINCT r_l FROM meta_roots) l CROSS JOIN b n),
-meta_spans AS (SELECT r.r_o AS m_s,
-                      coalesce(x.nx, (SELECT coalesce(max(element_order), 0) + 1 FROM b)) AS m_e
-               FROM meta_roots r JOIN meta_next x USING (r_l, r_o)),
-body AS MATERIALIZED (SELECT b.* FROM b LEFT JOIN meta_spans s ON s.m_s = b.element_order
-         QUALIFY coalesce(max(s.m_e) OVER (ORDER BY b.element_order ROWS UNBOUNDED PRECEDING),
-                          b.element_order) <= b.element_order),
+    expand_embedded := expand_embedded)),)SQL";
+
+//! The list head: the same as doc_section_blocks' head, with no `match` to check.
+static const std::string DOC_SEARCH_BLOCKS_HEAD = R"SQL(
+WITH lst AS MATERIALIZED (SELECT blocks AS blocks_in),
+b AS MATERIALIZED (SELECT x.kind, x.element_type, x.content, x.level, x.encoding, x.attributes,
+                          (i - 1)::INTEGER AS element_order, x.element_order AS src_order
+                   FROM (SELECT unnest(blocks_in) AS x, generate_subscripts(blocks_in, 1) AS i
+                         FROM lst)),)SQL";
+
+static const std::string DOC_SEARCH_SPAN = DOC_BODY_CTE + R"SQL(
 -- SEGMENT KEY = the element_order of the nearest heading at or before this block, NULL for
 -- anything before the first one. Every heading opens a segment regardless of level, which
 -- is precisely "stops at the next heading of ANY level".
@@ -2295,13 +2312,30 @@ segs AS (SELECT seg, coalesce(string_agg(content, ' ' ORDER BY element_order)
                                 FILTER (WHERE content IS NOT NULL AND content <> ''), '') AS txt
          FROM t GROUP BY seg),
 m AS (SELECT seg FROM segs WHERE txt ILIKE '%' || pattern || '%' ESCAPE '\')
-SELECT t.kind, t.element_type, t.content, t.level, t.encoding, t.attributes, t.element_order
+-- src_order, not element_order: see DOC_SECTION_PATH_HEAD.
+SELECT t.kind, t.element_type, t.content, t.level, t.encoding, t.attributes, t.src_order AS element_order
 FROM t
 -- IS NOT DISTINCT FROM, not `=`: the preamble and the no-headings document both key on
 -- NULL, and `NULL = NULL` would drop exactly the two cases this function exists to cover.
 WHERE EXISTS (SELECT 1 FROM m WHERE m.seg IS NOT DISTINCT FROM t.seg)
 ORDER BY t.element_order
-)SQL"};
+)SQL";
+
+static const std::string DOC_SEARCH_SECTIONS_SQL = DOC_SEARCH_PATH_HEAD + DOC_SEARCH_SPAN;
+static const std::string DOC_SEARCH_SECTIONS_BLOCKS_SQL = DOC_SEARCH_BLOCKS_HEAD + DOC_SEARCH_SPAN;
+
+const DefaultTableMacro DOC_SEARCH_SECTIONS_MACRO = {
+    DEFAULT_SCHEMA,
+    "doc_search_sections",
+    {"src", "pattern", nullptr},
+    {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+    DOC_SEARCH_SECTIONS_SQL.c_str()};
+
+const DefaultTableMacro DOC_SEARCH_SECTIONS_BLOCKS_MACRO = {DEFAULT_SCHEMA,
+                                                            "doc_search_sections_blocks",
+                                                            {"blocks", "pattern", nullptr},
+                                                            {{nullptr, nullptr}},
+                                                            DOC_SEARCH_SECTIONS_BLOCKS_SQL.c_str()};
 
 //! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.
 //!
@@ -3390,9 +3424,9 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      {"SELECT * FROM panduck_register_doc_reader('custom', 'read_custom', "
 	                       "['.custom'])"});
 
-	for (auto *tm :
-	     {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
-	      &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO, &DOC_SEARCH_SECTIONS_MACRO}) {
+	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO,
+	                 &READ_PDF_BLOCKS_IMPL_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO,
+	                 &DOC_SEARCH_SECTIONS_MACRO, &DOC_SECTION_BLOCKS_MACRO, &DOC_SEARCH_SECTIONS_BLOCKS_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

@@ -53,21 +53,8 @@ namespace panduck_test {
 
 namespace {
 
-std::string FixturePath(const char *name) {
-	return std::string(PANDUCK_TEST_FIXTURE_DIR) + "/" + name;
-}
-
-//! The whole file as bytes, or "" when it could not be read. Binary mode is
-//! MANDATORY, not hygiene: a text-mode read on a platform that translates
-//! newlines would silently rewrite a compressed member and every byte-exact
-//! comparison below would be comparing something other than the file.
-std::string Slurp(const std::string &path) {
-	std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
-	if (!in) {
-		return std::string();
-	}
-	return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-}
+// FixturePath() and Slurp() are shared now (panduck_test.hpp), since #129 gave four more
+// test files the same data dependency.
 
 //! Reads one member through BOTH constructors and compares the bytes.
 //!

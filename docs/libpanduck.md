@@ -184,18 +184,23 @@ Not yet moved:
 `ctest` — no gtest, no Catch2, because adding a framework to prove libpanduck has
 almost no dependencies would be self-defeating.
 
-CI runs the suite in two tiers, so it has two check counts, not one. Measured on
-`main` `b762217` (run 41003383971):
+CI runs the suite in two tiers, so it has two check counts, not one. Measured locally by
+Claude on 2026-11-10, on branch `feat/129-container-standalone-tests` (#129), with the
+two configures the CI jobs use:
 
 | CI job | configure | modules with tests | checks |
 |---|---|---|---|
-| `libpanduck names no DuckDB` | dependency-free default | 6: `engine`, latex, mediawiki, org, rst, textile | **130** |
-| `libpanduck standalone, every module ON` | all eleven modules ON, dependencies from vcpkg | 8: those six, `byte_source`, ipynb | **229** |
+| `libpanduck names no DuckDB` | dependency-free default | 7: `engine`, latex, mediawiki, org, rst, rtf, textile | **150** |
+| `libpanduck standalone, every module ON` | all eleven modules ON, dependencies from vcpkg | 12: those seven, `byte_source`, docx, epub, ipynb, odt | **323** |
+
+Before #129 the two counts were 130 and 229 (`main` `b762217`, run 41003383971). The
+difference is exactly the new files: rtf 20, docx 26, epub 22, odt 26.
 
 `engine` is always compiled and covers `SpecVersion()` and `HasModule()`. The
 default configure turns ipynb, docx, odt, epub and zip OFF, because a bare runner
-has no yyjson, miniz or pugixml. rtf, docx, odt, epub and zip carry no standalone
-tests in either tier (#129). Quote the tier with any count: a single figure is how
+has no yyjson, miniz or pugixml. Every module now carries standalone tests. `zip` is
+covered by `byte_source`, which reads real archives through `ZipContainer` (#120).
+Quote the tier with any count: a single figure is how
 the old "125 checks" went stale unnoticed.
 
 Each module asserts: it returns rows at all through the DuckDB-free entry point;

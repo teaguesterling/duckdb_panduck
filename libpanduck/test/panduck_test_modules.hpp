@@ -27,6 +27,22 @@ void RunEngineTests();
 void RunByteSourceTests();
 #endif
 
+#ifdef PANDUCK_WITH_DOCX
+void RunDocxTests();
+#endif
+
+#ifdef PANDUCK_WITH_EPUB
+void RunEpubTests();
+#endif
+
+#ifdef PANDUCK_WITH_ODT
+void RunOdtTests();
+#endif
+
+#ifdef PANDUCK_WITH_RTF
+void RunRtfTests();
+#endif
+
 #ifdef PANDUCK_WITH_IPYNB
 void RunIpynbTests();
 #endif

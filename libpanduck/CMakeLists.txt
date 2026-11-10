@@ -433,22 +433,23 @@ if(PANDUCK_BUILD_TESTS)
   if(PANDUCK_WITH_RST)
     list(APPEND PANDUCK_TEST_SOURCES test/test_rst.cpp)
   endif()
-  # NO test_docx.cpp, NO test_epub.cpp and NO test_odt.cpp, for rtf's reason below.
-  #
-  # THE SECOND OBJECTION TO THOSE THREE HAS NOW BEEN ANSWERED, which is why this
-  # comment changed rather than being deleted: a standalone docx/odt/epub
-  # assertion needs an ARCHIVE FIXTURE on disk, so the target had to grow a data
-  # dependency on test/fixtures/ -- a decision about what the standalone suite
-  # may read, not a side effect of moving a reader. Issue #120 took that
-  # decision (see PANDUCK_TEST_FIXTURE_DIR below), so what is left standing
-  # between here and a test_docx.cpp is only rtf's reason: a module's first
-  # standalone assertions are their own change, not a rider on the commit that
-  # moved it.
-  # NO test/test_rtf.cpp, and the gap is deliberate rather than an oversight.
-  # Adding a module its first standalone assertions in the same commit that moves
-  # it would be implementation and tests changing together, which this project
-  # does not do. rtf's behaviour is pinned through SQL in test/sql/rtf_reader.test
-  # meanwhile; a standalone test module is its own change.
+  # docx, epub, odt and rtf got their first standalone assertions in #129, as their own
+  # change -- not as a rider on the commits that moved them, since that would have been
+  # implementation and tests changing together. The container readers read fixture
+  # archives through PANDUCK_TEST_FIXTURE_DIR (below, and #120); rtf takes text, and
+  # slurps its fixture.
+  if(PANDUCK_WITH_DOCX)
+    list(APPEND PANDUCK_TEST_SOURCES test/test_docx.cpp)
+  endif()
+  if(PANDUCK_WITH_EPUB)
+    list(APPEND PANDUCK_TEST_SOURCES test/test_epub.cpp)
+  endif()
+  if(PANDUCK_WITH_ODT)
+    list(APPEND PANDUCK_TEST_SOURCES test/test_odt.cpp)
+  endif()
+  if(PANDUCK_WITH_RTF)
+    list(APPEND PANDUCK_TEST_SOURCES test/test_rtf.cpp)
+  endif()
   if(PANDUCK_WITH_TEXTILE)
     list(APPEND PANDUCK_TEST_SOURCES test/test_textile.cpp)
   endif()

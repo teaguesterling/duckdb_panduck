@@ -77,6 +77,17 @@ std::string Attr(const ::panduck::Block &block, const char *key);
 //! compares equal to "".
 std::string Content(const ::panduck::Block &block);
 
+//! <repo>/test/fixtures/<name>. The directory arrives from CMake as
+//! PANDUCK_TEST_FIXTURE_DIR (libpanduck/CMakeLists.txt), which refuses to configure when it
+//! does not name a directory, so a test using this cannot silently read nothing.
+std::string FixturePath(const char *name);
+
+//! The whole file as bytes, or "" when it could not be read. Binary mode is
+//! MANDATORY, not hygiene: a text-mode read on a platform that translates
+//! newlines would silently rewrite a compressed member and every byte-exact
+//! comparison would be comparing something other than the file.
+std::string Slurp(const std::string &path);
+
 //! Copy a vocabulary constant into a std::string. NOT cosmetic, and the reason
 //! is worth writing down because the failure mode is a link error, not a
 //! compile error.

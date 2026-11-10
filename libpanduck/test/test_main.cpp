@@ -63,6 +63,18 @@ int main() {
 #ifdef PANDUCK_HAVE_ZIP_CONTAINER
 	RunModule("byte_source", &::panduck_test::RunByteSourceTests);
 #endif
+#ifdef PANDUCK_WITH_DOCX
+	RunModule("docx", &::panduck_test::RunDocxTests);
+#endif
+#ifdef PANDUCK_WITH_EPUB
+	RunModule("epub", &::panduck_test::RunEpubTests);
+#endif
+#ifdef PANDUCK_WITH_ODT
+	RunModule("odt", &::panduck_test::RunOdtTests);
+#endif
+#ifdef PANDUCK_WITH_RTF
+	RunModule("rtf", &::panduck_test::RunRtfTests);
+#endif
 #ifdef PANDUCK_WITH_IPYNB
 	RunModule("ipynb", &::panduck_test::RunIpynbTests);
 #endif

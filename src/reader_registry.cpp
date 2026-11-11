@@ -590,7 +590,8 @@ void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 			result.SetValue(i, Value());
 			continue;
 		}
-		auto fmt = ReaderRegistry::Get().BuiltinFormat(ExtOfPath(panduck::ClientContextOf(state), paths[idx].GetString()));
+		auto fmt =
+		    ReaderRegistry::Get().BuiltinFormat(ExtOfPath(panduck::ClientContextOf(state), paths[idx].GetString()));
 		result.SetValue(i, fmt.empty() ? Value() : Value(fmt));
 	}
 }

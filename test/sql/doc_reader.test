@@ -1,6 +1,7 @@
 # name: test/sql/doc_reader.test
 # description: doc_reader and doc_reader_blocks, reading mode taken from duckeye (ask 5)
 # group: [sql]
+
 #
 # READING MODE REMOVES NAMED PAGE STRUCTURE, never content judged to be junk (cordexa's
 # rule). webbed gives <header>, <nav>, <main>, <article>, <aside> and <footer> as `section`

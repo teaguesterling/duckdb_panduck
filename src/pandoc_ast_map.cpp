@@ -104,7 +104,7 @@ void PandocAstMapScan(ClientContext &, TableFunctionInput &input, DataChunk &out
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace

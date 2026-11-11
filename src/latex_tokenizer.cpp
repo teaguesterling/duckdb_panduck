@@ -57,7 +57,7 @@ void LatexTokensScan(ClientContext &, TableFunctionInput &input, DataChunk &outp
 		output.data[1].SetValue(count, Value(tok.text));
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace

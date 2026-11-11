@@ -324,7 +324,7 @@ inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &re
 	// false would refuse every such reader under every policy, which is the
 	// collateral kill panduck_policy_format exists to avoid.
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto formats = UnifiedVectorFormat::GetData<string_t>(input);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);
@@ -582,7 +582,7 @@ enum class Field { FORMAT, FUNCTION, READER_EXT, KIND, EXT };
 //! reading the live entry is exactly the thing this exists to avoid.
 void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto paths = UnifiedVectorFormat::GetData<string_t>(input);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);
@@ -609,7 +609,7 @@ void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	// here. Reaching for the flat array WOULD need a shim, since v2.0 renamed the
 	// mutable accessors.
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto paths = UnifiedVectorFormat::GetData<string_t>(input);
 
 	for (idx_t i = 0; i < args.size(); i++) {
@@ -677,9 +677,9 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 	// reason RegistryFieldFun gives: the executors' null protocol moved between
 	// v1.5.5 and v2.0.
 	UnifiedVectorFormat path_fmt, intent_fmt, value_fmt;
-	args.data[0].ToUnifiedFormat(args.size(), path_fmt);
-	args.data[1].ToUnifiedFormat(args.size(), intent_fmt);
-	args.data[2].ToUnifiedFormat(args.size(), value_fmt);
+	args.data[0].ToUnifiedFormat(path_fmt);
+	args.data[1].ToUnifiedFormat(intent_fmt);
+	args.data[2].ToUnifiedFormat(value_fmt);
 	auto paths = UnifiedVectorFormat::GetData<string_t>(path_fmt);
 	auto intents = UnifiedVectorFormat::GetData<string_t>(intent_fmt);
 	auto values = UnifiedVectorFormat::GetData<string_t>(value_fmt);
@@ -767,7 +767,7 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 //! a list passes the literal text and the reader's own CAST does the rest.
 void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);
@@ -861,7 +861,7 @@ void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result)
 void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto names = UnifiedVectorFormat::GetData<string_t>(input);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);
@@ -904,11 +904,20 @@ void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) 
 		//! validation" and passes green having never looked. Same class as the
 		//! compat shims in panduck_duckdb_compat.hpp, but no shim is needed here --
 		//! one spelling satisfies both overload sets.
+		//!
+		//! THE QualifiedName FORM, since #102. v2.0.0 and DuckDB main both deprecate
+		//! the three-Identifier overload ("Use GetEntry(context, catalog_type,
+		//! QualifiedName) instead"), and its body only builds this same
+		//! QualifiedName. The .c_str() note above still holds: QualifiedName takes
+		//! three Identifiers, so the runtime name still needs the implicit
+		//! `const char *` route. v1.5.6 has no static (CatalogType, QualifiedName)
+		//! overload, so this line does not compile there. No panduck CI leg has
+		//! built v1.5 since #161.
 		const auto fn_name = names[idx].GetString();
 		bool exists = true;
 		try {
-			Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, INVALID_CATALOG, DEFAULT_SCHEMA,
-			                  fn_name.c_str());
+			Catalog::GetEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY,
+			                  QualifiedName(INVALID_CATALOG, DEFAULT_SCHEMA, fn_name.c_str()));
 		} catch (std::exception &) {
 			exists = false;
 		}
@@ -955,7 +964,7 @@ void RegistryScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 // ------------------------------------------------------------------ CALL
@@ -1081,7 +1090,7 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 	auto &data = input.bind_data->Cast<RegisterBindData>();
 	auto &state = input.global_state->Cast<RegisterGlobalState>();
 	if (state.done) {
-		output.SetCardinality(0);
+		output.SetCardinalityUnsafe(0);
 		return;
 	}
 	idx_t count = 0;
@@ -1106,7 +1115,7 @@ void RegisterScan(ClientContext &, TableFunctionInput &input, DataChunk &output)
 		count++;
 	}
 	state.done = true;
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 // ------------------------------------------------------------------ SQL
@@ -3110,7 +3119,7 @@ void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	auto &fs = FileSystem::GetFileSystem(context);
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto patterns = UnifiedVectorFormat::GetData<string_t>(input);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);

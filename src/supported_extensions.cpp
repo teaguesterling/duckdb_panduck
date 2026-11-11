@@ -299,7 +299,7 @@ void SupportedExtensionsScan(ClientContext &, TableFunctionInput &input, DataChu
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace

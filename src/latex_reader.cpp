@@ -102,7 +102,7 @@ void LatexReaderScan(ClientContext &, TableFunctionInput &input, DataChunk &outp
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace

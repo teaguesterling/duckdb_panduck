@@ -71,7 +71,7 @@ void PandocScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace
@@ -106,7 +106,7 @@ static void PandocAstToBlocksFun(DataChunk &args, ExpressionState &state, Vector
 	auto &context = state.GetContext();
 	readers::RequireReaderEnabled(context, "pandoc");
 	UnifiedVectorFormat input;
-	args.data[0].ToUnifiedFormat(args.size(), input);
+	args.data[0].ToUnifiedFormat(input);
 	auto json_text = UnifiedVectorFormat::GetData<string_t>(input);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = input.sel->get_index(i);

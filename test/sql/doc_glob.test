@@ -1,0 +1,215 @@
+# name: test/sql/doc_glob.test
+# description: match := 'glob' and panduck_glob_like() -- duckeye's -S/-s pattern language (#163)
+# group: [sql]
+
+#
+# WHY A THIRD MODE. duckeye's -S and -s take a GLOB: `*` is any run, `?` is one character,
+# and `%`, `_` and `\` are literal. 'contains' is an ILIKE with live `%` and `_`, which is
+# its documented contract and stays so. Three deviations between duckeye and panduck came
+# from that difference (duckeye docs/dev/sql-core.md, D1-D3):
+#
+#   D1  no glob: `*` and `?` were literal in panduck
+#   D2  `_` was a one-character wildcard, so 'a_b' also matched "A backslash"
+#   D3  a backslash in the pattern did not match a literal backslash
+#
+# Each section below pins one of them in BOTH modes: what 'contains' does (unchanged), and
+# what 'glob' does. A test that pinned only glob could pass with contains quietly changed.
+#
+# Fixture: test/fixtures/glob_patterns.textile (textile is read natively). Its blocks:
+#
+#   0  heading  Alpha            id alpha
+#   1  para     alpha body
+#   2  heading  50% done         id done
+#   3  para     fifty body
+#   4  heading  500 done         id done
+#   5  para     five hundred body
+#   6  heading  a_b and a-b      id a_b-and-a-b
+#   7  para     underscore body
+#   8  heading  A backslash      id a-backslash
+#   9  para     prose about a backslash
+#  10  heading  back\slash       id backslash
+#  11  para     literal backslash body
+
+require panduck
+
+#
+# ---------------------------------------------------------------------------------------
+# panduck_glob_like: the translation, taken from duckeye_like() so there is one copy.
+# ---------------------------------------------------------------------------------------
+#
+# The six rows are duckeye's own table (duckeye docs/dev/sql-core.md, "duckeye_like").
+# THE ORDER OF THE REPLACEMENTS IS THE CONTRACT: backslash first, so the escapes added
+# after it are not doubled. The last row is the one that proves the order.
+
+query II
+SELECT p, panduck_glob_like(p) FROM (VALUES ('a\b'), ('50%'), ('a_b'), ('Al*a'), ('A?pha'), ('\%_*?')) t(p);
+----
+a\b	a\\b
+50%	50\%
+a_b	a\_b
+Al*a	Al%a
+A?pha	A_pha
+\%_*?	\\\%\_%_
+
+query I
+SELECT panduck_glob_like(NULL) IS NULL;
+----
+true
+
+#
+# ---------------------------------------------------------------------------------------
+# D1: `*` and `?` are wildcards in glob, literal in contains.
+# ---------------------------------------------------------------------------------------
+
+query II
+SELECT (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'Al*a', match := 'contains')),
+       (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'Al*a', match := 'glob'));
+----
+0	2
+
+query II
+SELECT (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'A?pha', match := 'contains')),
+       (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'A?pha', match := 'glob'));
+----
+0	2
+
+# Case-insensitive and substring, as contains is.
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', 'LPH', match := 'glob');
+----
+0	Alpha
+1	alpha body
+
+query II
+SELECT (SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'fifty*body')),
+       (SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'fifty*body', match := 'glob'));
+----
+0	2
+
+#
+# ---------------------------------------------------------------------------------------
+# D2: `%` and `_` are literal in glob, live in contains.
+# ---------------------------------------------------------------------------------------
+
+# '50%' in contains is '50' then anything, so "500 done" matches too. In glob it is the
+# literal "50%".
+query II
+SELECT (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', '50%', match := 'contains')),
+       (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', '50%', match := 'glob'));
+----
+4	2
+
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', '50%', match := 'glob');
+----
+2	50% done
+3	fifty body
+
+# duckeye's example: in contains, 'a_b' is a, any one character, b -- so "A backslash"
+# (A, space, b) matches as well as the literal heading.
+query II
+SELECT (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'a_b', match := 'contains')),
+       (SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'a_b', match := 'glob'));
+----
+4	2
+
+# The search reaches prose too: "alpha body" also has a, space, b. contains finds three
+# sections, glob only the one with a literal "a_b".
+query II
+SELECT (SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'a_b')),
+       (SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'a_b', match := 'glob'));
+----
+6	2
+
+#
+# ---------------------------------------------------------------------------------------
+# D3: a backslash is literal in glob. In contains it is the ESCAPE character.
+# ---------------------------------------------------------------------------------------
+#
+# In contains, '\s' escapes 's', so 'back\slash' means "backslash" and finds the heading
+# "A backslash" -- not the heading that contains a real backslash.
+
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', 'back\slash', match := 'contains');
+----
+8	A backslash
+9	prose about a backslash
+
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', 'back\slash', match := 'glob');
+----
+10	back\slash
+11	literal backslash body
+
+query II
+SELECT element_order, content FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'back\slash', match := 'glob');
+----
+10	back\slash
+11	literal backslash body
+
+#
+# ---------------------------------------------------------------------------------------
+# THE id ARM IS WHOLE AND RAW in glob mode, as in the other two.
+# ---------------------------------------------------------------------------------------
+#
+# A heading's id is compared with the pattern AS WRITTEN. duckeye compares it with the
+# ESCAPED pattern (`id = duckeye_like(arg)`), which its own docs record as probably a bug
+# (sql-core.md, "Known oddity"). panduck does not copy it: 'a_b-and-a-b' must find the
+# heading whose id is exactly that.
+
+query II
+SELECT element_order, content FROM doc_section('test/fixtures/glob_patterns.textile', 'a_b-and-a-b', match := 'glob');
+----
+6	a_b and a-b
+7	underscore body
+
+# The glob does not reach the id: 'a-back*' is no title's substring, and it is not the id
+# 'a-backslash' either.
+query I
+SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'a-back*', match := 'glob');
+----
+0
+
+#
+# ---------------------------------------------------------------------------------------
+# Defaults and refusals.
+# ---------------------------------------------------------------------------------------
+
+# doc_search_sections gained `match`, and its default is what it did before: contains.
+query I
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'a_b') s)
+       IS NOT DISTINCT FROM
+       (SELECT list(s ORDER BY s.element_order) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'a_b', match := 'contains') s);
+----
+true
+
+# exact has no meaning for a search over section TEXT, so the search refuses it by name.
+statement error
+SELECT count(*) FROM doc_search_sections('test/fixtures/glob_patterns.textile', 'Alpha', match := 'exact');
+----
+doc_search_sections match must be contains or glob
+
+statement error
+SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'Alpha', match := 'globb');
+----
+doc_section match must be exact, contains or glob
+
+#
+# ---------------------------------------------------------------------------------------
+# The _blocks variants take the same modes (#162).
+# ---------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE g AS SELECT list(b ORDER BY b.element_order) AS blocks
+FROM read_panduck_doc('test/fixtures/glob_patterns.textile') b;
+
+query II
+SELECT (SELECT count(*) FROM doc_section_blocks((SELECT blocks FROM g), 'back\slash', match := 'glob')),
+       (SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM g), 'a_b', match := 'glob'));
+----
+2	2
+
+statement error
+SELECT count(*) FROM doc_search_sections_blocks((SELECT blocks FROM g), 'a_b', match := 'exact');
+----
+doc_search_sections_blocks match must be contains or glob

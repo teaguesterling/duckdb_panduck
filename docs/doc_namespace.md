@@ -167,6 +167,77 @@ as `doc_section`, in the same order — so it is the same shape and composes wit
 different thing: it returns one row per section as `(section, start_order, blocks)`, which
 is the right shape for enumerating matches and the wrong one for slicing a document.
 
+### `match := 'glob'` — duckeye's pattern language
+
+`'glob'` is `'contains'` with a different pattern language (#163). It is the language of
+duckeye's `-S` and `-s`:
+
+| pattern | means |
+|---|---|
+| `*` | any run of characters |
+| `?` | one character |
+| `%`, `_`, `\` | themselves |
+
+The match is case-insensitive and substring, as `'contains'` is. The id arm is whole and
+raw, as in every mode: `'a_b-and-a-b'` finds the heading whose id is exactly that.
+
+The difference from `'contains'` shows on exactly the characters a heading often holds:
+
+```sql
+-- headings: "50% done", "500 done", "a_b and a-b", "A backslash", "back\slash"
+doc_section(f, '50%',        match := 'contains')  -- "50% done" AND "500 done"
+doc_section(f, '50%',        match := 'glob')      -- "50% done"
+doc_section(f, 'a_b',        match := 'contains')  -- "a_b and a-b" AND "A backslash"
+doc_section(f, 'a_b',        match := 'glob')      -- "a_b and a-b"
+doc_section(f, 'back\slash', match := 'contains')  -- "A backslash" (\s escapes s)
+doc_section(f, 'back\slash', match := 'glob')      -- "back\slash"
+```
+
+`'contains'` keeps live `%` and `_`. That is its documented contract, so it does not change.
+
+The translation is a function of its own, `panduck_glob_like(pattern)`, which returns the
+ILIKE pattern. duckeye needs the translation outside these functions too, so it is named
+rather than hidden in a mode. The caller adds the `'%'` on each side and `ESCAPE '\'`:
+
+```sql
+SELECT panduck_glob_like('\%_*?');   -- \\\%\_%_
+SELECT title FROM t WHERE title ILIKE '%' || panduck_glob_like('Al*a') || '%' ESCAPE '\';
+```
+
+**The order of the replacements is the contract**: backslash first, so the escapes added
+after it are not doubled. It is SQL in the extension, not C++ behind the libpanduck seam,
+because its output is an ILIKE pattern and means nothing outside SQL. A matcher for a
+libpanduck consumer is #164.
+
+### The id arm, and what a miss returns (#166)
+
+**A heading's id is matched whole and raw, in every mode.** `section` is compared with
+`attributes['id']` as written: no wildcard, no escape, case-sensitive. A slug is a value the
+caller has or does not have, so a part of one is not a request.
+
+The id is the one the reader set. panduck derives no slug for a heading that has none.
+Measured on `test/fixtures/` on 2026-11-10:
+
+| readers | headings carry `attributes['id']` |
+|---|---|
+| markdown, html, rst, textile | yes |
+| docx, odt, org, latex, rtf, epub | no |
+
+For the second group, the id arm never matches, and only the title can. duckeye's own heading
+list (`duck_blocks_headings_structs`) also gives an empty id for those headings, so the two
+tools agree there.
+
+**duckeye's `-S` compares the id with the ESCAPED pattern**, `id = duckeye_like(arg)`, so
+`-S my_id` compares the id with `my\_id`. duckeye's `docs/dev/sql-core.md` records this as
+probably a bug. panduck does not copy it. On duckeye's parity fixtures the two compares give
+the same result for every pattern. No pattern that holds `\ % _ * ?` equals a fixture id, and
+the patterns with none of those characters escape to themselves.
+
+**A miss returns zero rows**, from all four functions, and never an error or a NULL row. A NULL
+appears only when the caller aggregates zero rows, for example
+`SELECT list(b) FROM doc_section(...) b`. That NULL is the aggregate's, so test it with
+`IS NULL`, or count the rows first.
+
 ## `expand_embedded := true` — parse a document held inside another
 
 A `.ipynb` markdown cell is held as one `raw` block, deliberately: panduck's delegation
@@ -214,7 +285,7 @@ Two details worth knowing:
   starts at 0 still starts at 0. Normalising here would silently rewrite one reader's
   numbering to match another's.
 
-## `doc_search_sections(src, pattern, format := 'auto')`
+## `doc_search_sections(src, pattern, format := 'auto', match := 'contains')`
 
 **Find the section by its content**, where `doc_section` finds it by its heading. The
 difference is the bound:
@@ -237,6 +308,10 @@ The pattern is `ILIKE '%pattern%' ESCAPE '\'` against the section's **flattened 
 every block's content joined in document order, including the heading's own — so a phrase
 that straddles two blocks still selects the section. No match returns no rows rather than
 an error.
+
+`match := 'glob'` takes duckeye's pattern language instead, as for `doc_section` above.
+`'exact'` is refused: the pattern is compared with a section's whole text, so an exact
+compare would not be a search.
 
 > **The separator is a single space, and a block with no content contributes no
 > separator.** Blocks whose content is `NULL` or `''` are skipped entirely rather than
@@ -278,7 +353,7 @@ a block with no preceding heading simply has none.
 The segments **partition the document**: an empty pattern matches every segment and returns
 the whole document exactly once, with no block missed and none repeated.
 
-## `doc_section_blocks(blocks, section, match := 'exact')` and `doc_search_sections_blocks(blocks, pattern)`
+## `doc_section_blocks(blocks, section, match := 'exact')` and `doc_search_sections_blocks(blocks, pattern, match := 'contains')`
 
 **The same two narrows, over a `duck_blocks` list instead of a path** (#162). Use them for
 blocks that never were a file: a zim entry, stdin, a Pandoc AST, a code AST, or the output

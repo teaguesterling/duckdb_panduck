@@ -308,7 +308,7 @@ bool ReaderFormatEnabled(ClientContext &context, const std::string &format) {
 //! claims the source. A NULL format is not gated here -- dispatch has its own
 //! name for that.
 inline void ReaderEnabledFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+	auto &context = panduck::ClientContextOf(state);
 	// WRITTEN WITH Vector::SetValue, for the reason RegistryFieldFun documents
 	// below: UnaryExecutor's null protocol is NOT stable across DuckDB versions.
 	// v1.5.5 has ExecuteWithNulls taking a (value, ValidityMask &, idx) lambda;
@@ -590,7 +590,8 @@ void BuiltinFormatFun(DataChunk &args, ExpressionState &state, Vector &result) {
 			result.SetValue(i, Value());
 			continue;
 		}
-		auto fmt = ReaderRegistry::Get().BuiltinFormat(ExtOfPath(state.GetContext(), paths[idx].GetString()));
+		auto fmt =
+		    ReaderRegistry::Get().BuiltinFormat(ExtOfPath(panduck::ClientContextOf(state), paths[idx].GetString()));
 		result.SetValue(i, fmt.empty() ? Value() : Value(fmt));
 	}
 }
@@ -616,7 +617,7 @@ void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto idx = input.sel->get_index(i);
 		ReaderEntry entry;
 		if (!input.validity.RowIsValid(idx) ||
-		    !ReaderRegistry::Get().Lookup(ExtOfPath(state.GetContext(), paths[idx].GetString()), entry)) {
+		    !ReaderRegistry::Get().Lookup(ExtOfPath(panduck::ClientContextOf(state), paths[idx].GetString()), entry)) {
 			result.SetValue(i, Value());
 			continue;
 		}
@@ -644,7 +645,7 @@ void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
 void CanReadFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t path) {
 		ReaderEntry entry;
-		return ReaderRegistry::Get().Lookup(ExtOfPath(state.GetContext(), path.GetString()), entry);
+		return ReaderRegistry::Get().Lookup(ExtOfPath(panduck::ClientContextOf(state), path.GetString()), entry);
 	});
 }
 
@@ -713,7 +714,7 @@ void ReaderOptionForFun(DataChunk &args, ExpressionState &state, Vector &result)
 		auto value = values[v_idx].GetString();
 
 		ReaderEntry entry;
-		ReaderRegistry::Get().Lookup(ExtOfPath(state.GetContext(), path), entry);
+		ReaderRegistry::Get().Lookup(ExtOfPath(panduck::ClientContextOf(state), path), entry);
 		const readers::ReaderOption *match = nullptr;
 		for (auto &o : entry.options) {
 			if (o.intent == intent && o.value == value) {
@@ -827,7 +828,7 @@ void RenderParamsFun(DataChunk &args, ExpressionState &state, Vector &result) {
 }
 
 void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+	auto &context = panduck::ClientContextOf(state);
 	UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t name) {
 		return ExtensionHelper::TryAutoLoadExtension(context, name.GetString());
 	});
@@ -859,7 +860,7 @@ void EnsureExtensionFun(DataChunk &args, ExpressionState &state, Vector &result)
 //! exist -- rather than inferring it from a version number, which is one
 //! inference further from the failure.
 void FunctionExistsFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+	auto &context = panduck::ClientContextOf(state);
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);
 	auto names = UnifiedVectorFormat::GetData<string_t>(input);
@@ -3107,7 +3108,7 @@ const char TABLE_KIND[] = "table";
 // neutral and read_panduck_doc owns the policy, so the raise has exactly one
 // site.
 void PanduckGlobFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+	auto &context = panduck::ClientContextOf(state);
 	auto &fs = FileSystem::GetFileSystem(context);
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);

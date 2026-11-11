@@ -19,6 +19,7 @@ SELECT * FROM doc_section('report.docx', 'Meth', match := 'contains');  -- ...by
 SELECT * FROM doc_section('report.docx', 'Meth*ds', match := 'glob');  -- ...by duckeye's glob
 SELECT * FROM doc_search_sections('report.docx', 'p < 0.05');  -- section BY ITS CONTENT
 SELECT * FROM doc_section_blocks((SELECT blocks FROM d), 'Methods');  -- ...of a blocks list
+SELECT * FROM doc_reader('page.html');            -- reading mode: drop nav, aside, page chrome
 
 -- A notebook's markdown cells are held raw, so it has no headings by default.
 -- expand_embedded parses them, and makes the notebook navigable.

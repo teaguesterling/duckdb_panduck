@@ -390,6 +390,53 @@ SELECT element_order, content FROM doc_section_blocks((SELECT blocks[5:9] FROM d
 
 An empty or `NULL` list returns no rows. A miss returns no rows, as for the path forms.
 
+## `doc_reader(src, format := 'auto')` and `doc_reader_blocks(blocks)`
+
+**Reading mode: the page without its named chrome** (duckeye ask 5). It is taken from
+duckeye's `duckeye_reader` (`feat/reader-mode` `d959ad3`), so duckeye, its Android app and
+panduck run one copy.
+
+```sql
+SELECT * FROM doc_reader('page.html');
+
+WITH d AS (SELECT list(b ORDER BY b.element_order) AS blocks FROM read_html_blocks('page.html') b)
+SELECT duck_blocks_to_md(list(r ORDER BY r.element_order))
+FROM doc_reader_blocks((SELECT blocks FROM d)) r;
+```
+
+**The rule is cordexa's: remove named structure only, never content judged to be junk.**
+webbed gives `<header>`, `<nav>`, `<main>`, `<article>`, `<aside>` and `<footer>` as
+`section` blocks with `attributes['role']`.
+
+- Kept: the `<main>`, else every `<article>`, else the whole document.
+- Dropped from what is kept: `nav` and `aside`, and a `header` or `footer` unless it is
+  inside an article. Inside an article, it is the article's own title block or byline.
+- Metadata (`kind = 'value'`) keeps `title`, `author` and `description`. The rest of
+  `<meta>` is presentation: viewport, `twitter:*`, `react-*`.
+
+A section's subtree is the blocks after it, up to the next block at its level or above.
+Each row keeps its own `element_order`, in list order.
+
+**The shape is the performance.** duckeye measured four shapes of this logic on a
+7,335-block Wikipedia page. An `EXISTS` or self-join over the unnested blocks took 43 s.
+`blocks[i]` in a per-block lambda took 23 s, and spans passed as macro arguments took 34 s.
+Spans computed once, then passed as values, took 0.3 s. So the spans, `keep` and `chrome`
+are columns of `MATERIALIZED` CTEs, and the per-block lambda mentions only values. Both
+macros are table macros, for the reason given for `doc_section_blocks`.
+
+**Why `doc_reader_blocks` is in panduck, not in `duck_block_utils`.** The rule at the top
+of this page puts blocks-only functions in `duck_block_utils`. This one bends it, as
+`doc_section_blocks` does, for three reasons:
+
+1. duckeye calls it on blocks that never were a file: a zim entry or stdin. Its SQL core
+   then needs one extension for every narrow, not two.
+2. `doc_reader` and `doc_reader_blocks` share one body, so the path form and the list form
+   cannot drift apart.
+3. The rule reads a reader's vocabulary: the section roles that webbed emits. It is not a
+   generic operation on the duck_block format.
+
+If `duck_block_utils` takes it later, it can take the body unchanged.
+
 ## `read_panduck_doc(src, …)` reads more than one document
 
 ```

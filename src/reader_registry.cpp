@@ -2388,6 +2388,88 @@ const DefaultTableMacro DOC_SEARCH_SECTIONS_BLOCKS_MACRO = {DEFAULT_SCHEMA,
                                                             {{"match", "'contains'"}, {nullptr, nullptr}},
                                                             DOC_SEARCH_SECTIONS_BLOCKS_SQL.c_str()};
 
+//! doc_reader -- READING MODE: the page without its named chrome (duckeye ask 5).
+//!
+//! Taken from duckeye's duckeye_reader (feat/reader-mode d959ad3), so that duckeye, its
+//! Android app and panduck run one copy. THE RULE IS CORDEXA'S: remove named structure
+//! only, never content judged to be junk. webbed gives <header>, <nav>, <main>,
+//! <article>, <aside> and <footer> as `section` blocks with attributes['role'].
+//!   - Kept: the <main>, else every <article>, else the whole document.
+//!   - Dropped from what is kept: nav and aside, and a header or footer unless it sits
+//!     inside an article (the article's own title block or byline).
+//!   - Metadata (kind='value') keeps title, author and description; the rest of <meta>
+//!     is presentation (viewport, twitter:*, react-*).
+//! A section's subtree is the blocks after it, up to the next block at its level or
+//! above. The rule text below is duckeye's, unchanged: duckeye's output must stay
+//! byte-identical when it switches.
+//!
+//! THE SHAPE IS THE PERFORMANCE. duckeye measured four shapes of this same logic on a
+//! 7,335-block Wikipedia page, DuckDB 2.0: an EXISTS or self-join over the unnested
+//! blocks, 43 s; blocks[i] inside a per-block lambda, 23 s (the captured list is copied
+//! per call); spans passed to the lambda as macro arguments, 34 s (expansion inlines
+//! them per block); spans computed ONCE and passed as values, 0.3 s. So `spans`, `keep`
+//! and `chrome` are columns of MATERIALIZED CTEs, and the per-block lambda indexes with
+//! `lambda b, i` and mentions nothing but values.
+//!
+//! A TABLE MACRO, for the same reason as doc_section_blocks: a scalar macro over a
+//! 72,000-block list ran out of memory. Each head defines `lst`, one row holding the
+//! list `bl`; DOC_READER_BODY does the rest. Rows come back in list order, with each
+//! block's own element_order.
+static const std::string DOC_READER_PATH_HEAD = R"SQL(
+WITH lst AS MATERIALIZED (SELECT list(d ORDER BY d.element_order) AS bl FROM read_panduck_doc(
+    -- One document, refused by name otherwise: see DOC_SECTION_PATH_HEAD.
+    CASE WHEN len(panduck_source_list(src)) > 1
+         THEN error('panduck: doc_reader takes a single document; element_order restarts '
+                    'per document, so a glob or list interleaves them. Use '
+                    'doc_reader_blocks on one document''s list')
+         ELSE panduck_source_list(src)[1] END, format := format,
+    expand_embedded := expand_embedded) d),)SQL";
+
+static const std::string DOC_READER_BLOCKS_HEAD = R"SQL(
+WITH lst AS MATERIALIZED (SELECT blocks AS bl),)SQL";
+
+static const std::string DOC_READER_BODY = R"SQL(
+-- The named sections, as values: list position, level and role.
+named AS MATERIALIZED (SELECT bl, list_transform(bl, lambda b: b.level) AS levels,
+    list_filter(list_transform(bl, lambda b, i: {'i': i, 'lv': b.level, 'role': b.attributes['role'],
+                                                  'section': b.kind = 'block' AND b.element_type = 'section'}),
+                lambda s: s.section AND s.role IN ('main', 'article', 'header', 'nav', 'aside', 'footer')) AS named
+    FROM lst),
+-- Each section's span [i, stop): up to the next block at its level or above.
+spans AS MATERIALIZED (SELECT bl, list_transform(named, lambda s: {'i': s.i, 'role': s.role,
+    'stop': coalesce(s.i + list_position(list_transform(levels[s.i + 1:], lambda l: l <= s.lv), true),
+                     len(levels) + 1)}) AS spans
+    FROM named),
+cut AS MATERIALIZED (SELECT bl,
+    CASE WHEN len(list_filter(spans, lambda s: s.role = 'main')) > 0
+         THEN list_filter(spans, lambda s: s.role = 'main')
+         ELSE list_filter(spans, lambda s: s.role = 'article') END AS keep,
+    list_filter(spans, lambda c: c.role IN ('nav', 'aside')
+      OR (c.role IN ('header', 'footer')
+          AND len(list_filter(spans, lambda a: a.role = 'article' AND c.i > a.i AND c.i < a.stop)) = 0)) AS chrome
+    FROM spans),
+kept AS (SELECT list_filter(bl, lambda b, i:
+      CASE WHEN b.kind = 'value' THEN b.attributes['key'] IN ('title', 'author', 'description')
+           ELSE (len(keep) = 0 OR len(list_filter(keep, lambda k: i >= k.i AND i < k.stop)) > 0)
+                AND len(list_filter(chrome, lambda c: i >= c.i AND i < c.stop)) = 0 END) AS r
+    FROM cut)
+SELECT x.kind, x.element_type, x.content, x.level, x.encoding, x.attributes, x.element_order
+FROM (SELECT unnest(r) AS x, generate_subscripts(r, 1) AS pos FROM kept)
+ORDER BY pos
+)SQL";
+
+static const std::string DOC_READER_SQL = DOC_READER_PATH_HEAD + DOC_READER_BODY;
+static const std::string DOC_READER_BLOCKS_SQL = DOC_READER_BLOCKS_HEAD + DOC_READER_BODY;
+
+const DefaultTableMacro DOC_READER_MACRO = {DEFAULT_SCHEMA,
+                                            "doc_reader",
+                                            {"src", nullptr},
+                                            {{"format", "'auto'"}, {"expand_embedded", "false"}, {nullptr, nullptr}},
+                                            DOC_READER_SQL.c_str()};
+
+const DefaultTableMacro DOC_READER_BLOCKS_MACRO = {
+    DEFAULT_SCHEMA, "doc_reader_blocks", {"blocks", nullptr}, {{nullptr, nullptr}}, DOC_READER_BLOCKS_SQL.c_str()};
+
 //! THE IMPLEMENTATION. read_pdf_blocks below is a thin gate in front of it.
 //!
 //! SPLIT BECAUSE A MACRO BODY IS BOUND LAZILY, ON INVOCATION. This body names
@@ -3475,9 +3557,10 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                      {"SELECT * FROM panduck_register_doc_reader('custom', 'read_custom', "
 	                       "['.custom'])"});
 
-	for (auto *tm : {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO,
-	                 &READ_PDF_BLOCKS_IMPL_MACRO, &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO,
-	                 &DOC_SEARCH_SECTIONS_MACRO, &DOC_SECTION_BLOCKS_MACRO, &DOC_SEARCH_SECTIONS_BLOCKS_MACRO}) {
+	for (auto *tm :
+	     {&READ_DOC_MACRO, &READ_TABLE_MACRO, &DOC_TOC_MACRO, &DEPENDENCIES_MACRO, &READ_PDF_BLOCKS_IMPL_MACRO,
+	      &READ_PDF_BLOCKS_MACRO, &DOC_SECTION_MACRO, &DOC_CONTAINER_MACRO, &DOC_SEARCH_SECTIONS_MACRO,
+	      &DOC_SECTION_BLOCKS_MACRO, &DOC_SEARCH_SECTIONS_BLOCKS_MACRO, &DOC_READER_MACRO, &DOC_READER_BLOCKS_MACRO}) {
 		auto info = DefaultTableFunctionGenerator::CreateTableMacroInfo(*tm);
 		loader.RegisterFunction(*info);
 	}

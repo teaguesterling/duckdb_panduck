@@ -2346,10 +2346,44 @@ static string BuildBlocksJson(const vector<Value> &blocks_in) {
 	yyjson_mut_val *blocks_arr = yyjson_mut_arr(doc);
 	yyjson_mut_doc_set_root(doc, blocks_arr);
 
+	// A FOOTNOTE BODY THAT A NOTE REFERENCES IS NOT EXPORTED A SECOND TIME (#85).
+	// The rst reader emits shape 2, ruled 2026-11-11: the reference is an inline
+	// `note` whose content is the body text, with attributes['id'] = the label, and
+	// the body is a `div` with source_type 'footnote' and the same id. The note arm
+	// in pandoc_inline_convert.cpp already exports the body as Note [Para ...]. So
+	// the div, exported too, would put the body text in the document twice. pandoc
+	// itself gives the body only inside the Note.
+	//
+	// Only FOOTNOTE bodies are dropped. A citation body stays: pandoc keeps it
+	// visible at the end of the document. A footnote body that no note references
+	// stays too, because nothing else carries its words.
+	std::set<string> referenced_notes;
+	for (auto &row : blocks_list) {
+		if (!row.IsNull() && GetElementStringField(row, DuckBlockTypes::KIND_IDX) == DuckBlockTypes::KIND_INLINE &&
+		    GetElementStringField(row, DuckBlockTypes::ELEMENT_TYPE_IDX) == DuckBlockTypes::INLINE_NOTE) {
+			auto id = GetElementAttribute(row, "id");
+			if (!id.empty()) {
+				referenced_notes.insert(id);
+			}
+		}
+	}
+
 	for (idx_t block_idx = 0; block_idx < blocks_list.size();) {
 		auto &block = blocks_list[block_idx];
 		if (block.IsNull()) {
 			block_idx++;
+			continue;
+		}
+		if (!referenced_notes.empty() &&
+		    GetElementStringField(block, DuckBlockTypes::ELEMENT_TYPE_IDX) == DuckBlockTypes::TYPE_DIV &&
+		    GetElementAttribute(block, DuckBlockTypes::ATTR_SOURCE_TYPE) == "footnote" &&
+		    referenced_notes.count(GetElementAttribute(block, "id"))) {
+			const int32_t body_level = GetElementLevel(block);
+			block_idx++;
+			while (block_idx < blocks_list.size() &&
+			       (blocks_list[block_idx].IsNull() || GetElementLevel(blocks_list[block_idx]) > body_level)) {
+				block_idx++;
+			}
 			continue;
 		}
 

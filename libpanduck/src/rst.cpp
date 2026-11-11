@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -78,6 +79,45 @@ void PushText(std::vector<RstInline> &out, const std::string &text, int level) {
 	run.content = text;
 	run.level = level;
 	out.push_back(std::move(run));
+}
+
+//! A footnote label, per docutils: all digits (`1`), auto-numbered (`#`,
+//! `#name`) or auto-symbol (`*`). Any other label is a citation.
+bool IsFootnoteLabel(const std::string &label) {
+	if (label.empty()) {
+		return false;
+	}
+	if (label[0] == '#' || label == "*") {
+		return true;
+	}
+	return label.find_first_not_of("0123456789") == std::string::npos;
+}
+
+//! A footnote or citation REFERENCE, `[label]_`, starting at s[i] == '['. On a
+//! match, `label_len` is the label's length. docutils' inline-markup rules
+//! decide what counts: the `[` must open the text or follow whitespace or an
+//! opening bracket or quote, and the `]_` must end the text or come before
+//! whitespace or punctuation. A label holds no whitespace. So `[not a ref]`
+//! (no `_`) and `word[1]_` (no break before) stay text, as docutils keeps them.
+bool IsNoteReference(const std::string &s, size_t i, size_t &label_len) {
+	if (i > 0 && std::string(" \t\n([{<'\"").find(s[i - 1]) == std::string::npos) {
+		return false;
+	}
+	size_t close = s.find(']', i + 1);
+	if (close == std::string::npos || close == i + 1 || close + 1 >= s.size() || s[close + 1] != '_') {
+		return false;
+	}
+	for (size_t k = i + 1; k < close; k++) {
+		if (s[k] == ' ' || s[k] == '\t' || s[k] == '\n' || s[k] == '[') {
+			return false;
+		}
+	}
+	size_t after = close + 2;
+	if (after < s.size() && std::string(" \t\n.,;:!?)]}>'\"-/").find(s[after]) == std::string::npos) {
+		return false;
+	}
+	label_len = close - i - 1;
+	return true;
 }
 
 //! Split text into inline runs. `**strong**` is tested BEFORE `*emph*`: the
@@ -143,6 +183,17 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 				if (i < s.size() && s[i] == '_') {
 					i++;
 				}
+				continue;
+			}
+		}
+		if (s[i] == '[') {
+			size_t label_len = 0;
+			if (IsNoteReference(s, i, label_len)) {
+				auto label = s.substr(i + 1, label_len);
+				emit(IsFootnoteLabel(label) ? DuckBlockVocabulary::INLINE_NOTE : DuckBlockVocabulary::INLINE_CITE,
+				     label, std::string());
+				out.back().id = label;
+				i += label_len + 3; // `[` + label + `]_`
 				continue;
 			}
 		}
@@ -235,10 +286,78 @@ public:
 	std::vector<RstBlock> Build(const std::string &src) {
 		lines_ = ScanRst(src);
 		Run(0, lines_.size(), 1, 0);
+		ResolveNotes();
 		return std::move(blocks_);
 	}
 
 private:
+	//! Joins footnote references to their bodies, after the parse (#85).
+	//!
+	//! 1. AUTO LABELS GET DISTINCT IDS. docutils pairs the N-th `[#]_` with the
+	//!    N-th `.. [#]`, and the same for `[*]`; pandoc 3.1.3 pairs them the
+	//!    same way (measured). So each gets `#N` or `*N`, counted in document
+	//!    order, separately for references and for bodies. A named `[#name]`
+	//!    already pairs by its label and is left as written.
+	//! 2. A FOOTNOTE ANCHOR'S CONTENT IS ITS BODY'S TEXT, which is how docx,
+	//!    odt and mediawiki notes already read. duckeye measured the three
+	//!    choices on 2026-11-11: only the body text renders as pandoc(1) does
+	//!    today in ansi, md and pandoc. A reference with no body keeps its label.
+	//!    A citation anchor keeps its label: pandoc shows a citation as its
+	//!    label too, and the body stays visible where it is.
+	void ResolveNotes() {
+		int ref_hash = 0, ref_star = 0, body_hash = 0, body_star = 0;
+		for (auto &block : blocks_) {
+			for (auto &inl : block.inlines) {
+				if (inl.element_type != DuckBlockVocabulary::INLINE_NOTE) {
+					continue;
+				}
+				if (inl.id == "#") {
+					inl.id = "#" + std::to_string(++ref_hash);
+				} else if (inl.id == "*") {
+					inl.id = "*" + std::to_string(++ref_star);
+				}
+			}
+			if (block.element_type == DuckBlockVocabulary::TYPE_DIV && block.source_type == "footnote") {
+				if (block.id == "#") {
+					block.id = "#" + std::to_string(++body_hash);
+				} else if (block.id == "*") {
+					block.id = "*" + std::to_string(++body_star);
+				}
+			}
+		}
+		// The body's text: every row under the div, in order, joined with a space.
+		std::map<std::string, std::string> bodies;
+		for (size_t k = 0; k < blocks_.size(); k++) {
+			const auto &div = blocks_[k];
+			if (div.element_type != DuckBlockVocabulary::TYPE_DIV || div.source_type != "footnote" ||
+			    bodies.count(div.id)) {
+				continue;
+			}
+			std::string text;
+			for (size_t j = k + 1; j < blocks_.size() && blocks_[j].level > div.level; j++) {
+				std::string part = blocks_[j].content;
+				for (const auto &inl : blocks_[j].inlines) {
+					part += inl.content;
+				}
+				if (!part.empty()) {
+					text += (text.empty() ? "" : " ") + part;
+				}
+			}
+			bodies[div.id] = text;
+		}
+		for (auto &block : blocks_) {
+			for (auto &inl : block.inlines) {
+				if (inl.element_type != DuckBlockVocabulary::INLINE_NOTE) {
+					continue;
+				}
+				auto it = bodies.find(inl.id);
+				if (it != bodies.end() && !it->second.empty()) {
+					inl.content = it->second;
+				}
+			}
+		}
+	}
+
 	std::vector<Line> lines_;
 	std::vector<RstBlock> blocks_;
 	//! ADORNMENT CHARACTERS IN ORDER OF FIRST APPEARANCE. RST sets a heading's
@@ -331,8 +450,13 @@ private:
 	//! the document, a directive body's indent, a quote's, a list item's text
 	//! column. RST expresses containment by indentation alone, so the margin is
 	//! what makes a line "indented" at all (#64).
-	void Run(size_t from, size_t to, int depth, int base) {
+	//! `seed`, when set, is the first line of the run's first paragraph: text that
+	//! sat on a line the caller already consumed, such as a footnote's label line.
+	void Run(size_t from, size_t to, int depth, int base, const std::string &seed = std::string()) {
 		std::vector<std::string> para;
+		if (!seed.empty()) {
+			para.push_back(seed);
+		}
 		bool literal_pending = false;
 		auto flush = [&]() {
 			if (para.empty()) {
@@ -396,29 +520,48 @@ private:
 				flush();
 				continue;
 			case LineKind::COMMENT: {
-				// A ONE-LINE FOOTNOTE OR CITATION carries its body on the LABEL LINE:
-				// `.. [1] text`. The scanner files that whole line under COMMENT with
-				// `[1] text` as its text, and the body rule below only ever looked at
-				// the NEXT line -- so this text went nowhere (#67). Measured on main
-				// before this: `.. [1] The footnote body.` emitted NOTHING, and the
-				// wrapped form emitted only its continuation line, losing the label
-				// line's words.
+				// A FOOTNOTE OR CITATION BODY, `.. [label] text` (#85, shape 2). The
+				// scanner files it under COMMENT with every other non-directive `..`,
+				// so the `[` is what tells them apart. The body is DOCUMENT TEXT, not
+				// commentary: before #64 dropped it and the word-loss guard noticed.
 				//
-				// SEEDING `para` RATHER THAN EMITTING is what joins the label line with
-				// an indented continuation into ONE paragraph, as pandoc does. The
-				// quote rule and the definition-list branch both require an empty
-				// `para`, so the following indented line falls through to TEXT and
-				// appends here. The run is deliberately NOT consumed.
+				// IT IS A `div` SUBTREE, with source_type 'footnote' or 'citation' and
+				// attributes['id'] = the label, the body paragraphs one level down. A
+				// reference `[label]_` is an inline anchor with the same id, so a
+				// consumer joins the two. Teague ruled the shape on 2026-11-11: the
+				// body stays here, and the renderers decide how to show it.
+				//
+				// THE LABEL LINE'S TEXT SEEDS THE BODY'S FIRST PARAGRAPH (#67). `.. [1]
+				// text` carries its body on the label line, and an indented
+				// continuation joins it into ONE paragraph, as pandoc does. Before #67
+				// the one-line form emitted nothing.
 				if (!line.text.empty() && line.text[0] == '[') {
 					size_t close = line.text.find(']');
-					if (close != std::string::npos) {
+					if (close != std::string::npos && close > 1) {
+						const std::string label = line.text.substr(1, close - 1);
 						size_t b = line.text.find_first_not_of(" \t", close + 1);
-						if (b != std::string::npos) {
-							// The scanner already trimmed this line, so the remainder needs
-							// no trim.
-							para.push_back(line.text.substr(b));
-							continue;
+						// The scanner already trimmed this line, so the remainder needs no
+						// trim.
+						const std::string seed = b == std::string::npos ? std::string() : line.text.substr(b);
+						// The body run starts on the VERY NEXT line, as for any comment:
+						// a blank line straight after means the label line is all of it.
+						size_t end = i + 1;
+						if (i + 1 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].indent > line.indent) {
+							end = std::min(IndentedRun(i + 1, line.indent), to);
 						}
+						if (!seed.empty() || end > i + 1) {
+							flush();
+							RstBlock div;
+							div.element_type = DuckBlockVocabulary::TYPE_DIV;
+							div.source_type = IsFootnoteLabel(label) ? "footnote" : "citation";
+							div.id = label;
+							div.level = depth;
+							blocks_.push_back(std::move(div));
+							Run(i + 1, end, depth + 1,
+							    end > i + 1 ? MinIndent(i + 1, end, line.indent + 1) : line.indent + 1, seed);
+						}
+						i = end - 1;
+						continue;
 					}
 				}
 				// A COMMENT'S BODY is the indented run that starts on the VERY NEXT
@@ -427,19 +570,7 @@ private:
 				// -- the `..` + blank idiom. Measured against pandoc; before #64 the
 				// body leaked into the document as prose.
 				if (i + 1 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].indent > line.indent) {
-					size_t end = std::min(IndentedRun(i + 1, line.indent), to);
-					// A FOOTNOTE OR CITATION BODY IS DOCUMENT TEXT, not commentary. The
-					// scanner files
-					// `.. [1]` and `.. [CIT]` under COMMENT with every other
-					// non-directive `..`, so the label is what tells them apart. pandoc
-					// carries the body as a Note; panduck keeps it as prose at this
-					// depth, which is what it emitted before #64. Dropping it was the
-					// first cut of #64, and only the word-loss guard noticed.
-					if (!line.text.empty() && line.text[0] == '[') {
-						flush();
-						Run(i + 1, end, depth, MinIndent(i + 1, end, line.indent + 1));
-					}
-					i = end - 1;
+					i = std::min(IndentedRun(i + 1, line.indent), to) - 1;
 				}
 				continue; // produces nothing, and must not fall through as prose
 			}
@@ -906,6 +1037,9 @@ std::vector<Block> ReadRst(const std::string &src) {
 			child.element_order = order++;
 			if (!inl.href.empty()) {
 				child.attributes["href"] = inl.href;
+			}
+			if (!inl.id.empty()) {
+				child.attributes["id"] = inl.id;
 			}
 			rows.push_back(std::move(child));
 		}

@@ -695,6 +695,36 @@ SELECT panduck_blocks_to_pandoc_blocks([
 ----
 [{"t":"Para","c":[{"t":"Cite","c":[[],[{"t":"Str","c":"cited work"}]]}]}]
 
+# A FOOTNOTE BODY IS EXPORTED ONCE, inside its Note (#85). The rst reader emits shape 2: the
+# reference is a `note` whose content is the body text, with attributes['id'] = the label,
+# and the body is also a `div` with source_type 'footnote' and the same id. Exporting both
+# would put the body in the document twice; pandoc gives it only inside the Note. So the
+# writer drops a footnote div that a note references.
+query III
+WITH j AS (SELECT panduck_blocks_to_pandoc_blocks(list(b ORDER BY b.element_order)) AS x
+           FROM read_rst_blocks_string(E'Text [1]_ here.\n\n.. [1] The footnote body.\n') b)
+SELECT len(string_split(x, 'The footnote body.')) - 1, x LIKE '%"Note"%', x LIKE '%"Div"%' FROM j;
+----
+1	true	false
+
+# CONTROL: a footnote body that NO note references keeps its div, because nothing else
+# carries its words.
+query II
+WITH j AS (SELECT panduck_blocks_to_pandoc_blocks(list(b ORDER BY b.element_order)) AS x
+           FROM read_rst_blocks_string(E'No reference here.\n\n.. [5] An orphan body.\n') b)
+SELECT len(string_split(x, 'An orphan body.')) - 1, x LIKE '%"Div"%' FROM j;
+----
+1	true
+
+# CONTROL: a CITATION body keeps its div. pandoc keeps a citation body visible at the end of
+# the document, and the cite anchor carries only the label.
+query III
+WITH j AS (SELECT panduck_blocks_to_pandoc_blocks(list(b ORDER BY b.element_order)) AS x
+           FROM read_rst_blocks_string(E'See [CIT]_.\n\n.. [CIT] A citation body.\n') b)
+SELECT len(string_split(x, 'A citation body.')) - 1, x LIKE '%"Cite"%', x LIKE '%"Div"%' FROM j;
+----
+1	true	true
+
 # CONTROL: the placeholder arm still catches a type that genuinely has no constructor, so
 # this fix stays narrow and the no-silent-drops rule keeps its visible marker.
 query I

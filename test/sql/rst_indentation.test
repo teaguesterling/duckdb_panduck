@@ -339,23 +339,35 @@ SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
 # EXPLICIT MARKUP IS NOT ALL COMMENTARY. The scanner files every non-directive `..` line under
 # COMMENT, but a FOOTNOTE or CITATION body is document text. The first cut of #64 dropped it
 # with real comments' bodies, and the word-loss guard caught it on constructs.rst ("body") --
-# these 31 targeted assertions had not. pandoc carries the body as a Note; panduck keeps it
-# as prose at the current depth, which is what it emitted before #64.
+# these 31 targeted assertions had not.
+#
+# SINCE #85 PART 1 (shape 2, ruled 2026-11-11) the body is a `div` with source_type
+# 'footnote' or 'citation' and attributes['id'] = the label, its paragraphs one level down.
+# The reference `[1]_` is an inline `note` (or `cite`) with the same id, so the literal
+# marker is gone from the prose. A footnote anchor carries its body text; a citation anchor
+# carries its label. The body words are still all here, which is what #64 guarded.
 # ---------------------------------------------------------------------------------------
 
-query III
-SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
   E'Text with a footnote. [1]_\n\n.. [1]\n   The footnote body.\n') ORDER BY element_order;
 ----
-1	paragraph	Text with a footnote. [1]_
-1	paragraph	The footnote body.
+1	paragraph	(empty)	(empty)
+2	text	Text with a footnote.	(empty)
+2	note	The footnote body.	1
+1	div	(empty)	1
+2	paragraph	The footnote body.	(empty)
 
-query III
-SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
   E'See [CIT2002]_.\n\n.. [CIT2002]\n   A citation body.\n') ORDER BY element_order;
 ----
-1	paragraph	See [CIT2002]_.
-1	paragraph	A citation body.
+1	paragraph	(empty)	(empty)
+2	text	See	(empty)
+2	cite	CIT2002	CIT2002
+2	text	.	(empty)
+1	div	(empty)	CIT2002
+2	paragraph	A citation body.	(empty)
 
 # A hyperlink target's body is its URL, resolved into the link by pandoc and never text of its
 # own. Dropped -- where before #64 the URL leaked into the document as a paragraph.
@@ -373,26 +385,34 @@ SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
 # reads it.
 # ---------------------------------------------------------------------------------------
 
-query III
-SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
   E'Text with a footnote. [1]_\n\n.. [1] The footnote body.\n') ORDER BY element_order;
 ----
-1	paragraph	Text with a footnote. [1]_
-1	paragraph	The footnote body.
+1	paragraph	(empty)	(empty)
+2	text	Text with a footnote.	(empty)
+2	note	The footnote body.	1
+1	div	(empty)	1
+2	paragraph	The footnote body.	(empty)
 
 # ONE paragraph, not the label line and its continuation as two.
-query III
-SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
   E'.. [2] The footnote body\n   continues here.\n') ORDER BY element_order;
 ----
-1	paragraph	The footnote body continues here.
+1	div	(empty)	2
+2	paragraph	The footnote body continues here.	(empty)
 
-query III
-SELECT level, element_type, coalesce(content, '') FROM read_rst_blocks_string(
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
   E'See [CIT2002]_.\n\n.. [CIT2002] A citation body.\n') ORDER BY element_order;
 ----
-1	paragraph	See [CIT2002]_.
-1	paragraph	A citation body.
+1	paragraph	(empty)	(empty)
+2	text	See	(empty)
+2	cite	CIT2002	CIT2002
+2	text	.	(empty)
+1	div	(empty)	CIT2002
+2	paragraph	A citation body.	(empty)
 
 # THE CONTROL that keeps the fix honest: an ordinary comment still produces nothing, whether
 # its text is on the label line or indented below it. Only a `[` label makes it document text.
@@ -409,7 +429,24 @@ query III
 SELECT count(*), count(*) FILTER (WHERE element_type = 'paragraph'), count(*) FILTER (WHERE element_type = 'heading')
 FROM read_rst_blocks('test/fixtures/footnotes.rst');
 ----
-9	8	1
+18	8	1
+
+# THE JOIN shape 2 exists for (#85): each reference in the fixture finds its body by id.
+query III
+WITH r AS (SELECT * FROM read_rst_blocks('test/fixtures/footnotes.rst'))
+SELECT a.element_type, a.attributes['id'], b.attributes['source_type']
+FROM r a JOIN r b ON a.attributes['id'] = b.attributes['id']
+WHERE a.kind = 'inline' AND b.element_type = 'div'
+ORDER BY a.element_order;
+----
+note	1	footnote
+cite	CIT2002	citation
+
+# And no reference survives as literal `[label]_` text anywhere in the document.
+query I
+SELECT count(*) FROM read_rst_blocks('test/fixtures/footnotes.rst') WHERE content LIKE '%]\_%' ESCAPE '\';
+----
+0
 
 # ---------------------------------------------------------------------------------------
 # AN ENUMERATED SECTION TITLE IS A HEADING (#84, #87). `1. Table of Contents` under an

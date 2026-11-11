@@ -16,6 +16,9 @@ struct RstInline {
 	std::string element_type;
 	std::string content;
 	std::string href;
+	//! note and cite only: the label that joins a reference to its body (#85).
+	//! An auto-numbered `#` or `*` label is numbered in document order.
+	std::string id;
 	int level = 2;
 };
 
@@ -27,7 +30,9 @@ struct RstBlock {
 	std::string language;
 	std::string source_type; //!< div only: the directive name it came from
 	std::string encoding;
-	std::string id; //!< heading only: the pandoc-style anchor slug (#85)
+	//! A heading's pandoc-style anchor slug, or a footnote or citation body's
+	//! label (#85).
+	std::string id;
 	std::string list_start, number_style, number_delim;
 	int heading_level = 0;
 	int level = 1;

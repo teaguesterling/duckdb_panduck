@@ -242,5 +242,38 @@ inline DefaultMacro MakeDefaultMacro(const PanduckMacro &src, std::string &stora
 	return out;
 }
 
+//! The ClientContext of a scalar function's ExpressionState, across the v2.0.0 /
+//! DuckDB main boundary (#173).
+//!
+//! v2.0.0's `ExpressionState::GetContext()` returns `ClientContext &`. DuckDB main
+//! (duckdb/duckdb 7cda1961d02, 2026-11-06, "Use Context instead of ClientContext in
+//! more expression code") changed it to return the new `duckdb::Context`, and added
+//! `GetClientContext()` for the old meaning. A `Context` does not convert to a
+//! `ClientContext &`, so every panduck call that passed `state.GetContext()` on to an
+//! API taking a ClientContext stopped compiling.
+//!
+//! Same probe as SetNullHandling above: the `int` overload exists only where
+//! `GetClientContext()` does, so no version is written down.
+//!
+//! THE GREP THAT FINDS AN UNCONVERTED LINE: `grep -rn '\.GetContext()' src/*.cpp`.
+//! It should find nothing. A line that still compiles on main, because its callee
+//! takes a `Context`, is still converted: one rule is easier to keep than a list of
+//! the safe exceptions.
+template <typename STATE>
+auto ClientContextOfCompat(STATE &state, int) -> decltype(state.GetClientContext()) {
+	return state.GetClientContext();
+}
+
+template <typename STATE>
+ClientContext &ClientContextOfCompat(STATE &state, long) {
+	return state.GetContext();
+}
+
+//! Call this rather than `state.GetContext()`: `ClientContextOf(state)`.
+template <typename STATE>
+ClientContext &ClientContextOf(STATE &state) {
+	return ClientContextOfCompat(state, 0);
+}
+
 } // namespace panduck
 } // namespace duckdb

@@ -3188,7 +3188,7 @@ void PandocBlockConvert::ReadPandocAstFun(DataChunk &args, ExpressionState &stat
 		// have been the one file-reading function that ignores httpfs, s3 and
 		// every other registered filesystem. The policy gate is
 		// read_pandoc_blocks' too: one reader, one switch.
-		auto &context = state.GetContext();
+		auto &context = panduck::ClientContextOf(state);
 		readers::RequireReaderEnabled(context, "pandoc");
 		string json = readers::ReadFileThroughVFS(context, path_val.GetValue<string>(), "read_pandoc_ast");
 
@@ -3416,7 +3416,7 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		string file_path = path_val.GetValue<string>();
 
 		if (blocks_val.IsNull()) {
-			WriteFileThroughVFS(state.GetContext(), file_path,
+			WriteFileThroughVFS(panduck::ClientContextOf(state), file_path,
 			                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":{},\"blocks\":[]}");
 			result.SetValue(i, Value(true));
 			continue;
@@ -3438,7 +3438,7 @@ static void WritePandocAstFun(DataChunk &args, ExpressionState &state, Vector &r
 		// you wrote the file.
 		string meta_json = BuildMetaJson(blocks_list);
 
-		WriteFileThroughVFS(state.GetContext(), file_path,
+		WriteFileThroughVFS(panduck::ClientContextOf(state), file_path,
 		                    "{\"pandoc-api-version\":" + api_version + ",\"meta\":" + meta_json +
 		                        ",\"blocks\":" + blocks_json + "}");
 		result.SetValue(i, Value(true));

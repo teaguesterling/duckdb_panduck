@@ -103,7 +103,7 @@ void PandocScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 //! panduck_pandoc_ast_to_blocks and, since converter handoff step 4, as the bare
 //! `pandoc_ast_to_blocks` that duck_block_utils used to own.
 static void PandocAstToBlocksFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+	auto &context = panduck::ClientContextOf(state);
 	readers::RequireReaderEnabled(context, "pandoc");
 	UnifiedVectorFormat input;
 	args.data[0].ToUnifiedFormat(args.size(), input);

@@ -1,0 +1,80 @@
+# name: test/sql/doc_reader.test
+# description: doc_reader and doc_reader_blocks, reading mode taken from duckeye (ask 5)
+# group: [sql]
+
+#
+# READING MODE REMOVES NAMED PAGE STRUCTURE, never content judged to be junk (cordexa's
+# rule). webbed gives <header>, <nav>, <main>, <article>, <aside> and <footer> as `section`
+# blocks with attributes['role']. Kept: the <main>, else every <article>, else everything.
+# Dropped from that: nav and aside, and a header or footer unless it is inside an article.
+# Metadata keeps title, author and description.
+#
+# reader_chrome.html is duckeye's own fixture (test.sh, "reader mode"), so the rows below
+# are what duckeye_reader returns on it: measured on duckeye feat/reader-mode d959ad3.
+
+require panduck
+
+statement ok
+INSTALL webbed FROM community;
+
+statement ok
+LOAD webbed;
+
+# A <main> exists, so only its subtree stays. The article's own <header> (the byline) is
+# inside the article, so it stays. The page header, nav, aside, footer and the viewport
+# <meta> go. Each row keeps its own element_order.
+query IIIII
+SELECT kind, element_type, coalesce(content, ''), level,
+       coalesce(attributes['role'], attributes['key'], '')
+FROM doc_reader('test/fixtures/reader_chrome.html');
+----
+block	section	(empty)	1	main
+block	section	(empty)	2	article
+block	section	(empty)	3	header
+block	paragraph	By the byline	4	(empty)
+block	heading	Article title	3	(empty)
+block	paragraph	Article body text.	3	(empty)
+block	heading	Second part	3	(empty)
+block	paragraph	More body.	3	(empty)
+value	string	Chrome Test	1	title
+value	string	A. Writer	1	author
+
+query I
+SELECT list(element_order) FROM doc_reader('test/fixtures/reader_chrome.html');
+----
+[6, 7, 8, 9, 10, 11, 12, 13, 18, 20]
+
+# THE BLOCKS VARIANT GIVES THE SAME ROWS, for blocks that never were a file.
+query I
+WITH d AS (SELECT list(b ORDER BY b.element_order) AS blocks
+           FROM read_panduck_doc('test/fixtures/reader_chrome.html') b),
+     a AS (SELECT * FROM doc_reader_blocks((SELECT blocks FROM d))),
+     p AS (SELECT * FROM doc_reader('test/fixtures/reader_chrome.html'))
+SELECT (SELECT count(*) FROM a) = 10
+   AND (SELECT count(*) FROM (SELECT * FROM a EXCEPT ALL SELECT * FROM p)) = 0
+   AND (SELECT count(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM a)) = 0;
+----
+true
+
+# NO <main>: every <article> stays, with a footer INSIDE an article. The nav, the aside
+# and the page footer go.
+query I
+SELECT string_agg(content, ' | ' ORDER BY element_order)
+FROM doc_reader('test/fixtures/reader_articles.html') WHERE content IS NOT NULL;
+----
+One | First article text. | Second article text. | Article footnote line | Two Articles
+
+# NO NAMED SECTIONS: the whole document passes through. Only metadata other than title,
+# author and description is removed.
+query I
+SELECT (SELECT count(*) FROM doc_reader('test/fixtures/sections.html'))
+     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/sections.html')
+        WHERE kind <> 'value' OR attributes['key'] IN ('title', 'author', 'description'));
+----
+true
+
+# One document only. element_order restarts per document, so a glob would interleave.
+statement error
+SELECT * FROM doc_reader('test/fixtures/reader_*.html');
+----
+doc_reader takes a single document

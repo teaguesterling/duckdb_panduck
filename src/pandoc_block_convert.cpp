@@ -3365,7 +3365,7 @@ static void PandocAstJsonFun(DataChunk &args, ExpressionState &state, Vector &re
 	                           to_string(pandoc_ast::API_VERSION_MINOR) + "," +
 	                           to_string(pandoc_ast::API_VERSION_PATCH) + "]";
 	UnifiedVectorFormat blocks_data;
-	args.data[0].ToUnifiedFormat(args.size(), blocks_data);
+	args.data[0].ToUnifiedFormat(blocks_data);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto idx = blocks_data.sel->get_index(i);
 		if (!blocks_data.validity.RowIsValid(idx)) {

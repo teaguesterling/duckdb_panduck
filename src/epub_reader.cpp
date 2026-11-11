@@ -125,7 +125,7 @@ void EpubScan(ClientContext &, TableFunctionInput &input, DataChunk &output) {
 		state.offset++;
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetCardinalityUnsafe(count);
 }
 
 } // namespace

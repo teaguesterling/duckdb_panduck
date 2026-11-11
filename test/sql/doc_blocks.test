@@ -55,9 +55,9 @@ FROM read_panduck_doc('test/fixtures/constructs.docx') b;
 foreach sec Alpha alpha-one Beta nosuch
 
 query I
-SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '${sec}') s)
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '{sec}') s)
        IS NOT DISTINCT FROM
-       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '${sec}') s);
+       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '{sec}') s);
 ----
 true
 
@@ -66,9 +66,9 @@ endloop
 foreach sec Alph One nosuch
 
 query I
-SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '${sec}', match := 'contains') s)
+SELECT (SELECT list(s ORDER BY s.element_order) FROM doc_section('test/fixtures/search_sections.textile', '{sec}', match := 'contains') s)
        IS NOT DISTINCT FROM
-       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '${sec}', match := 'contains') s);
+       (SELECT list(s ORDER BY s.element_order) FROM doc_section_blocks((SELECT blocks FROM d), '{sec}', match := 'contains') s);
 ----
 true
 

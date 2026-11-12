@@ -1,0 +1,45 @@
+# name: test/sql/zip_descriptor64.test
+# description: a DOCX whose ZIP entries use 8-byte data descriptors without a Zip64 extra reads like the ordinary one
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS. panduck's ZIP layer (libpanduck/src/zip_container.cpp) is moving from
+# miniz to minizip-ng, the library duckdb-excel uses, so that a static link holding both
+# extensions has one zip library rather than two clashing `mz_` symbol sets.
+#
+# duckdb/duckdb-excel#110 (open on 2026-11-12) reports that minizip-ng rejects a valid
+# ZIP in one specific shape: flag 0x0008 local headers with zero sizes, data descriptors
+# whose sizes are 8 bytes wide, and no Zip64 extra field anywhere. unzip, Python zipfile
+# and LibreOffice read such files. miniz reads this fixture (measured before the move).
+# The move must not trade that away.
+#
+# descriptor64.docx is constructs.docx with the SAME members re-containered into that
+# shape by test/fixtures/make_descriptor64_docx.py. So the assertion is equality with the
+# ordinary file, not a pinned snapshot: any difference is the container layer's fault.
+# ---------------------------------------------------------------------------
+
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/descriptor64.docx')
+----
+52
+
+# Every block identical to the ordinary container's, every column, in order.
+query I
+SELECT count(*) FROM (
+    SELECT * FROM read_docx_blocks('test/fixtures/descriptor64.docx')
+    EXCEPT
+    SELECT * FROM read_docx_blocks('test/fixtures/constructs.docx')
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+    SELECT * FROM read_docx_blocks('test/fixtures/constructs.docx')
+    EXCEPT
+    SELECT * FROM read_docx_blocks('test/fixtures/descriptor64.docx')
+)
+----
+0

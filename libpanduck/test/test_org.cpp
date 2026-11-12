@@ -51,6 +51,8 @@ void RunOrgTests() {
 	if (heading) {
 		CHECK_EQ(Content(*heading), std::string("Heading"));
 		CHECK_EQ(Attr(*heading, V::ATTR_HEADING_LEVEL), std::string("1"));
+		// The anchor (#85): pandoc's slug, and a :CUSTOM_ID: directly below wins.
+		CHECK_EQ(Attr(*heading, "id"), std::string("heading"));
 		CHECK_EQ(heading->level, 1);
 		CHECK_EQ(heading->encoding, Vocab(V::ENCODING_TEXT));
 	}

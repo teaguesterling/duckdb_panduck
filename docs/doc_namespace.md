@@ -215,13 +215,18 @@ libpanduck consumer is #164.
 `attributes['id']` as written: no wildcard, no escape, case-sensitive. A slug is a value the
 caller has or does not have, so a part of one is not a request.
 
-The id is the one the reader set. panduck derives no slug for a heading that has none.
-Measured on `test/fixtures/` on 2026-11-10:
+The id is the one the reader set. `doc_section` derives no slug for a heading that has none.
+A reader sets pandoc's id: the author's explicit id where the format has one (org
+`:CUSTOM_ID:`, latex `\label`, textile `h1(#id).`), else pandoc's slug of the title.
+Measured on `test/fixtures/` on 2026-11-11, against pandoc 3.1.3:
 
 | readers | headings carry `attributes['id']` |
 |---|---|
-| markdown, html, rst, textile | yes |
-| docx, odt, org, latex, rtf, epub | no |
+| markdown, html, rst, textile, mediawiki, docx, odt, org, latex | yes |
+| rtf, epub | no, and pandoc gives none either |
+
+Two titles that slug alike get the SAME id. pandoc writes `a` and then `a-1`. Teague ruled on
+2026-11-11 that the suffix is a separate change (#85).
 
 For the second group, the id arm never matches, and only the title can. duckeye's own heading
 list (`duck_blocks_headings_structs`) also gives an empty id for those headings, so the two

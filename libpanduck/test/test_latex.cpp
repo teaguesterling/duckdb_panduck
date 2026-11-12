@@ -91,6 +91,27 @@ void RunLatexTests() {
 
 	const std::vector<::panduck::Block> blank = ::panduck::latex::ReadLatex("\n\n");
 	CHECK_EQ(blank.size(), static_cast<size_t>(0));
+
+	// The anchor (#85). Each expected id was measured against pandoc 3.1.3: the
+	// slug of the title, replaced by the FIRST \label that directly follows, and
+	// left alone by a \label inside the next paragraph.
+	const std::vector<::panduck::Block> slug = ::panduck::latex::ReadLatex("\\section{2019 Annual Report!}\n");
+	CHECK_EQ(slug.size(), static_cast<size_t>(1));
+	if (!slug.empty()) {
+		CHECK_EQ(Attr(slug[0], "id"), std::string("annual-report"));
+	}
+	const std::vector<::panduck::Block> labelled =
+	    ::panduck::latex::ReadLatex("\\section{Lab}\n\\label{a}\\label{b}\n");
+	CHECK(!labelled.empty());
+	if (!labelled.empty()) {
+		CHECK_EQ(Attr(labelled[0], "id"), std::string("a"));
+	}
+	const std::vector<::panduck::Block> in_para =
+	    ::panduck::latex::ReadLatex("\\section{Lab}\nText \\label{inpara}.\n");
+	CHECK(!in_para.empty());
+	if (!in_para.empty()) {
+		CHECK_EQ(Attr(in_para[0], "id"), std::string("lab"));
+	}
 }
 
 } // namespace panduck_test

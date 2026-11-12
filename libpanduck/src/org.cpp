@@ -2,6 +2,7 @@
 
 #include "panduck/block_json.hpp"
 #include "panduck/org_scanner.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 
 // <cctype> (isspace) and <utility> (std::move, std::pair) are NAMED HERE even
@@ -216,6 +217,9 @@ public:
 				while (j < lines.size() && lines[j].kind != LineKind::DRAWER_END && lines[j].kind != LineKind::BLANK) {
 					j++;
 				}
+				if (line.key == "PROPERTIES" && i > 0 && lines[i - 1].kind == LineKind::HEADING) {
+					HeadingCustomId(lines, i + 1, j);
+				}
 				i = j;
 				continue;
 			}
@@ -324,7 +328,48 @@ private:
 			b.content = all;
 			b.inlines = std::move(runs);
 		}
+		// THE ANCHOR (#85), pandoc's identifier from the flattened title, so `*Bold*
+		// Title` is `bold-title`. A :CUSTOM_ID: in the drawer directly below replaces
+		// it -- see HeadingCustomId. slugify.hpp holds the rule.
+		if (!b.content.empty()) {
+			b.attributes["id"] = HeadingSlug(b.content, '-');
+		}
 		blocks_.push_back(std::move(b));
+	}
+
+	//! A :PROPERTIES: drawer DIRECTLY under a heading names that heading's anchor with
+	//! :CUSTOM_ID:, and pandoc takes the author's id over the slug. "Directly" is
+	//! pandoc's rule too, measured: a drawer after body text leaves the slug in place.
+	//! Lines inside a drawer scan as TEXT, already trimmed; the key is case-insensitive
+	//! like every other Org drawer key.
+	void HeadingCustomId(const std::vector<Line> &lines, size_t begin, size_t end) {
+		if (blocks_.empty() || blocks_.back().element_type != DuckBlockVocabulary::TYPE_HEADING) {
+			return;
+		}
+		static const std::string KEY = ":CUSTOM_ID:";
+		for (size_t k = begin; k < end; k++) {
+			const auto &t = lines[k].text;
+			if (lines[k].kind != LineKind::TEXT || t.size() <= KEY.size()) {
+				continue;
+			}
+			bool match = true;
+			for (size_t c = 0; c < KEY.size(); c++) {
+				if (std::toupper(static_cast<unsigned char>(t[c])) != KEY[c]) {
+					match = false;
+					break;
+				}
+			}
+			if (!match) {
+				continue;
+			}
+			auto first = t.find_first_not_of(" \t", KEY.size());
+			if (first == std::string::npos) {
+				continue;
+			}
+			auto last = t.find_last_not_of(" \t");
+			blocks_.back().attributes["id"] = t.substr(first, last - first + 1);
+			return;
+		}
 	}
 
 	void CloseLists(int indent) {

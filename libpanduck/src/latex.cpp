@@ -3,6 +3,7 @@
 #include "panduck/block_json.hpp"
 #include "panduck/latex_macros.hpp"
 #include "panduck/latex_tokenizer.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 
 // INCLUDES NAMED RATHER THAN INHERITED. src/latex_reader.cpp named <map> and
@@ -188,6 +189,13 @@ private:
 	// children without seeing its parent's.
 	std::string pending;
 	std::vector<LatexInline> pending_inlines;
+
+	//! The heading a \label may still name, as an index into `blocks`, or npos.
+	//! pandoc gives a heading the id of the FIRST \label that follows it before any
+	//! text -- measured: `\section{Lab}\label{a}\label{b}` is `a`, and a \label
+	//! inside the next paragraph leaves the slug. Set by EmitHeading, spent by the
+	//! first \label that claims it.
+	size_t label_target = std::string::npos;
 
 	//! Absolute level for a run pushed into the scope currently open. A block
 	//! sits at `depth`, a run directly inside it one deeper, and a run inside
@@ -1257,7 +1265,11 @@ void Parser::EmitHeading(const std::string &name, std::vector<Token> &arg) {
 	block.content = title;
 	block.heading_level = HeadingLevelFor(name, document_class);
 	block.level = depth;
+	// THE ANCHOR (#85), pandoc's identifier from the flattened title. A \label
+	// directly after replaces it; see label_target. slugify.hpp holds the rule.
+	block.id = HeadingSlug(title, '-');
 	blocks.push_back(std::move(block));
+	label_target = blocks.size() - 1;
 }
 
 void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string &name) {
@@ -1333,6 +1345,18 @@ void Parser::ControlWord(std::vector<Token> &toks, size_t &i, const std::string 
 
 	if (entry->disposition == Disposition::DROPPED &&
 	    CaptureMetadata(name, const_cast<std::vector<Token> &>(arg_at(0)))) {
+		return;
+	}
+	// \label STAYS DROPPED as text; it only names the heading it directly follows.
+	// "Directly" means no block and no text in between -- whitespace is the line
+	// break a person writes between \section{...} and \label{...}.
+	if (name == "label" && label_target != std::string::npos && label_target + 1 == blocks.size() &&
+	    pending_inlines.empty() && pending.find_first_not_of(" \t\r\n") == std::string::npos) {
+		auto label = FlattenTrimmed(arg_at(0));
+		if (!label.empty()) {
+			blocks[label_target].id = label;
+		}
+		label_target = std::string::npos;
 		return;
 	}
 
@@ -1627,6 +1651,9 @@ std::vector<Block> ReadLatex(const std::string &src) {
 			// and heading_level 2; the two are different facts and conflating them
 			// renders a heading by where it sits rather than what it is.
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+		}
+		if (!block.id.empty()) {
+			row.attributes["id"] = block.id;
 		}
 		if (!block.key.empty()) {
 			row.attributes[DuckBlockVocabulary::ATTR_KEY] = block.key;

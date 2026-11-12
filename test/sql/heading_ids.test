@@ -1,0 +1,162 @@
+# name: test/sql/heading_ids.test
+# description: org, latex, docx and odt headings carry pandoc's identifier as attributes['id'] (#85)
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY AN ID AT ALL. doc_section matches `content = section OR attributes['id'] = section`,
+# and webbed's renderer writes `<h1 id=...>` whenever the block carries one. rst, textile
+# and mediawiki already emitted the id; these four did not, so the same heading was
+# findable by anchor in one format and not in another, and doc_render html lost the anchor
+# that pandoc's HTML has.
+#
+# EVERY EXPECTED VALUE BELOW WAS MEASURED against pandoc 3.1.3 (`pandoc -t json`, the
+# Header's Attr id), not derived from slugify.hpp. The rule is what they verify.
+#
+# DUPLICATES ARE OUT OF SCOPE. pandoc writes `a` then `a-1`; panduck writes `a` twice in
+# every reader, and Teague ruled on 2026-11-11 that the suffix is a separate change.
+# ---------------------------------------------------------------------------
+
+# ---- org: the slug, and an explicit CUSTOM_ID ------------------------------
+
+query II
+SELECT content, attributes['id'] FROM read_org_blocks('test/fixtures/pandoc.org')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	heading-one
+Heading Two	heading-two
+
+# The slug is taken from the FLATTENED title, so markup contributes nothing.
+query I
+SELECT attributes['id'] FROM read_org_blocks_string(E'* *Bold* Title\n') WHERE element_type = 'heading';
+----
+bold-title
+
+# The AUTHOR'S id wins over the slug: a :CUSTOM_ID: in the drawer directly under the
+# heading. pandoc: ['my-anchor'].
+query I
+SELECT attributes['id'] FROM read_org_blocks_string(
+    E'* Heading\n:PROPERTIES:\n:CUSTOM_ID: my-anchor\n:END:\nBody\n') WHERE element_type = 'heading';
+----
+my-anchor
+
+# Surrounding space is not part of the id. pandoc: ['spaced'].
+query I
+SELECT attributes['id'] FROM read_org_blocks_string(
+    E'* Heading\n:PROPERTIES:\n:CUSTOM_ID:  spaced  \n:END:\n') WHERE element_type = 'heading';
+----
+spaced
+
+# A drawer AFTER body text belongs to no heading. pandoc: ['heading'].
+query I
+SELECT attributes['id'] FROM read_org_blocks_string(
+    E'* Heading\nBody\n:PROPERTIES:\n:CUSTOM_ID: late\n:END:\n') WHERE element_type = 'heading';
+----
+heading
+
+# ---- latex: the slug, and an explicit \label ------------------------------
+
+# pandoc's own LaTeX: \hypertarget{heading-one}{\section{Heading One}\label{heading-one}}.
+query II
+SELECT content, attributes['id'] FROM read_latex_blocks('test/fixtures/pandoc.tex')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	heading-one
+Heading Two	heading-two
+
+# A person's LaTeX: \section{Heading One} then \label{sec:one} on the next line, and a
+# \subsection with no label. pandoc: ['sec:one', 'heading-two'].
+query II
+SELECT content, attributes['id'] FROM read_latex_blocks('test/fixtures/handwritten.tex')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	sec:one
+Heading Two	heading-two
+
+query I
+SELECT attributes['id'] FROM read_latex_blocks_string(E'\\section{\\textbf{Bold} Title}\n')
+WHERE element_type = 'heading';
+----
+bold-title
+
+# The leading run up to the first letter is skipped, and punctuation is dropped.
+query I
+SELECT attributes['id'] FROM read_latex_blocks_string(E'\\section{2019 Annual Report!}\n')
+WHERE element_type = 'heading';
+----
+annual-report
+
+query I
+SELECT attributes['id'] FROM read_latex_blocks_string(E'\\section*{Starred}\n')
+WHERE element_type = 'heading';
+----
+starred
+
+# A \label inside the following PARAGRAPH labels the paragraph's position, not the
+# heading. pandoc: ['lab'].
+query I
+SELECT attributes['id'] FROM read_latex_blocks_string(E'\\section{Lab}\nText \\label{inpara}.\n')
+WHERE element_type = 'heading';
+----
+lab
+
+# The FIRST of two labels wins. pandoc: ['a'].
+query I
+SELECT attributes['id'] FROM read_latex_blocks_string(E'\\section{Lab}\\label{a}\\label{b}\n')
+WHERE element_type = 'heading';
+----
+a
+
+# ---- docx and odt: the slug -----------------------------------------------
+
+query II
+SELECT content, attributes['id'] FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	heading-one
+Heading Two	heading-two
+Heading Three	heading-three
+
+query II
+SELECT content, attributes['id'] FROM read_docx_blocks('test/fixtures/rich.docx')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Rich Document	rich-document
+
+query II
+SELECT content, attributes['id'] FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	heading-one
+Heading Two	heading-two
+Heading Three	heading-three
+
+query II
+SELECT content, attributes['id'] FROM read_odt_blocks('test/fixtures/libreoffice.odt')
+WHERE element_type = 'heading' ORDER BY element_order;
+----
+Heading One	heading-one
+Heading Two	heading-two
+
+# ---- controls: where pandoc gives NO id, panduck gives none either ---------
+
+# pandoc 3.1.3 reads these headings with an empty id. They stay without one.
+query I
+SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+----
+0
+
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+----
+0
+
+# ---- the consumer: doc_section finds a heading by its anchor ---------------
+
+query I
+SELECT count(*) > 0 FROM doc_section('test/fixtures/constructs.docx', 'heading-two');
+----
+true

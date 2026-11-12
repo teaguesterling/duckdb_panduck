@@ -205,6 +205,54 @@ void CheckNonArchiveReports() {
 	CHECK(!empty_zip.IsOpen());
 }
 
+//! A SOURCE THAT COUNTS ITS READS, because over httpfs every ByteSource::Read is
+//! one ranged GET (src/reader_registry.cpp, FileHandleSource). The bytes are right
+//! either way; the request count is what a remote reader pays for.
+class CountingSource : public ::panduck::ByteSource {
+public:
+	explicit CountingSource(const std::string &bytes) : inner(bytes, "counting") {
+	}
+	uint64_t Size() const override {
+		return inner.Size();
+	}
+	size_t Read(void *buffer, size_t nr_bytes, uint64_t offset) override {
+		calls++;
+		return inner.Read(buffer, nr_bytes, offset);
+	}
+	const std::string &Name() const override {
+		return inner.Name();
+	}
+	size_t calls = 0;
+
+private:
+	::panduck::MemorySource inner;
+};
+
+//! THE ZIP LAYER MUST NOT TURN EVERY FIELD INTO A READ. minizip-ng reads headers a
+//! few bytes at a time; passed straight through, opening constructs.docx and
+//! reading three members took 352 ByteSource reads, 348 of them under 64 bytes
+//! (measured 2026-11-12 on 605895c). miniz took 10. duckdb-excel hit the same thing
+//! over httpfs (duckdb/duckdb-excel#114: 2,535 GETs for a 40 KB workbook).
+//!
+//! The bound is the intent, not a snapshot: a small archive costs a handful of
+//! reads, the same order as miniz, never one per header field. 16 leaves room for
+//! the block size to change without the test pinning it.
+void CheckReadsAreBuffered() {
+	const std::string bytes = Slurp(FixturePath("constructs.docx"));
+	CountingSource source(bytes);
+	{
+		::panduck::ZipContainer zip(source);
+		CHECK(zip.IsOpen());
+		std::string document, styles, numbering;
+		CHECK(zip.Read("word/document.xml", document));
+		CHECK(zip.Read("word/styles.xml", styles));
+		CHECK(zip.Read("word/numbering.xml", numbering));
+		CHECK(!document.empty());
+	}
+	CHECK_MSG(source.calls <= 16, "constructs.docx: open + 3 members took " + std::to_string(source.calls) +
+	                                  " ByteSource reads; over httpfs each is one GET");
+}
+
 } // namespace
 
 void RunByteSourceTests() {
@@ -245,6 +293,8 @@ void RunByteSourceTests() {
 		std::string absent;
 		CHECK(!zip.Read("EPUB/text/there-is-no-ch999.xhtml", absent));
 	}
+
+	CheckReadsAreBuffered();
 }
 
 } // namespace panduck_test

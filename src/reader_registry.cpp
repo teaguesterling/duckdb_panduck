@@ -44,30 +44,6 @@ std::string NormalizeExt(const std::string &raw) {
 
 } // namespace
 
-//! The extension of a path, normalized. Pure string work -- no I/O, so
-//! panduck_can_read() answers for a file that does not exist.
-//! Drop a trailing `@<revision>` from a git URI's basename.
-//!
-//! A COPY OF duck_tails' GRAMMAR, and a wrong one: it cuts at the last `@`, so
-//! `a.md@HEAD@{0}` keeps `@HEAD` (#147). It survives only for a path the VFS did
-//! not canonicalize -- see ExtOfPath(ClientContext &, ...) -- and goes once a
-//! duck_tails with the CanonicalizePath override has shipped (#148, stage 2).
-//!
-//! Only when the `@` falls after the last dot, so the revision goes and a filename
-//! that merely contains an `@` keeps its extension: `Doc.md@12345` -> `Doc.md`,
-//! while `Doc@v1.md` is returned untouched.
-static std::string StripGitRevision(const std::string &base) {
-	auto at = base.find_last_of('@');
-	if (at == std::string::npos) {
-		return base;
-	}
-	auto dot = base.find_last_of('.');
-	if (dot != std::string::npos && at < dot) {
-		return base;
-	}
-	return base.substr(0, at);
-}
-
 //! Drop a `?query` or `#fragment` from an http(s) URI's basename. Either may come
 //! first, so this cuts at whichever appears earliest.
 static std::string StripUrlQuery(const std::string &base) {
@@ -106,9 +82,7 @@ static bool IsGitUri(const std::string &path) {
 	return path.rfind("git://", 0) == 0;
 }
 
-//! `as_written` is false only for a git URI the VFS canonicalized, whose
-//! revision is already in the query and so needs no git grammar.
-static std::string ExtOf(std::string path, bool as_written) {
+static std::string ExtOf(std::string path) {
 	// A URL SCHEME IS AN EXTENSION FOR REGISTRY PURPOSES.
 	// `zim://wiki.zim/A/Article` names ONE ARTICLE inside an archive, and its
 	// trailing segment usually has no dot at all -- so extension lookup answers
@@ -155,15 +129,17 @@ static std::string ExtOf(std::string path, bool as_written) {
 	// measurement says they need no entry, and an entry nothing needs is a claim
 	// nothing checks.
 	//
-	// WHY THIS IS PER SCHEME AND NOT ONE BLANKET RULE: `@` is legal in a local
-	// filename, so stripping it everywhere would turn `my@file.md` into `my` and
-	// lose the extension. Scope it to git:// and require the `@` to fall AFTER the
-	// last dot, so a revision is removed and `git://Doc@v1.md` is not.
+	// WHY THIS IS PER SCHEME AND NOT ONE BLANKET RULE: `?` and `#` are legal in a
+	// local filename, so cutting at them everywhere would turn `notes?v1.md` into
+	// `notes` and lose the extension.
+	//
+	// A git:// `@rev` IS NOT CUT HERE AT ALL. Where the revision ends is duck_tails'
+	// grammar, read through the VFS -- see ExtOfPath(ClientContext &, ...). panduck's
+	// own copy of it, StripGitRevision, cut at the last `@` and so broke
+	// `a.md@HEAD@{0}` (#147); it was deleted once duck_tails shipped the
+	// CanonicalizePath override (#148, stage 2).
 	if (scheme_cleaner && !scheme_cleaner->whole_path) {
 		base = scheme_cleaner->clean(base);
-	}
-	if (as_written && IsGitUri(path)) {
-		base = StripGitRevision(base);
 	}
 
 	auto dot = base.find_last_of('.');
@@ -173,8 +149,10 @@ static std::string ExtOf(std::string path, bool as_written) {
 	return NormalizeExt(base.substr(dot));
 }
 
+//! The extension of a path, normalized. Pure string work -- no I/O, so
+//! panduck_can_read() answers for a file that does not exist.
 std::string ExtOfPath(const std::string &path) {
-	return ExtOf(path, true);
+	return ExtOf(path);
 }
 
 //! A GIT URI'S REVISION IS duck_tails' GRAMMAR, NOT OURS, so it is read through
@@ -200,7 +178,7 @@ std::string ExtOfPath(ClientContext &context, const std::string &path) {
 			auto canonical = FileSystem::GetFileSystem(context).CanonicalizePath(path);
 			if (path.find("?ref=") == std::string::npos && IsGitUri(canonical) &&
 			    canonical.find("?ref=") != std::string::npos) {
-				return ExtOf(canonical, false);
+				return ExtOf(canonical);
 			}
 		} catch (std::exception &) {
 		}

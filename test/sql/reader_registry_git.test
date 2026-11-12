@@ -1,0 +1,56 @@
+# name: test/sql/reader_registry_git.test
+# description: a git:// URI's reader, with duck_tails loaded to parse its revision (#148)
+# group: [sql]
+
+#
+# WHY THIS FILE LOADS duck_tails. panduck has no git grammar of its own (#148, stage 2):
+# ExtOfPath hands a git:// path to the VFS, duck_tails' CanonicalizePath moves an `@rev`
+# into `?ref=` (duck_tails#68, shipped in 1.9.0), and the `?ref=` cut leaves the path.
+# reader_registry.test runs without duck_tails and so sees only the as-written path. This
+# file is the half that sees the canonical one.
+#
+# THESE ASSERTIONS PIN THE SERVED duck_tails, not a panduck commit. Written against
+# duck_tails 1.9.0 (2b20b7d); any duck_tails with the CanonicalizePath override
+# (duck_tails#68) gives the same answers. If this file goes red with no panduck
+# commit, check what the community registry serves for duck_tails first.
+#
+# UNGATED. duck_tails excludes only the wasm platforms, and CI builds the wasm extension
+# but never runs this suite on it (MainDistributionPipeline.yml, wasm-symbol-check).
+
+require panduck
+
+statement ok
+INSTALL duck_tails FROM community;
+
+statement ok
+LOAD duck_tails;
+
+# THE ACCEPTANCE CASES FROM #148. A reflog revision is one revision: duck_tails takes the
+# last `@` not followed by `{`. StripGitRevision, the copy stage 2 deleted, cut at the last
+# `@` and answered NULL for both (#147).
+query II
+SELECT panduck_format_for('git://a.md@HEAD@{0}')         AS reflog,
+       panduck_format_for('git://a.md@main@{1.day.ago}') AS reflog_date;
+----
+markdown	markdown
+
+# The deprecated form keeps its reader through duck_tails, with no copy in panduck.
+query II
+SELECT panduck_format_for('git://a.md@HEAD')        AS at_rev,
+       panduck_format_for('git://docs/Doc.md@12345') AS nested_rev;
+----
+markdown	markdown
+
+# AN `@` IN THE NAME AND AN `@rev` AFTER IT. duck_tails splits at the last `@`, so the
+# name keeps its own. The canonical spelling of the same file needs no VFS call at all.
+query II
+SELECT panduck_format_for('git://icon@2x.md@HEAD')     AS at_name_at_rev,
+       panduck_format_for('git://icon@2x.md?ref=HEAD') AS at_name_ref_query;
+----
+markdown	markdown
+
+# The answer only chooses the reader, so it holds for a file that does not exist.
+query I
+SELECT panduck_can_read('git://no/such/file.md@HEAD@{0}');
+----
+true

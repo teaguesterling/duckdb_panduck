@@ -2,9 +2,12 @@
 
 // WHAT IS ACTUALLY USED, named here rather than arriving transitively: int32_t and
 // int64_t from <cstdint>, std::unique_ptr from <memory> (also reached through the
-// header, repeated because this file calls reset()).
+// header, repeated because this file calls reset()), memcpy from <cstring>,
+// std::vector from <vector>.
 #include <cstdint>
+#include <cstring>
 #include <memory>
+#include <vector>
 
 // minizip-ng, the zip library duckdb-excel uses. panduck used miniz until 2026-11-12;
 // the two both define `mz_zip_writer_add_file`, so a static link holding panduck and
@@ -26,12 +29,30 @@ namespace {
 // THE `base` MEMBER COMES FIRST and is a plain `mz_stream`, because minizip-ng
 // casts the `void *stream` it is given to `mz_stream *` to find the vtable.
 //
+// READS GO THROUGH ONE BLOCK BUFFER. minizip-ng reads a zip a few bytes at a time:
+// each header field, each central-directory entry. Over httpfs every
+// ByteSource::Read is one ranged GET, so passing those reads straight through cost
+// 352 reads to open constructs.docx and read three members, against miniz's 10
+// (measured 2026-11-12). duckdb-excel#114/#115 found and fixed the same thing.
+// A read inside the block is a memcpy; a miss refills the block with ONE source
+// read at the current position; a read at least a block long goes straight to the
+// source, so a large member is never copied twice.
+//
+// 1 MiB, as excel's fix chose: most DOCX, ODT and EPUB files then cost one read to
+// open, and the buffer is per open container, not per member.
+//
 // NOTHING HERE MAY THROW: a C frame sits between these callbacks and the caller.
-// ByteSource::Read promises not to throw (byte_source.hpp); the rest is arithmetic.
+// ByteSource::Read promises not to throw (byte_source.hpp); the block is allocated
+// in ZipContainer::Open, before any callback runs, so the rest is arithmetic.
+constexpr size_t kBlockSize = 1 << 20;
+
 struct SourceStream {
 	mz_stream base;
 	ByteSource *source = nullptr;
 	int64_t position = 0;
+	std::vector<char> block;
+	uint64_t block_start = 0;
+	size_t block_len = 0;
 };
 
 SourceStream &Self(void *stream) {
@@ -52,9 +73,44 @@ int32_t SourceRead(void *stream, void *buf, int32_t size) {
 	if (!self.source || size < 0) {
 		return MZ_STREAM_ERROR;
 	}
-	size_t got = self.source->Read(buf, static_cast<size_t>(size), static_cast<uint64_t>(self.position));
-	self.position += static_cast<int64_t>(got);
-	return static_cast<int32_t>(got);
+	char *out = static_cast<char *>(buf);
+	size_t want = static_cast<size_t>(size);
+	uint64_t pos = static_cast<uint64_t>(self.position);
+	const uint64_t end = self.source->Size();
+	size_t total = 0;
+	while (want > 0 && pos < end) {
+		if (pos >= self.block_start && pos < self.block_start + self.block_len) {
+			size_t offset = static_cast<size_t>(pos - self.block_start);
+			size_t n = self.block_len - offset;
+			if (n > want) {
+				n = want;
+			}
+			memcpy(out, self.block.data() + offset, n);
+			out += n;
+			want -= n;
+			pos += n;
+			total += n;
+			continue;
+		}
+		if (want >= self.block.size()) {
+			size_t got = self.source->Read(out, want, pos);
+			if (got == 0) {
+				break;
+			}
+			out += got;
+			want -= got;
+			pos += got;
+			total += got;
+			continue;
+		}
+		self.block_start = pos;
+		self.block_len = self.source->Read(self.block.data(), self.block.size(), pos);
+		if (self.block_len == 0) {
+			break;
+		}
+	}
+	self.position = static_cast<int64_t>(pos);
+	return static_cast<int32_t>(total);
 }
 
 int32_t SourceWrite(void *, const void *, int32_t) {
@@ -165,6 +221,15 @@ void ZipContainer::Open(ByteSource &source) {
 	impl->stream.base.base = nullptr;
 	impl->stream.source = &source;
 	impl->stream.position = 0;
+	impl->stream.block_start = 0;
+	impl->stream.block_len = 0;
+	// The one allocation, made here so that no callback allocates. A failed
+	// allocation leaves IsOpen() false rather than escaping the constructor.
+	try {
+		impl->stream.block.resize(kBlockSize);
+	} catch (...) {
+		return;
+	}
 	impl->reader = mz_zip_reader_create();
 	if (!impl->reader) {
 		return;

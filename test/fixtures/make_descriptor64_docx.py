@@ -51,22 +51,37 @@ def build() -> bytes:
         crc = zlib.crc32(data) & 0xFFFFFFFF
         offset = len(out)
         # Local header: version 45, flag 0x0008, method 8, crc/sizes 0, no extra.
-        out += struct.pack("<IHHHHHIIIHH", 0x04034B50, 45, 0x0008, 8, DOS_TIME, DOS_DATE,
-                           0, 0, 0, len(name_b), 0)
+        out += struct.pack("<IHHHHHIIIHH", 0x04034B50, 45, 0x0008, 8, DOS_TIME, DOS_DATE, 0, 0, 0, len(name_b), 0)
         out += name_b
         out += comp
         # Data descriptor with 8-byte sizes, the #110 shape.
         out += struct.pack("<IIQQ", 0x08074B50, crc, len(comp), len(data))
         # Central directory: version made 20, needed 20, 32-bit sizes, no extra.
-        central += struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, 0x0008, 8,
-                               DOS_TIME, DOS_DATE, crc, len(comp), len(data),
-                               len(name_b), 0, 0, 0, 0, 0, offset)
+        central += struct.pack(
+            "<IHHHHHHIIIHHHHHII",
+            0x02014B50,
+            20,
+            20,
+            0x0008,
+            8,
+            DOS_TIME,
+            DOS_DATE,
+            crc,
+            len(comp),
+            len(data),
+            len(name_b),
+            0,
+            0,
+            0,
+            0,
+            0,
+            offset,
+        )
         central += name_b
 
     cd_offset = len(out)
     out += central
-    out += struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(members), len(members),
-                       len(central), cd_offset, 0)
+    out += struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(members), len(members), len(central), cd_offset, 0)
     return bytes(out)
 
 

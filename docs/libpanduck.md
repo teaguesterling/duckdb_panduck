@@ -112,10 +112,10 @@ than panduck exposes" coherent rather than contradictory.
 | rst | 996 | **120** | `PANDUCK_WITH_RST` | on |
 | ipynb | 453 | **123** | `PANDUCK_WITH_IPYNB` | on, when a yyjson is found |
 | rtf | 896 | **124** | `PANDUCK_WITH_RTF` | on |
-| odt | 874 | **137** | `PANDUCK_WITH_ODT` | on, when pugixml and miniz are found |
-| docx | 900 | **140** | `PANDUCK_WITH_DOCX` | on, when pugixml and miniz are found |
+| odt | 874 | **137** | `PANDUCK_WITH_ODT` | on, when pugixml and minizip-ng are found |
+| docx | 900 | **140** | `PANDUCK_WITH_DOCX` | on, when pugixml and minizip-ng are found |
 | latex | 1,780 | **144** | `PANDUCK_WITH_LATEX` | on |
-| epub | 1,115 | **145** | `PANDUCK_WITH_EPUB` | on, when pugixml and miniz are found |
+| epub | 1,115 | **145** | `PANDUCK_WITH_EPUB` | on, when pugixml and minizip-ng are found |
 
 **TEN modules, and this table listed six until #132.** rtf, docx, odt and epub
 all moved behind the seam on 2026-10-09 (b6fccc8, fa7ed75, 2462715, 9cec06b) and
@@ -198,7 +198,7 @@ difference is exactly the new files: rtf 20, docx 26, epub 22, odt 26.
 
 `engine` is always compiled and covers `SpecVersion()` and `HasModule()`. The
 default configure turns ipynb, docx, odt, epub and zip OFF, because a bare runner
-has no yyjson, miniz or pugixml. Every module now carries standalone tests. `zip` is
+has no yyjson, minizip-ng or pugixml. Every module now carries standalone tests. `zip` is
 covered by `byte_source`, which reads real archives through `ZipContainer` (#120).
 Quote the tier with any count: a single figure is how
 the old "125 checks" went stale unnoticed.

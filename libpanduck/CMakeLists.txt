@@ -43,7 +43,7 @@ set(PANDUCK_VOCABULARY_DIR
 # panduck/yyjson_compat.hpp, which selects duckdb's namespaced copy for the
 # extension build and a standalone one otherwise. So ipynb now defaults ON in the
 # standalone build whenever a yyjson is found -- and because CMAKE_PREFIX_PATH is
-# mandatory here for miniz and pugixml, that is every run of the documented seam
+# mandatory here for minizip-ng and pugixml, that is every run of the documented seam
 # recipe. The extension build is unaffected either way: it compiles these sources
 # itself with duckdb's yyjson already on the include path.
 set(PANDUCK_YYJSON_INCLUDE_DIR
@@ -70,26 +70,27 @@ if(yyjson_FOUND AND NOT PANDUCK_YYJSON_INCLUDE_DIR)
   message(STATUS "libpanduck: using vcpkg/system yyjson")
 endif()
 
-# miniz IS THE DEPENDENCY CASE yyjson WAS NOT, and the contrast is the whole
-# reason this comment exists next to the one above.
+# minizip-ng IS THE DEPENDENCY CASE yyjson WAS NOT, and the contrast is the whole
+# reason this comment exists next to the one above. (It replaced miniz on
+# 2026-11-12, for the reason vcpkg_ports/README.md gives; the shape is the same.)
 #
 # yyjson could not be reused because DuckDB's copy is VENDORED AND
 # DuckDB-flavoured: its header does `#include "duckdb/common/fast_mem.hpp"` and
 # it lives in `namespace duckdb_yyjson`, so pointing at
 # duckdb/third_party/yyjson/include configures and then fails to compile.
 #
-# MEASURED, rather than assumed by analogy: miniz reaches the extension build
-# through `find_package(miniz CONFIG REQUIRED)` in the ROOT CMakeLists (line
-# ~22), from vcpkg -- `vcpkg.json` lists `miniz` -- and its package files are
-# ordinary vcpkg ones at
-#   <vcpkg_installed>/<triplet>/share/miniz/minizConfig.cmake
-#   <vcpkg_installed>/<triplet>/include/miniz/miniz.h
+# minizip-ng reaches the extension build through `find_package(minizip-ng CONFIG
+# REQUIRED)` in the ROOT CMakeLists, from vcpkg -- `vcpkg.json` lists it, built by
+# the overlay in vcpkg_ports/ -- and its package files are ordinary vcpkg ones at
+#   <vcpkg_installed>/<triplet>/share/minizip-ng/minizip-ngConfig.cmake
+#   <vcpkg_installed>/<triplet>/include/minizip-ng/mz_zip_rw.h
+# with zlib beside it through CMake's FindZLIB.
 # No duckdb/ include, no DuckDB namespace, nothing vendored. So the standalone
 # build can use the same `find_package` the extension does, and unlike yyjson
 # it actually works.
 #
 # NO include-dir-only escape hatch, deliberately, which is the one place this
-# does NOT mirror PANDUCK_YYJSON_INCLUDE_DIR above: miniz is a compiled library,
+# does NOT mirror PANDUCK_YYJSON_INCLUDE_DIR above: minizip-ng is a compiled library,
 # and an include path alone would configure, compile (panduck is STATIC, so it
 # never links) and then fail at the first executable that linked it. A path
 # setting that defers the error to someone else's link line is worse than
@@ -99,17 +100,20 @@ endif()
 # job configures with no toolchain file, so find_package finds nothing and the
 # zip module is simply not built -- exactly what happens to ipynb there. The
 # extension build is unaffected either way; it compiles these sources itself
-# with miniz already resolved.
-find_package(miniz CONFIG QUIET)
-if(miniz_FOUND)
-  message(STATUS "libpanduck: using vcpkg/system miniz")
+# with minizip-ng already resolved.
+find_package(ZLIB QUIET)
+find_package(minizip-ng CONFIG QUIET)
+if(minizip-ng_FOUND AND ZLIB_FOUND)
+  set(_panduck_have_minizip TRUE)
+  message(STATUS "libpanduck: using vcpkg/system minizip-ng")
   set(_zip_default ON)
 else()
   set(_zip_default OFF)
 endif()
-option(PANDUCK_WITH_ZIP "Build the shared ZIP container reader (requires miniz)" ${_zip_default})
+option(PANDUCK_WITH_ZIP "Build the shared ZIP container reader (requires minizip-ng)"
+       ${_zip_default})
 
-# pugixml IS THE SECOND DEPENDENCY OF THE SAME SHAPE AS miniz, and like miniz it
+# pugixml IS THE SECOND DEPENDENCY OF THE SAME SHAPE AS minizip-ng, and like it it
 # is nothing like yyjson. It reaches the extension build through
 # `find_package(pugixml CONFIG REQUIRED)` in the ROOT CMakeLists (line ~21), from
 # vcpkg -- `vcpkg.json` lists `pugixml` -- and its package files are ordinary
@@ -119,7 +123,7 @@ option(PANDUCK_WITH_ZIP "Build the shared ZIP container reader (requires miniz)"
 # building: an unused object is never pulled from a static archive, so a test
 # binary that happens to link proves nothing about whether pugixml resolves.
 #
-# NO include-dir-only escape hatch, for miniz's reason: pugixml is a compiled
+# NO include-dir-only escape hatch, for minizip-ng's reason: pugixml is a compiled
 # library, so a bare include path would configure, compile (panduck is STATIC and
 # never links) and then fail at someone else's link line.
 #
@@ -134,7 +138,7 @@ endif()
 # THE THREE CONTAINER READERS NEED BOTH, so their default is the conjunction. A
 # format module whose default depended on one dependency could be switched on
 # with the other missing and fail at compile; `AND` is the whole of the check.
-if(pugixml_FOUND AND miniz_FOUND)
+if(pugixml_FOUND AND _panduck_have_minizip)
   set(_container_default ON)
 else()
   set(_container_default OFF)
@@ -143,18 +147,18 @@ endif()
 # docx, odt and epub are the TIER 2 READERS PROPER -- the three that needed a
 # dependency decision rtf did not (see PANDUCK_WITH_RTF below). Each is a ZIP
 # with its document in a known member, so each needs ::panduck::ZipContainer
-# (hence miniz) and pugixml, and each gets its option here as it moves.
+# (hence minizip-ng) and pugixml, and each gets its option here as it moves.
 #
 # PANDUCK_WITH_ZIP is a SEPARATE option and these do not force it on. Switching
 # zip off while leaving a container reader on is a configure the source list has
 # to handle rather than reject, and it handles it by adding zip_container.cpp
 # once for whichever of the four asked -- see the list below. The zip option then
 # means only what HasModule("zip") reports.
-option(PANDUCK_WITH_DOCX "Build the docx format module (requires pugixml and miniz)"
+option(PANDUCK_WITH_DOCX "Build the docx format module (requires pugixml and minizip-ng)"
        ${_container_default})
-option(PANDUCK_WITH_EPUB "Build the epub format module (requires pugixml and miniz)"
+option(PANDUCK_WITH_EPUB "Build the epub format module (requires pugixml and minizip-ng)"
        ${_container_default})
-option(PANDUCK_WITH_ODT "Build the odt format module (requires pugixml and miniz)"
+option(PANDUCK_WITH_ODT "Build the odt format module (requires pugixml and minizip-ng)"
        ${_container_default})
 
 if(PANDUCK_YYJSON_INCLUDE_DIR OR yyjson_FOUND)
@@ -183,7 +187,7 @@ option(PANDUCK_WITH_RST "Build the rst format module" ON)
 # rtf is the FIRST TIER 2 READER behind the seam, and it defaults ON for the same
 # reason the Tier 1 modules do: no third-party dependency. RTF is 7-bit ASCII
 # with brace-delimited groups and backslash control words, so it needs neither
-# miniz nor pugixml. Its three Tier 2 siblings -- docx, odt, epub -- additionally
+# minizip-ng nor pugixml. Its three Tier 2 siblings -- docx, odt, epub -- additionally
 # need pugixml and a zip container, which is a real dependency decision for this
 # build and is deliberately not taken here.
 option(PANDUCK_WITH_RTF "Build the rtf format module" ON)
@@ -200,7 +204,7 @@ option(PANDUCK_WITH_TEXTILE "Build the textile format module" ON)
 # mechanism is the same one. ZipContainer is shared INFRASTRUCTURE: docx, odt
 # and epub are each a ZIP with their document in a known member, and none of the
 # three can move behind the seam until the archive handling has. It carries no
-# reader and emits no rows. Its option is declared above with find_package(miniz)
+# reader and emits no rows. Its option is declared above with find_package(minizip-ng)
 # because, unlike every format module, its default depends on a dependency being
 # found.
 
@@ -328,9 +332,9 @@ if(PANDUCK_WITH_ZIP)
 endif()
 
 # LINKED FROM THE "NEEDS" FLAGS, not from the module options, so a container
-# reader built with PANDUCK_WITH_ZIP=OFF still gets miniz.
+# reader built with PANDUCK_WITH_ZIP=OFF still gets minizip-ng.
 if(PANDUCK_NEEDS_ZIP_CONTAINER)
-  target_link_libraries(panduck PRIVATE miniz::miniz)
+  target_link_libraries(panduck PRIVATE MINIZIP::minizip-ng ZLIB::ZLIB)
   # A SECOND DEFINITION, AND NOT A DUPLICATE OF PANDUCK_WITH_ZIP. That option
   # means only what HasModule("zip") reports; this one means "zip_container.cpp
   # is in this build", which is true for whichever of zip/docx/epub/odt asked

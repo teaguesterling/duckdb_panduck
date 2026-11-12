@@ -41,7 +41,7 @@ rediscovered per format:
 | concern | delegated to |
 |---|---|
 | XML parsing | pugixml |
-| zip containers | miniz |
+| zip containers | minizip-ng |
 | markdown / HTML / plain output | `duckdb_markdown`, `duckdb_webbed`, `duck_block_utils` |
 | PDF | the `pdf` extension |
 | the vocabulary itself | `duck_block_utils`, vendored |
@@ -259,10 +259,11 @@ delegated to the pdf extension and is not a duck_block output target.
 
 Container output is the expensive kind, but less expensive than it looks:
 
-- **miniz's writer APIs are compiled in** — `MINIZ_NO_ARCHIVE_WRITING_APIS` is commented out in
-  the vendored `miniz.hpp`. panduck already links miniz, and
-  `libpanduck/src/zip_container.cpp` uses only `mz_zip_reader_*`. A `ZipWriter` sibling to
-  `ZipContainer` is small, and would belong behind the seam beside it (issue #104, L2).
+- **minizip-ng has a writer** (`mz_zip_writer_*`, `mz_zip_rw.h`), which duckdb-excel's
+  `COPY ... TO 'x.xlsx'` already uses. panduck links minizip-ng (it replaced miniz on
+  2026-11-12), and `libpanduck/src/zip_container.cpp` uses only `mz_zip_reader_*`. A
+  `ZipWriter` sibling to `ZipContainer` is small, and would belong behind the seam beside it
+  (issue #104, L2).
 - **pugixml can serialise** (`xml_document::save`), though panduck has **zero** `.save(` calls
   today — it has only ever parsed.
 - **The mapping is an inverse of one panduck already owns.** It reads docx structurally, not
@@ -292,7 +293,7 @@ real consumer — as the model for how it gets verified.
    `duckdb_webbed`. Recommended: claim the document formats, leave `md`/`html` to their owners,
    reachable through `FORMAT panduck, DOC_FORMAT md`.
 3. **docx emitter**: link a third-party library as a black box, or hand-roll minimal OOXML on
-   miniz plus pugixml?
+   minizip-ng plus pugixml?
 
 `copy_from_bind` exists on the same API, so `COPY tbl FROM 'x.docx'` is available later for
 symmetry — not part of this phase.
@@ -314,7 +315,7 @@ somebody else's library, one format at a time, and a library whose identity is "
 parsers" would make each such replacement a breaking change instead of an internal one.
 
 Read that way, libpanduck is less an extraction than a *re-homing*: the layer that already sits
-above pugixml, miniz, the sibling extensions and the hand-written readers, with the DuckDB
+above pugixml, minizip-ng, the sibling extensions and the hand-written readers, with the DuckDB
 binding becoming one consumer of it rather than its container.
 
 ### The shape: a sub-extension API and a results format

@@ -17,9 +17,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Dependencies come from vcpkg (see vcpkg.json) rather than a vendored third_party/,
 # matching duckdb_markdown / duckdb_webbed / duckdb_zim.
 #   pugixml -- DOCX/ODT/EPUB XML parsing (word/document.xml, .opf, nav.xhtml)
-#   miniz   -- ZIP container reading for the OOXML/ODF/EPUB archive formats
+#   minizip-ng -- ZIP container reading for the OOXML/ODF/EPUB archive formats. The
+#                 same library and version duckdb-excel uses (vcpkg_ports/README.md),
+#                 so a static link holding both has one zip library, not two.
+#   zlib       -- minizip-ng's deflate, as in excel.
 find_package(pugixml CONFIG REQUIRED)
-find_package(miniz CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(minizip-ng CONFIG REQUIRED)
 
 # WASM SIDE-MODULE LINKING. The loadable .wasm is produced by a SEPARATE emcc step:
 #
@@ -43,7 +47,8 @@ if(WASM_LOADABLE_EXTENSIONS)
   # Resolve the ARCHIVE behind an imported target.
   #
   # The dependencies are not shaped alike, which is why one property read is not enough:
-  #   miniz::miniz      STATIC IMPORTED    -- archive on IMPORTED_LOCATION_<CONFIG>
+  #   MINIZIP::minizip-ng STATIC IMPORTED  -- archive on IMPORTED_LOCATION_<CONFIG>
+  #   ZLIB::ZLIB        UNKNOWN IMPORTED   -- the same, from CMake's FindZLIB
   #   pugixml::pugixml  INTERFACE IMPORTED -- NO location; forwards
   #                                           INTERFACE_LINK_LIBRARIES to pugixml::static
   # A $<TARGET_FILE:> genexpr is not a way out either: it is a hard error on an
@@ -106,17 +111,25 @@ if(WASM_LOADABLE_EXTENSIONS)
   endfunction()
 
   _panduck_resolve_archive(_panduck_pugixml_lib pugixml::pugixml)
-  _panduck_resolve_archive(_panduck_miniz_lib miniz::miniz)
-  if(_panduck_pugixml_lib AND _panduck_miniz_lib)
-    set(DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS "${_panduck_pugixml_lib};${_panduck_miniz_lib}")
+  _panduck_resolve_archive(_panduck_minizip_lib MINIZIP::minizip-ng)
+  _panduck_resolve_archive(_panduck_zlib_lib ZLIB::ZLIB)
+  if(_panduck_pugixml_lib
+     AND _panduck_minizip_lib
+     AND _panduck_zlib_lib)
+    # minizip-ng BEFORE zlib: a static archive only satisfies symbols already wanted.
+    set(DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS
+        "${_panduck_pugixml_lib};${_panduck_minizip_lib};${_panduck_zlib_lib}")
     # Printed so the CI log shows WHICH archives were linked -- a debug archive
     # resolves every symbol just as well as a release one, so the symbol check
     # downstream cannot tell them apart. This line is the only place that can.
     message(STATUS "panduck WASM link libs: ${DUCKDB_EXTENSION_PANDUCK_LINKED_LIBS}")
   else()
     # Fail the BUILD rather than emit a .wasm that loads and then throws.
-    message(FATAL_ERROR "panduck: could not resolve pugixml/miniz archive paths for the WASM link "
-                        "(pugixml='${_panduck_pugixml_lib}' miniz='${_panduck_miniz_lib}')")
+    message(
+      FATAL_ERROR
+        "panduck: could not resolve pugixml/minizip-ng/zlib archive paths for the WASM link "
+        "(pugixml='${_panduck_pugixml_lib}' minizip-ng='${_panduck_minizip_lib}' zlib='${_panduck_zlib_lib}')"
+    )
   endif()
 endif()
 
@@ -188,8 +201,10 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-target_link_libraries(${EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml miniz::miniz duckdb_yyjson)
+target_link_libraries(${EXTENSION_NAME} pugixml::pugixml MINIZIP::minizip-ng ZLIB::ZLIB
+                      duckdb_yyjson)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} pugixml::pugixml MINIZIP::minizip-ng ZLIB::ZLIB
+                      duckdb_yyjson)
 
 # THIS IS WHY THE SHIPPED BINARY DOES NOT CHANGE when libpanduck gained a yyjson
 # of its own (issue #123). libpanduck/src/ipynb.cpp includes

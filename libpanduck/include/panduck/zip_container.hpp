@@ -7,7 +7,7 @@
 
 namespace panduck {
 
-//! Minimal RAII wrapper over a miniz ZIP reader.
+//! Minimal RAII wrapper over a minizip-ng ZIP reader.
 //!
 //! Every container format panduck reads is a ZIP with the document in a known
 //! member: DOCX in word/document.xml, ODT in content.xml, EPUB in a spine of
@@ -42,7 +42,7 @@ public:
 	//! Implemented over an OWNED `FileSource` since issue #120, so there is one
 	//! archive code path rather than two. The behaviour is unchanged by
 	//! construction -- a missing or unreadable file leaves `IsOpen()` false,
-	//! exactly as `mz_zip_reader_init_file` did -- which is what lets every
+	//! exactly as miniz's `mz_zip_reader_init_file` did -- which is what lets every
 	//! existing call site stay as it is.
 	explicit ZipContainer(const std::string &path);
 
@@ -51,7 +51,7 @@ public:
 	//! throws: ask `IsOpen()`.
 	//!
 	//! LIFETIME: the source is held BY REFERENCE and must outlive this
-	//! container. miniz reads the central directory at open and then reads each
+	//! container. The zip reader reads the central directory at open and then reads each
 	//! member on demand -- the container is deliberately kept open across reads
 	//! (see above), so the source is still being read long after the
 	//! constructor returns. For `MemorySource` that means the underlying buffer
@@ -80,7 +80,7 @@ public:
 	bool Read(const char *member, std::string &out);
 
 private:
-	//! Shared by both constructors: installs the miniz read callback over
+	//! Shared by both constructors: installs a minizip-ng stream over
 	//! `source` and reads the central directory. Never throws; sets `IsOpen()`.
 	void Open(ByteSource &source);
 

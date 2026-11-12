@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "dependencies": [
     "pugixml",
-    "miniz",
+    {
+      "name": "minizip-ng",
+      "default-features": false,
+      "features": [
+        "zlib"
+      ]
+    },
     "yyjson"
   ],
   "vcpkg-configuration": {
     "overlay-ports": [
+      "./vcpkg_ports",
       "./extension-ci-tools/vcpkg_ports"
     ],
     "overlay-triplets": [

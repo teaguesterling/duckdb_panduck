@@ -553,7 +553,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vcpkg_installed
-          key: libpanduck-deps-${{ runner.os }}-x64-linux-${{ hashFiles('vcpkg.json') }}
+          key: libpanduck-deps-${{ runner.os }}-x64-linux-${{ hashFiles('vcpkg.json', 'vcpkg_ports/**') }}
 
       # extension-ci-tools ONLY, not `submodules: true`: that would also fetch
       # duckdb, which this job never builds against and which dwarfs everything else
@@ -563,7 +563,7 @@ jobs:
         if: steps.deps.outputs.cache-hit != 'true'
         run: git submodule update --init --depth 1 extension-ci-tools
 
-      - name: Build yyjson, miniz and pugixml from vcpkg.json
+      - name: Build yyjson, minizip-ng, zlib and pugixml from vcpkg.json
         if: steps.deps.outputs.cache-hit != 'true'
         run: |
           set -uo pipefail
@@ -639,7 +639,7 @@ jobs:
             *"$m=ON"*)
               ;;
             *"$m=OFF"*)
-              echo "::error::module ${m} configured OFF; this job must compile every module, so check that vcpkg really provided yyjson, miniz and pugixml and that CMAKE_PREFIX_PATH points at them"
+              echo "::error::module ${m} configured OFF; this job must compile every module, so check that vcpkg really provided yyjson, minizip-ng, zlib and pugixml and that CMAKE_PREFIX_PATH points at them"
               bad=1
               ;;
             *)

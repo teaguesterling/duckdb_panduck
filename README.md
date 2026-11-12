@@ -349,7 +349,8 @@ function is independent of it.
 
 ## Building
 
-Dependencies come from vcpkg (`pugixml` for XML, `miniz` for ZIP containers). The
+Dependencies come from vcpkg (`pugixml` for XML, `minizip-ng` with `zlib` for ZIP
+containers; `vcpkg_ports/` pins minizip-ng to duckdb-excel's version). The
 `duck_block` vocabulary is a vendored copy of `duck_block_utils`' published header at
 `src/include/duck_block_vocabulary.hpp`. The submodules below are DuckDB itself and the
 build tooling; the vocabulary is not one.

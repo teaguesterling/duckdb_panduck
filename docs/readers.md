@@ -54,7 +54,7 @@ a CSS file. pandoc reading such a book finds no headings and no emphasis either.
 ## `read_rtf_blocks(path)`
 
 RTF is 7-bit ASCII with brace groups and backslash control words, so this reader needs
-neither `miniz` nor `pugixml`.
+neither `minizip-ng` nor `pugixml`.
 
 Handles headings, paragraphs, and inline bold / italic / underline / strikethrough;
 decodes `\uNNNN` and `\'hh` escapes; skips destinations (`{\fonttbl}`, `{\colortbl}`,
@@ -79,7 +79,7 @@ vocabulary is flat, so bold+italic reports as bold).
 ## `read_docx_blocks(path)`
 
 DOCX is a ZIP whose body lives in `word/document.xml` — the first reader using both
-vendored dependencies: `miniz` to open the archive, `pugixml` to parse the XML.
+vendored dependencies: `minizip-ng` to open the archive, `pugixml` to parse the XML.
 `word/styles.xml` resolves a `w:pStyle` id to a style name, so a localized "Heading 1"
 still resolves.
 

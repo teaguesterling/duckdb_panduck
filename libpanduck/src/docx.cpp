@@ -3,6 +3,7 @@
 #include "panduck/block_json.hpp"
 #include "panduck/container_status.hpp"
 #include "panduck/doc_metadata.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 #include "panduck/zip_container.hpp"
 
@@ -853,6 +854,14 @@ std::vector<Block> ReadDocx(ByteSource &source, ContainerStatus &status) {
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+			// THE ANCHOR (#85), pandoc's identifier from the flattened title -- measured
+			// against pandoc 3.1.3 on every heading in the fixtures, which take no id
+			// from a bookmark. slugify.hpp holds the rule. rst, textile and mediawiki
+			// already emitted it, so doc_section found a heading by anchor in those
+			// formats and not in this one.
+			if (!block.content.empty()) {
+				row.attributes["id"] = HeadingSlug(block.content, '-');
+			}
 		}
 		// ENCODING SET EXPLICITLY, not defaulted, and DERIVED FROM DOCX'S OWN BIND.
 		// DocxRow declared `std::string encoding = DuckBlockTypes::ENCODING_TEXT;`

@@ -65,6 +65,9 @@ struct LatexBlock {
 	    number_delim;      //!< ordered lists, always set
 	int heading_level = 0; //!< 1-6 for headings, 0 otherwise
 	int level = 1;         //!< structural depth; never 0, never NULL on emission
+	//! heading only: the anchor -- the author's \label when one directly follows,
+	//! else pandoc's slug of the title (#85).
+	std::string id;
 	std::vector<LatexInline> inlines;
 };
 

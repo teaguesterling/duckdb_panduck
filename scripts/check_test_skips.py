@@ -65,7 +65,7 @@ HTTP = "skip on error_message matching 'HTTP'"
 # repository, so for these it is an HTTP 404 -- which sqllogictest matches and turns into a
 # skip. `INSTALL x FROM community;` is the spelling that works, and the one the runtime mode
 # sees the consequences of.
-COMMUNITY = ("webbed", "duck_block_utils", "pdf", "markdown")
+COMMUNITY = ("webbed", "duck_block_utils", "pdf", "markdown", "duck_tails")
 
 # Extensions DuckDB's default build links statically, so `require <ext>` never skips no
 # matter what THIS repo's extension_config.cmake loads. Kept as short as the tree actually

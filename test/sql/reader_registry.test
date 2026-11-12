@@ -539,13 +539,24 @@ zim_article	zim
 # extension. s3:// has no entry in the cleaner table because measurement says it needs
 # none, and an entry nothing needs is a claim nothing checks.
 # ---------------------------------------------------------------------------
-query IIII
-SELECT panduck_format_for('git://Doc.md@12345')          AS rev,
-       panduck_format_for('git://docs/Doc.md@HEAD')      AS nested_rev,
-       panduck_format_for('https://x.org/doc.docx?v=1')  AS query,
+query II
+SELECT panduck_format_for('https://x.org/doc.docx?v=1')  AS query,
        panduck_format_for('https://x.org/doc.docx#frag') AS fragment;
 ----
-markdown	markdown	docx	docx
+docx	docx
+
+# PANDUCK HAS NO GIT GRAMMAR OF ITS OWN (#148, stage 2). The deprecated `@rev` form is
+# duck_tails' to parse: its CanonicalizePath moves the revision into `?ref=`, and the
+# `?ref=` cut does the rest. This file runs without duck_tails, so nothing moves the
+# revision and the `@rev` suffix stays in the extension. Stage 1 kept a copy of the
+# grammar for this case, StripGitRevision, and it answered markdown here; the copy cut at
+# the last `@`, so it also broke `@HEAD@{0}` (#147). Without duck_tails a git:// path
+# cannot be opened anyway. reader_registry_git.test pins the answer with duck_tails loaded.
+query II
+SELECT COALESCE(panduck_format_for('git://Doc.md@12345'), 'NULL')     AS rev,
+       COALESCE(panduck_format_for('git://docs/Doc.md@HEAD'), 'NULL') AS nested_rev;
+----
+NULL	NULL
 
 # Both decorations at once, and in the order a URL puts them.
 query I
@@ -553,16 +564,10 @@ SELECT panduck_format_for('https://x.org/doc.docx?a=1#f');
 ----
 docx
 
-# THE `@` RULE IS SCOPED TWICE, and these two assertions pin DIFFERENT halves of it --
-# measured, not assumed, because a single wrong fix does not fail both:
-#
-#   at_before_dot  guards the POSITION rule. Cutting at the last `@` unconditionally
-#                  passes every assertion above and turns `Doc@v1.md` into `Doc`.
-#                  Verified by building exactly that: row 1, column at_before_dot.
-#   local_path     guards the SCHEME rule, and the naive fix above leaves it alone --
-#                  a local path never enters a scheme-scoped cleaner. It fails instead
-#                  for a fix that strips `@` from every path rather than from git://
-#                  URIs, which is the other obvious way to write this.
+# AN `@` IN A FILE NAME IS PART OF THE NAME. Both assertions fail for a cut at the last
+# `@`: at_before_dot for one scoped to git://, local_path for one applied to every path.
+# Stage 1 kept such a cut for git://, guarded by a rule that the `@` fall after the last
+# dot; stage 2 removed the cut, and these keep it from coming back.
 query II
 SELECT panduck_format_for('git://Doc@v1.md') AS at_before_dot,
        panduck_format_for('my@file.md')      AS local_path;
@@ -606,14 +611,14 @@ SELECT COALESCE(panduck_format_for('git://notes#1.md?ref=HEAD'), 'NULL')   AS ha
 ----
 markdown	markdown	markdown
 
-# The deprecated `@rev` form stays valid until duck_tails stops accepting it, so it must
-# keep its reader through stage 1. And a `?` is legal in a local filename: the cut is
-# scoped to git://, as the `@` rule is.
+# Without duck_tails, the deprecated `@rev` form has no reader: the revision is
+# duck_tails' grammar, not panduck's (#148, stage 2). And a `?` is legal in a local
+# filename: the `?ref=` cut is scoped to git://.
 query II
-SELECT panduck_format_for('git://a.md@HEAD') AS at_rev,
-       panduck_format_for('notes?v1.md')     AS local_question_mark;
+SELECT COALESCE(panduck_format_for('git://a.md@HEAD'), 'NULL') AS at_rev,
+       panduck_format_for('notes?v1.md')                     AS local_question_mark;
 ----
-markdown	markdown
+NULL	markdown
 
 # THE ARCHIVE ENDS AT `.zim`, WHICH IS WHAT SPLITS THE TWO HALVES. Splitting on the first
 # slash would take `wiki.zim` out of `zim://books/wiki.zim/A/Page` and leave `books` --

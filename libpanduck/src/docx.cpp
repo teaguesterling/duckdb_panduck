@@ -504,6 +504,14 @@ std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status
 		// w:left="720" and pStyle "Normal". 720 twentieths of a point is half an
 		// inch, Word's default quote indent.
 		std::string pstyle_name = ppr.child("w:pStyle").attribute("w:val").value();
+		// THE CLASS THE DOCUMENT GAVE THIS PARAGRAPH (#182): its style NAME, as
+		// styles.xml spells it ("Block Text"), slugged. The id is the fallback for a
+		// style styles.xml does not list. No pStyle, no class.
+		std::string para_class;
+		if (!pstyle_name.empty()) {
+			auto sit = styles.find(pstyle_name);
+			para_class = ClassSlug(sit != styles.end() && !sit->second.empty() ? sit->second : pstyle_name);
+		}
 		bool quote_style = pstyle_name == "BlockText" || pstyle_name == "Quote" || pstyle_name == "IntenseQuote" ||
 		                   pstyle_name == "BlockQuote";
 		int ind_left = ppr.child("w:ind").attribute("w:left").as_int(0);
@@ -749,6 +757,9 @@ std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status
 				DocxBlock code;
 				code.element_type = DuckBlockVocabulary::TYPE_CODE;
 				code.content = all;
+				if (!para_class.empty()) {
+					code.attributes["class"] = para_class;
+				}
 				blocks.push_back(std::move(code));
 			}
 			continue;
@@ -774,6 +785,9 @@ std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status
 			item.level = 2;
 			item.content = trimmed;
 			item.attributes["role"] = is_def_term ? "term" : "definition";
+			if (!para_class.empty()) {
+				item.attributes["class"] = para_class;
+			}
 			blocks.push_back(std::move(item));
 			continue;
 		}
@@ -794,6 +808,10 @@ std::vector<DocxBlock> ParseDocxFile(ByteSource &source, ContainerStatus &status
 			block.level = 2;
 		} else {
 			block.element_type = DuckBlockVocabulary::TYPE_PARAGRAPH;
+		}
+		// On the styled paragraph itself, never on a container built around it.
+		if (!para_class.empty()) {
+			block.attributes["class"] = para_class;
 		}
 
 		// Character formatting inside a heading is presentational -- writers bold

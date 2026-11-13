@@ -89,4 +89,31 @@ inline std::string HeadingSlug(const std::string &text, char sep) {
 	return out.empty() ? std::string("section") : out;
 }
 
+//! A CLASS NAME from a source document's own label -- a DOCX or ODT paragraph style
+//! name, a LaTeX environment -- for attributes['class'] (#182). Lowercased; every run
+//! of characters that is not an ASCII letter or digit, a non-ASCII byte, or `_`
+//! becomes one `-`; leading and trailing `-` are dropped. "Block Text" ->
+//! "block-text", "Heading 1" -> "heading-1", "1st Para" -> "1st-para".
+//!
+//! NOT HeadingSlug, on purpose. An id follows pandoc's rule, which skips to the first
+//! letter and falls back to `section`; a class does neither. A label that slugs to
+//! nothing returns "", and the caller then sets no class.
+inline std::string ClassSlug(const std::string &label) {
+	std::string out;
+	bool pending_sep = false;
+	for (unsigned char c : label) {
+		const bool keep = c >= 0x80 || std::isalnum(c) || c == '_';
+		if (!keep) {
+			pending_sep = !out.empty();
+			continue;
+		}
+		if (pending_sep) {
+			out += '-';
+			pending_sep = false;
+		}
+		out += c >= 0x80 ? static_cast<char>(c) : static_cast<char>(std::tolower(c));
+	}
+	return out;
+}
+
 } // namespace panduck

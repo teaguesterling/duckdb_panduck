@@ -1,0 +1,74 @@
+# name: test/sql/source_classes.test
+# description: a class the source document gave a block lands in attributes['class'] (#182)
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. duck_block has one key for "a class the document gave this block":
+# attributes['class'], space-separated as in HTML. The DCS transform language that
+# duckeye uses selects `.block-text` the same way on a .docx, a .md and a web page,
+# so each reader must put its format's own class there (#182).
+#
+# THE SLUG. A style NAME, not its id ("Block Text", not "BlockText"), lowercased;
+# every run of characters that is not a letter, a digit, a non-ASCII byte or `_`
+# becomes one `-`; leading and trailing `-` are dropped. A name that slugs to
+# nothing gives no class. Ids keep pandoc's rule (slugify.hpp HeadingSlug); this is
+# a separate rule, because a class has no `section` fallback and no letter-first
+# requirement.
+#
+# ONLY WHAT THE DOCUMENT SAID. A paragraph with no style gets no class, and a
+# container panduck builds (list, blockquote) gets none: the document did not
+# style it.
+# ---------------------------------------------------------------------------
+
+# --- DOCX: the w:pStyle name, resolved through word/styles.xml -----------------
+
+query II
+SELECT content, attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type = 'heading' ORDER BY element_order
+----
+Heading One	heading-1
+Heading Two	heading-2
+Heading Three	heading-3
+
+# FirstParagraph is the style id; the name is "First Paragraph".
+query I
+SELECT attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx') WHERE element_order = 1
+----
+first-paragraph
+
+query II
+SELECT content, attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE content IN ('first', 'Term', 'The definition of the term.', 'A quote.') ORDER BY element_order
+----
+first	compact
+Term	definition-term
+The definition of the term.	definition
+A quote.	block-text
+
+query I
+SELECT attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx') WHERE element_type = 'code' AND kind = 'block'
+----
+source-code
+
+# LibreOffice styles every paragraph "Normal", which is still a class it gave.
+query I
+SELECT attributes['class'] FROM read_docx_blocks('test/fixtures/libreoffice_outlinelvl.docx')
+WHERE content = 'A block quote.'
+----
+normal
+
+# Not styled by the document: the table, and the containers panduck builds.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE element_type IN ('table', 'list', 'blockquote') AND attributes['class'] IS NOT NULL
+----
+0
+
+# Inline rows are not paragraphs and take no paragraph style.
+query I
+SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
+WHERE kind = 'inline' AND attributes['class'] IS NOT NULL
+----
+0

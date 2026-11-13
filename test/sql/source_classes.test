@@ -48,7 +48,7 @@ The definition of the term.	definition
 A quote.	block-text
 
 query I
-SELECT attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx') WHERE element_type = 'code'
+SELECT attributes['class'] FROM read_docx_blocks('test/fixtures/constructs.docx') WHERE element_type = 'code' AND kind = 'block'
 ----
 source-code
 

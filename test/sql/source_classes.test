@@ -72,3 +72,46 @@ SELECT count(*) FROM read_docx_blocks('test/fixtures/constructs.docx')
 WHERE kind = 'inline' AND attributes['class'] IS NOT NULL
 ----
 0
+
+# --- ODT: the paragraph style's NAME -----------------------------------------
+# A paragraph usually names an AUTOMATIC style (P5, P8) that content.xml makes
+# per document; its parent-style-name is the style the author chose. The name
+# is styles.xml's style:display-name ("Text body") where it has one, else the
+# style name with ODF's _XX_ escapes decoded ("Quotations").
+
+query II
+SELECT content, attributes['class'] FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE element_type = 'heading' ORDER BY element_order
+----
+Heading One	heading-1
+Heading Two	heading-2
+Heading Three	heading-3
+
+query II
+SELECT content, attributes['class'] FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE content IN ('first', 'Term', 'The definition of the term.', 'A quote.', 'A caption') ORDER BY element_order
+----
+first	text-body
+Term	definition-term-tight
+The definition of the term.	definition-definition-tight
+A quote.	quotations
+A caption	figurecaption
+
+query I
+SELECT attributes['class'] FROM read_odt_blocks('test/fixtures/constructs.odt') WHERE element_type = 'code' AND kind = 'block'
+----
+preformatted-text
+
+query II
+SELECT content, attributes['class'] FROM read_odt_blocks('test/fixtures/libreoffice.odt')
+WHERE content IN ('bullet one', 'A block quote.') OR content LIKE 'Unicode%' ORDER BY element_order
+----
+bullet one	compact
+A block quote.	block-text
+Unicode: café — em-dash, and a tab.	first-paragraph
+
+query I
+SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt')
+WHERE (element_type IN ('table', 'list', 'blockquote') OR kind = 'inline') AND attributes['class'] IS NOT NULL
+----
+0

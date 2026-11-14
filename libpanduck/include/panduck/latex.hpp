@@ -68,6 +68,9 @@ struct LatexBlock {
 	//! heading only: the anchor -- the author's \label when one directly follows,
 	//! else pandoc's slug of the title (#85).
 	std::string id;
+	//! attributes['class'] (#182): the name of the environment that made this block,
+	//! slugged (`figure*` -> `figure`). Empty for a block no environment made.
+	std::string css_class;
 	std::vector<LatexInline> inlines;
 };
 

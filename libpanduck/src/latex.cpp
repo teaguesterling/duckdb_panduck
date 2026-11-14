@@ -819,6 +819,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 			block.element_type = DuckBlockVocabulary::TYPE_CODE;
 			block.content = std::move(body);
 			block.level = depth;
+			block.css_class = ClassSlug(name);
 			blocks.push_back(std::move(block));
 		}
 		return;
@@ -827,6 +828,7 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 	LatexBlock block;
 	block.element_type = element_type;
 	block.level = depth;
+	block.css_class = ClassSlug(name);
 	if (element_type == DuckBlockVocabulary::TYPE_LIST) {
 		// The list TYPE rides in `expansion` rather than in a field of its own: for
 		// an environment there is no expansion text, and duck_block owns the two
@@ -1186,6 +1188,7 @@ void Parser::EmitTabular(std::vector<Token> &toks, size_t &i, const std::string 
 
 	LatexBlock block;
 	block.element_type = DuckBlockVocabulary::TYPE_TABLE;
+	block.css_class = ClassSlug(name);
 	block.content = BuildTableJson(headers, body);
 	block.encoding = DuckBlockVocabulary::ENCODING_JSON;
 	block.level = depth;
@@ -1651,6 +1654,9 @@ std::vector<Block> ReadLatex(const std::string &src) {
 			// and heading_level 2; the two are different facts and conflating them
 			// renders a heading by where it sits rather than what it is.
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+		}
+		if (!block.css_class.empty()) {
+			row.attributes["class"] = block.css_class;
 		}
 		if (!block.id.empty()) {
 			row.attributes["id"] = block.id;

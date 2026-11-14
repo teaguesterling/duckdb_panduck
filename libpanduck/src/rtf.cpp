@@ -1,6 +1,7 @@
 #include "panduck/rtf.hpp"
 
 #include "panduck/block_json.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 
 // <cstdint> for int32_t/uint8_t and <utility> for std::move are NAMED HERE even
@@ -795,6 +796,12 @@ std::vector<Block> ReadRtf(const std::string &src) {
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+			// THE ANCHOR (#182). pandoc 3.1.3 gives an RTF heading an EMPTY id; panduck
+			// gives pandoc's slug of the title (slugify.hpp), by Teague's ruling of
+			// 2026-11-13, so `#heading-one` names the same heading in every format.
+			if (!block.content.empty()) {
+				row.attributes["id"] = HeadingSlug(block.content, '-');
+			}
 		}
 		// ENCODING SET EXPLICITLY, not defaulted. The bind's private BlockRow
 		// declared `std::string encoding = DuckBlockTypes::ENCODING_TEXT;` and the

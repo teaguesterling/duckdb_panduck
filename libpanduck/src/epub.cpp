@@ -2,6 +2,7 @@
 
 #include "panduck/block_json.hpp"
 #include "panduck/container_status.hpp"
+#include "panduck/slugify.hpp"
 #include "panduck/vocabulary.hpp"
 #include "panduck/zip_container.hpp"
 
@@ -551,6 +552,9 @@ void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int 
 	block.level = depth;
 	block.role = role;
 	block.css_class = SourceClasses(node);
+	if (heading_level > 0) {
+		block.id = node.attribute("id").value();
+	}
 	// Headings always flatten -- see the RTF, DOCX and ODT readers for why.
 	if (!any_format || heading_level > 0) {
 		block.content = Trim(all);
@@ -1115,6 +1119,14 @@ std::vector<Block> ReadEpub(ByteSource &source, ContainerStatus &status) {
 		row.element_order = order++;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
+			// THE ANCHOR (#182): the author's own id on the <hN> when there is one, else
+			// pandoc's slug of the title. pandoc 3.1.3 gives these headings none; panduck
+			// gives one by Teague's ruling of 2026-11-13.
+			if (!block.id.empty()) {
+				row.attributes["id"] = block.id;
+			} else if (!block.content.empty()) {
+				row.attributes["id"] = HeadingSlug(block.content, '-');
+			}
 		}
 		if (!block.role.empty()) {
 			row.attributes[DuckBlockVocabulary::ATTR_ROLE] = block.role;

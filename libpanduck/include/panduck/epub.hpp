@@ -84,6 +84,9 @@ struct EpubBlock {
 	//! attributes['class'] (#182): the element's XHTML class tokens, then its epub:type
 	//! tokens, space-separated. Empty when the element has neither.
 	std::string css_class;
+	//! heading only: the element's own `id` attribute, which wins over the slug of
+	//! its title (#182). Empty when the source gave none.
+	std::string id;
 	//! `table` only: 'json', because spec 5.0 makes table the one element_type
 	//! whose content is a JSON document rather than text. Empty elsewhere, and an
 	//! empty encoding is emitted as NULL rather than as the string.

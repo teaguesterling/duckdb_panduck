@@ -17,6 +17,7 @@
 // <cstring> was a real break; these two are not -- they arrive through
 // block.hpp and doc_metadata.hpp -- but the rule that caught that one is the
 // rule being followed here.)
+#include <cctype>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -462,6 +463,80 @@ std::set<std::string> ParseDefBodyStyles(const pugi::xml_node &content_root, con
 	                         {"Definition_20_Definition", "Definition_20_Definition_20_Tight"});
 }
 
+//! THE CLASS A PARAGRAPH STYLE GIVES ITS PARAGRAPH (#182), as a resolver from the
+//! style name on a <text:p> or <text:h>.
+//!
+//! An AUTOMATIC style (content.xml's <office:automatic-styles>, `P5`, `P8`) is
+//! generated per document and means nothing; its parent-style-name is the style the
+//! author chose. So an automatic style resolves ONE step to its parent. A named
+//! style is then spelled by its style:display-name ("Text body") where it has one,
+//! else by its name with ODF's `_XX_` hex escapes decoded ("Text_20_body" -> "Text
+//! body"), and slugged by ClassSlug.
+class OdtStyleClasses {
+public:
+	OdtStyleClasses(const pugi::xml_node &content_root, const pugi::xml_node &styles_root) {
+		for (auto style : content_root.child("office:automatic-styles").children("style:style")) {
+			if (std::string(style.attribute("style:family").value()) != "paragraph") {
+				continue;
+			}
+			std::string name = style.attribute("style:name").value();
+			std::string parent = style.attribute("style:parent-style-name").value();
+			if (!name.empty()) {
+				automatic[name] = parent;
+			}
+		}
+		for (auto root : {content_root, styles_root}) {
+			if (!root) {
+				continue;
+			}
+			for (auto group : {"office:styles", "office:automatic-styles"}) {
+				for (auto style : root.child(group).children("style:style")) {
+					std::string name = style.attribute("style:name").value();
+					std::string display = style.attribute("style:display-name").value();
+					if (!name.empty() && !display.empty()) {
+						display_names.emplace(name, display);
+					}
+				}
+			}
+		}
+	}
+
+	//! "" when the paragraph names no style, or only an automatic one with no parent.
+	std::string For(const std::string &style_name) const {
+		std::string name = style_name;
+		auto ait = automatic.find(name);
+		if (ait != automatic.end()) {
+			name = ait->second;
+		}
+		if (name.empty()) {
+			return std::string();
+		}
+		auto dit = display_names.find(name);
+		return ClassSlug(dit != display_names.end() ? dit->second : DecodeOdfName(name));
+	}
+
+private:
+	//! ODF escapes a character outside an NCName as `_XX_`, XX its hex code:
+	//! "Heading_20_1" is "Heading 1".
+	static std::string DecodeOdfName(const std::string &name) {
+		std::string out;
+		for (size_t i = 0; i < name.size(); i++) {
+			if (name[i] == '_' && i + 3 < name.size() && name[i + 3] == '_' &&
+			    std::isxdigit(static_cast<unsigned char>(name[i + 1])) &&
+			    std::isxdigit(static_cast<unsigned char>(name[i + 2]))) {
+				out += static_cast<char>(std::stoi(name.substr(i + 1, 2), nullptr, 16));
+				i += 3;
+				continue;
+			}
+			out += name[i];
+		}
+		return out;
+	}
+
+	std::map<std::string, std::string> automatic;
+	std::map<std::string, std::string> display_names;
+};
+
 std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) {
 	status = ContainerStatus();
 	// THE NON-THROWING ZipContainer. The src/ wrapper this used to name
@@ -519,6 +594,7 @@ std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) 
 	auto code_styles = ParseCodeStyles(root, styles_root);
 	auto def_term_styles = ParseDefTermStyles(root, styles_root);
 	auto def_body_styles = ParseDefBodyStyles(root, styles_root);
+	OdtStyleClasses style_classes(root, styles_root);
 	// A verbatim run names a style defined in styles.xml, which
 	// ParseAutomaticStyles (which reads content.xml's automatic styles) cannot
 	// see. Rather than thread another set through CollectRuns, mark those names
@@ -725,6 +801,7 @@ std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) 
 		bool is_code = top && code_styles.count(style_name) > 0;
 		bool is_def_term = top && def_term_styles.count(style_name) > 0;
 		bool is_def_body = top && def_body_styles.count(style_name) > 0;
+		const std::string para_class = style_classes.For(style_name);
 
 		// TITLE / AUTHOR / DATE ARE DOCUMENT METADATA, NOT PROSE -- see
 		// DropDuplicatedMetadataParagraphs for why this records a candidate instead
@@ -749,6 +826,9 @@ std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) 
 				OdtBlock code;
 				code.element_type = DuckBlockVocabulary::TYPE_CODE;
 				code.content = all;
+				if (!para_class.empty()) {
+					code.attributes["class"] = para_class;
+				}
 				blocks.push_back(std::move(code));
 			}
 			continue;
@@ -772,6 +852,9 @@ std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) 
 			item.level = 2;
 			item.content = trimmed;
 			item.attributes["role"] = is_def_term ? "term" : "definition";
+			if (!para_class.empty()) {
+				item.attributes["class"] = para_class;
+			}
 			blocks.push_back(std::move(item));
 			continue;
 		}
@@ -795,6 +878,10 @@ std::vector<OdtBlock> ParseOdtFile(ByteSource &source, ContainerStatus &status) 
 			block.level = 2;
 		} else {
 			block.element_type = DuckBlockVocabulary::TYPE_PARAGRAPH;
+		}
+		// On the styled paragraph itself, never on a container built around it.
+		if (!para_class.empty()) {
+			block.attributes["class"] = para_class;
 		}
 
 		// Headings always flatten -- see the RTF and DOCX readers for why.

@@ -149,3 +149,26 @@ SELECT count(*) FROM read_epub_blocks('test/fixtures/libreoffice.epub')
 WHERE element_type = 'paragraph' AND NOT regexp_full_match(coalesce(attributes['class'], ''), 'para[0-9]+')
 ----
 0
+
+# --- LaTeX: the environment name on the block an environment makes --------------
+# Slugged by ClassSlug, which drops a star: figure* is `figure`. Only environments
+# that make a block get one; a TRANSPARENT environment (center, abstract, an
+# unknown one such as theorem) makes none, so there is nothing to carry it.
+
+query III
+SELECT element_order, element_type, attributes['class'] FROM read_latex_blocks_string(E'\\begin{itemize}\\item a\\end{itemize}\n\n\\begin{quotation}Q.\\end{quotation}\n\n\\begin{verbatim}\nx = 1\n\\end{verbatim}\n\n\\begin{tabular}{ll}a & b\\end{tabular}\n\n\\begin{figure*}\\caption{Cap}\\end{figure*}\n\n\\begin{description}\\item[T] D\\end{description}')
+WHERE kind = 'block' AND element_type IN ('list', 'blockquote', 'code', 'table', 'figure') ORDER BY element_order
+----
+0	list	itemize
+2	blockquote	quotation
+4	code	verbatim
+5	table	tabular
+6	figure	figure
+9	list	description
+
+# The blocks inside an environment are not the environment.
+query I
+SELECT count(*) FROM read_latex_blocks_string(E'\\begin{itemize}\\item a\\end{itemize}\n\n\\begin{quote}Q.\\end{quote}')
+WHERE element_type IN ('list_item', 'paragraph') AND attributes['class'] IS NOT NULL
+----
+0

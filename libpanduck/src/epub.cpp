@@ -500,6 +500,34 @@ void CollectRows(const pugi::xml_node &node, std::vector<pugi::xml_node> &rows) 
 	}
 }
 
+//! THE CLASS THE DOCUMENT GAVE THIS ELEMENT (#182): its XHTML `class` tokens, then its
+//! EPUB 3 `epub:type` tokens, joined by one space with duplicates dropped. Both are
+//! already class-shaped, so they are kept verbatim rather than slugged.
+std::string SourceClasses(const pugi::xml_node &node) {
+	std::string out;
+	std::set<std::string> seen;
+	for (const char *attr : {"class", "epub:type"}) {
+		std::string value = node.attribute(attr).value();
+		size_t start = 0;
+		while (start < value.size()) {
+			auto begin = value.find_first_not_of(" \t\n\r", start);
+			if (begin == std::string::npos) {
+				break;
+			}
+			auto end = value.find_first_of(" \t\n\r", begin);
+			std::string token = value.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+			if (seen.insert(token).second) {
+				if (!out.empty()) {
+					out += ' ';
+				}
+				out += token;
+			}
+			start = end == std::string::npos ? value.size() : end;
+		}
+	}
+	return out;
+}
+
 void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int heading_level, const DocContext &ctx,
                std::vector<EpubBlock> &out, int depth, const std::string &role = std::string()) {
 	std::vector<Run> runs;
@@ -522,6 +550,7 @@ void EmitBlock(const pugi::xml_node &node, const std::string &element_type, int 
 	block.heading_level = heading_level;
 	block.level = depth;
 	block.role = role;
+	block.css_class = SourceClasses(node);
 	// Headings always flatten -- see the RTF, DOCX and ODT readers for why.
 	if (!any_format || heading_level > 0) {
 		block.content = Trim(all);
@@ -586,6 +615,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			EpubBlock block;
 			block.element_type = DuckBlockVocabulary::TYPE_CODE;
 			block.level = depth;
+			block.css_class = SourceClasses(child);
 			// A <pre> means its whitespace is the content, so it is taken raw rather
 			// than through the run collector, which folds runs of spaces.
 			std::string text = child.text().get();
@@ -615,6 +645,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			block.element_type = DuckBlockVocabulary::TYPE_LIST;
 			block.container = true;
 			block.level = depth;
+			block.css_class = SourceClasses(child);
 			block.list_type = (tag == "ol")   ? DuckBlockVocabulary::LIST_TYPE_ORDERED
 			                  : (tag == "dl") ? DuckBlockVocabulary::LIST_TYPE_DEFINITION
 			                                  : DuckBlockVocabulary::LIST_TYPE_BULLET;
@@ -643,6 +674,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 			if (SECTIONING.count(tag)) {
 				block.role = tag;
 			}
+			block.css_class = SourceClasses(child);
 			block.container = true;
 			block.level = depth;
 			auto before = out.size();
@@ -787,6 +819,7 @@ void WalkBlocks(const pugi::xml_node &node, const DocContext &ctx, std::vector<E
 				block.container = true;
 				block.level = depth;
 				block.role = item_role;
+				block.css_class = SourceClasses(child);
 				out.push_back(std::move(block));
 				WalkBlocks(child, ctx, out, depth + 1);
 			} else {
@@ -1085,6 +1118,9 @@ std::vector<Block> ReadEpub(ByteSource &source, ContainerStatus &status) {
 		}
 		if (!block.role.empty()) {
 			row.attributes[DuckBlockVocabulary::ATTR_ROLE] = block.role;
+		}
+		if (!block.css_class.empty()) {
+			row.attributes["class"] = block.css_class;
 		}
 		if (!block.key.empty()) {
 			row.attributes[DuckBlockVocabulary::ATTR_KEY] = block.key;

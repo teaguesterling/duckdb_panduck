@@ -81,6 +81,9 @@ struct EpubBlock {
 	//! For a `section`: which kind of sectioning container the source marked, per
 	//! the duck_block role vocabulary. Empty for anything else.
 	std::string role;
+	//! attributes['class'] (#182): the element's XHTML class tokens, then its epub:type
+	//! tokens, space-separated. Empty when the element has neither.
+	std::string css_class;
 	//! `table` only: 'json', because spec 5.0 makes table the one element_type
 	//! whose content is a JSON document rather than text. Empty elsewhere, and an
 	//! empty encoding is emitted as NULL rather than as the string.

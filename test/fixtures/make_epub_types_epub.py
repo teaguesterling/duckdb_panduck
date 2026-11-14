@@ -10,6 +10,7 @@ fixture has epub:type on a block that the reader keeps: pandoc puts it only on <
   * a paragraph with two class tokens and doubled whitespace between them
   * an epigraph <blockquote epub:type="epigraph">
   * a footnote <aside epub:type="footnote"> and a paragraph with no class at all
+  * a heading with its own id="first-ch", which wins over the slug of its title
 
 Regenerate with: python3 test/fixtures/make_epub_types_epub.py
 """
@@ -48,7 +49,7 @@ CH1 = """<?xml version="1.0" encoding="UTF-8"?>
 <head><title>One</title></head>
 <body>
 <section class="level1" epub:type="chapter">
-<h1 class="chapter-title">The First Chapter</h1>
+<h1 class="chapter-title" id="first-ch">The First Chapter</h1>
 <blockquote epub:type="epigraph"><p>An opening line.</p></blockquote>
 <p class="lead  first">The lead paragraph.</p>
 <p>A plain paragraph.</p>

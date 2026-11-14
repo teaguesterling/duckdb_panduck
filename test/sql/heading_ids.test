@@ -139,20 +139,31 @@ WHERE element_type = 'heading' ORDER BY element_order;
 Heading One	heading-one
 Heading Two	heading-two
 
-# ---- controls: where pandoc gives NO id, panduck gives none either ---------
+# ---- RTF and EPUB: pandoc gives no id; panduck gives pandoc's slug (#182) ----
+# pandoc 3.1.3 reads these headings with an empty id. panduck may be MORE faithful
+# than pandoc, and Teague ruled 2026-11-13 that every heading gets an id by pandoc's
+# rule, so a .rtf, an .epub and a .md agree on `#heading-one`.
 
-# pandoc 3.1.3 reads these headings with an empty id. They stay without one.
-query I
-SELECT count(*) FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+query II
+SELECT content, attributes['id'] FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf')
+WHERE element_type = 'heading' ORDER BY element_order;
 ----
-0
+Heading One	heading-one
+Heading Two	heading-two
 
-query I
-SELECT count(*) FROM read_epub_blocks('test/fixtures/pandoc.epub')
-WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+query II
+SELECT content, attributes['id'] FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type = 'heading' ORDER BY element_order;
 ----
-0
+Heading One	heading-one
+Heading Two	heading-two
+
+# An EPUB heading's own id attribute is the author's anchor, and it wins.
+query II
+SELECT content, attributes['id'] FROM read_epub_blocks('test/fixtures/epub_types.epub')
+WHERE element_type = 'heading';
+----
+The First Chapter	first-ch
 
 # ---- the consumer: doc_section finds a heading by its anchor ---------------
 

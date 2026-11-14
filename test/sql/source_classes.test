@@ -115,3 +115,37 @@ SELECT count(*) FROM read_odt_blocks('test/fixtures/constructs.odt')
 WHERE (element_type IN ('table', 'list', 'blockquote') OR kind = 'inline') AND attributes['class'] IS NOT NULL
 ----
 0
+
+# --- EPUB: XHTML class tokens, then EPUB 3 epub:type tokens --------------------
+# Both are already class-shaped, so they are kept VERBATIM, not slugged, joined by
+# one space, class first. The containers here are the document's own elements
+# (<section>, <blockquote>, <aside>), so unlike DOCX/ODT they DO carry a class.
+# epub_types.epub is built by test/fixtures/make_epub_types_epub.py.
+
+query III
+SELECT element_type, coalesce(content, '-'), attributes['class'] FROM read_epub_blocks('test/fixtures/epub_types.epub')
+WHERE kind = 'block' ORDER BY element_order
+----
+section	-	level1 chapter
+heading	The First Chapter	chapter-title
+blockquote	-	epigraph
+paragraph	An opening line.	NULL
+paragraph	The lead paragraph.	lead first
+paragraph	A plain paragraph.	NULL
+section	-	footnote
+paragraph	The note text.	NULL
+
+# A real writer: pandoc wraps each heading's section in class="level1" / "level2".
+query II
+SELECT element_order, attributes['class'] FROM read_epub_blocks('test/fixtures/pandoc.epub')
+WHERE element_type = 'section' ORDER BY element_order
+----
+0	level1
+10	level2
+
+# LibreOffice gives every paragraph a generated class (para0, para1, ...).
+query I
+SELECT count(*) FROM read_epub_blocks('test/fixtures/libreoffice.epub')
+WHERE element_type = 'paragraph' AND NOT regexp_full_match(coalesce(attributes['class'], ''), 'para[0-9]+')
+----
+0

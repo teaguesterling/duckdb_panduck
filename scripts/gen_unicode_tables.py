@@ -134,7 +134,9 @@ def main():
         "",
     ]
     OUT.write_text("\n".join(body), encoding="utf-8")
-    print(f"wrote {OUT.name}: {len(alpha)} alpha, {len(alnum)} alnum, {len(space)} space ranges, {len(lower)} lower pairs")
+    print(
+        f"wrote {OUT.name}: {len(alpha)} alpha, {len(alnum)} alnum, {len(space)} space ranges, {len(lower)} lower pairs"
+    )
 
 
 if __name__ == "__main__":

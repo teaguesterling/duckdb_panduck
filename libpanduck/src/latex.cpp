@@ -783,12 +783,35 @@ void Parser::BeginEnvironment(std::vector<Token> &toks, size_t &i, const std::st
 	frame.name = name;
 	frame.saved_depth = depth;
 	if (!entry || entry->disposition != Disposition::SEMANTIC) {
-		// UNKNOWN ENVIRONMENT -> TRANSPARENT, the exact opposite of the rule for an
+		// UNKNOWN ENVIRONMENT -> DESCENDED, the exact opposite of the rule for an
 		// unknown MACRO. A macro is usually presentational and usually wraps a
 		// fragment, so descending into every one of them floods the output; an
 		// environment usually wraps PROSE, and dropping it loses paragraphs.
 		// Whether the NAME was in the table changes nothing further: its body reads
 		// exactly as a known transparent environment's does.
+		//
+		// AND IT IS A `div` WITH class = ITS NAME (#182), because that is what pandoc
+		// 3.1.3 makes of it: theorem, a lemma with no \newtheorem, proof, center and
+		// a custom environment each read as Div ["name"] (measured 2026-11-13). The
+		// class is how a transform selects `.theorem`. Three names are not divs:
+		// `document` is the body; `table` is a float that pandoc reads as the Table
+		// inside it; `abstract` goes to pandoc's metadata, which this reader does not
+		// do yet, so it stays transparent rather than becoming a div pandoc lacks.
+		std::string base = name;
+		if (!base.empty() && base.back() == '*') {
+			base.pop_back();
+		}
+		if (base == "document" || base == "table" || base == "abstract") {
+			env_stack.push_back(std::move(frame));
+			return;
+		}
+		LatexBlock div;
+		div.element_type = DuckBlockVocabulary::TYPE_DIV;
+		div.level = depth;
+		div.css_class = ClassSlug(name);
+		blocks.push_back(std::move(div));
+		frame.block_index = blocks.size() - 1;
+		depth++;
 		env_stack.push_back(std::move(frame));
 		return;
 	}

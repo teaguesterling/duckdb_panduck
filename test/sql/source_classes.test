@@ -172,3 +172,38 @@ SELECT count(*) FROM read_latex_blocks_string(E'\\begin{itemize}\\item a\\end{it
 WHERE element_type IN ('list_item', 'paragraph') AND attributes['class'] IS NOT NULL
 ----
 0
+
+# --- LaTeX: an environment with no meaning of its own is a div (#182) ----------
+# pandoc 3.1.3 makes every such environment a Div with class = its name: a
+# \newtheorem one, a lemma with no \newtheorem, proof, center, a custom myenv.
+# Only `document` (the body) and `abstract` (pandoc's metadata) are not divs. The
+# environment's paragraphs nest one level inside it.
+
+query IIII
+SELECT element_order, element_type, level, coalesce(attributes['class'], content) FROM read_latex_blocks_string(E'\\documentclass{article}\n\\newtheorem{theorem}{Theorem}\n\\begin{document}\n\\begin{theorem}Every T.\\end{theorem}\n\\begin{lemma}L.\\end{lemma}\n\\begin{proof}P.\\end{proof}\n\\begin{center}C.\\end{center}\n\\begin{myenv}M.\\end{myenv}\n\\end{document}')
+WHERE kind = 'block' ORDER BY element_order
+----
+0	div	1	theorem
+1	paragraph	2	Every T.
+2	div	1	lemma
+3	paragraph	2	L.
+4	div	1	proof
+5	paragraph	2	P.
+6	div	1	center
+7	paragraph	2	C.
+8	div	1	myenv
+9	paragraph	2	M.
+
+# `document` is the body, not a div; `table` is a float around its tabular, which
+# pandoc reads as the Table itself.
+query III
+SELECT element_type, level, attributes['class'] FROM read_latex_blocks_string(E'\\begin{document}\\begin{table}\\begin{tabular}{ll}a & b\\end{tabular}\\end{table}\\end{document}')
+WHERE kind = 'block' ORDER BY element_order
+----
+table	1	tabular
+
+# An empty environment is withdrawn, as every empty container is.
+query I
+SELECT count(*) FROM read_latex_blocks_string(E'\\begin{myenv}\\end{myenv}')
+----
+0

@@ -256,5 +256,31 @@ WHERE element_type = 'heading';
 ----
 heading	Notebook Title	2
 
+# ---------------------------------------------------------------------------------------
+# EMBEDDED DATA (#188): with expand_embedded, a csv/tsv/json/jsonl code block becomes a
+# `table` block. embedded_data.md has a csv fence, a json fence, a broken csv fence and a
+# python fence: two tables, and two code blocks, the broken one carrying its reason.
+# ---------------------------------------------------------------------------------------
+query II
+SELECT element_type, count(*) FROM read_panduck_doc('test/fixtures/embedded_data.md', expand_embedded := true)
+WHERE element_type IN ('table', 'code') GROUP BY 1 ORDER BY 1;
+----
+code	2
+table	2
+
+query II
+SELECT attributes['language'], attributes['parse_error']
+FROM read_panduck_doc('test/fixtures/embedded_data.md', expand_embedded := true)
+WHERE element_type = 'code' ORDER BY element_order;
+----
+csv	csv: unterminated quote in record 2
+python	NULL
+
+# Without expand_embedded, the fences stay code: the default reads as it always did.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/embedded_data.md') WHERE element_type = 'table';
+----
+0
+
 statement ok
 RESET lambda_syntax;

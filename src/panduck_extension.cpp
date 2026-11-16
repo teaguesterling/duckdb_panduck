@@ -3,6 +3,7 @@
 #include "panduck_extension.hpp"
 #include "docx_reader.hpp"
 #include "duck_block_types.hpp"
+#include "embedded_tables.hpp"
 #include "epub_reader.hpp"
 #include "ipynb_reader.hpp"
 #include "latex_reader.hpp"
@@ -138,6 +139,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	PandocInlineConvert::Register(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
+	// BEFORE THE REGISTRY, whose expand_embedded macro calls panduck_blocks_parse_embedded.
+	panduck::RegisterEmbeddedTableFunctions(loader);
 	RegisterReaderRegistry(loader);
 }
 

@@ -146,6 +146,10 @@ include_directories(duckdb/third_party/yyjson/include)
 
 set(EXTENSION_SOURCES
     src/duck_block_repair.cpp
+    # Embedded csv/tsv/json/jsonl data as tables (#188): the parser behind the seam,
+    # the two SQL functions in front of it.
+    libpanduck/src/embedded_table.cpp
+    src/embedded_tables.cpp
     src/docx_reader.cpp
     libpanduck/src/docx.cpp
     src/panduck_extension.cpp

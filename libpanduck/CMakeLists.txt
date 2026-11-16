@@ -240,6 +240,10 @@ endif()
 
 if(PANDUCK_WITH_IPYNB)
   list(APPEND PANDUCK_SOURCES src/ipynb.cpp)
+  # Embedded csv/tsv/json/jsonl data as tables (#188). It needs exactly what ipynb
+  # needs, a yyjson, and nothing else, so it is built under the same condition rather
+  # than behind a module option of its own; the extension build always compiles it.
+  list(APPEND PANDUCK_SOURCES src/embedded_table.cpp)
 endif()
 
 if(PANDUCK_WITH_DOCX)

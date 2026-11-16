@@ -1,0 +1,147 @@
+# name: test/sql/embedded_tables.test
+# description: csv/tsv/json/jsonl code blocks become native table blocks (#188)
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. A document often carries data as a fenced code block (```csv, ```json). #188 moves
+# turning those into `table` blocks from duck_block_utils (#79, closed PR #84) into the
+# reader layer, by Teague's ruling: dbu keeps only small table-JSON macros, and parsing
+# embedded data belongs to the readers.
+#
+# THE EXPECTED VALUES are dbu #84's, measured on its build (feat/parse-embedded, 704fe62)
+# with the same inputs, so the port is checked against the code it replaces. The csv case
+# is also pandoc's: `pandoc -f csv` gives the same headers and rows (measured in #188).
+#
+# The table content is the shape every panduck reader emits for a table:
+# {"headers":[...],"rows":[[...]]}, all cells strings. duck_block_utils'
+# duck_block_table_read reads it back with types.
+# ---------------------------------------------------------------------------
+
+# --- one text: panduck_embedded_to_table(text, format) -> STRUCT(content, error) ---
+
+# RFC 4180: a quoted field keeps its comma.
+query II
+SELECT r.content, r.error FROM (SELECT panduck_embedded_to_table(E'a,b\n1,"x, y"\n2,z\n', 'csv') AS r);
+----
+{"headers":["a","b"],"rows":[["1","x, y"],["2","z"]]}	NULL
+
+query I
+SELECT panduck_embedded_to_table(E'k\tv\nq\tr\n', 'tsv').content;
+----
+{"headers":["k","v"],"rows":[["q","r"]]}
+
+# A doubled quote is one quote; CRLF ends a record; the format name ignores case.
+query I
+SELECT panduck_embedded_to_table(E'A,B\r\n1,"say ""hi"""\r\n', 'CSV').content;
+----
+{"headers":["A","B"],"rows":[["1","say \"hi\""]]}
+
+# JSON: headers are every key in first-seen order. A missing key or a null is an empty
+# cell. A number keeps its literal text (1.50, not 1.5). A nested value is compact JSON.
+query I
+SELECT panduck_embedded_to_table('[{"a": 1.50, "b": "x"}, {"a": 2, "c": true, "d": null, "e": {"n": [1, 2]}}]', 'json').content;
+----
+{"headers":["a","b","c","d","e"],"rows":[["1.50","x","","",""],["2","","true","","{\"n\":[1,2]}"]]}
+
+# JSONL: one object per line; blank lines are skipped.
+query I
+SELECT panduck_embedded_to_table(E'{"a": 1}\n\n{"b": "q"}\n', 'jsonl').content;
+----
+{"headers":["a","b"],"rows":[["1",""],["","q"]]}
+
+# --- a text that does not parse reports why, and sets no content ---
+
+query II
+SELECT r.content, r.error FROM (SELECT panduck_embedded_to_table(E'a,b\n1,"unterminated\n', 'csv') AS r);
+----
+NULL	csv: unterminated quote in record 2
+
+query I
+SELECT panduck_embedded_to_table(E'a,b\n1,2,3\n', 'csv').error;
+----
+csv: data row 1 has 3 fields, the header has 2
+
+query I
+SELECT panduck_embedded_to_table('{"a": 1}', 'json').error;
+----
+json: expected an array of objects
+
+query I
+SELECT panduck_embedded_to_table('[]', 'json').error;
+----
+json: the array is empty
+
+query I
+SELECT panduck_embedded_to_table('[{"a": 1} trailing', 'json').error;
+----
+json: not a complete JSON value
+
+query I
+SELECT panduck_embedded_to_table('a', 'xml').error;
+----
+unsupported format: xml (supported: csv, tsv, json, jsonl)
+
+# THE PADDING IS BOUNDED. N objects with disjoint keys make an N x N table: in dbu, 47 KB
+# of input gave 48 MB of content and 620 MB peak RSS. 2000 such objects would need 3998000
+# empty cells, over the limit of max(1000000, present cells), so the block is refused.
+query I
+SELECT panduck_embedded_to_table('[' || string_agg('{"k' || i || '": 1}', ',') || ']', 'json').error FROM range(2000) t(i);
+----
+json: 2000 objects x 2000 keys would need 3998000 padding cells; the limit is max(1000000, present cells)
+
+# --- a block list: panduck_blocks_parse_embedded(blocks[, formats]) ---
+
+statement ok
+CREATE TABLE doc AS SELECT * FROM (VALUES
+  ('block', 'heading', 'Data', 1, 'text', MAP {'heading_level': '1'}, 0),
+  ('block', 'code', E'a,b\n1,"x, y"\n2,z', 1, 'text', MAP {'language': 'csv'}, 1),
+  ('block', 'code', '[{"a": 1, "b": "x"}, {"a": 2, "c": true}]', 1, 'text', MAP {'language': 'JSON'}, 2),
+  ('block', 'code', E'a,b\n1,"unterminated', 1, 'text', MAP {'language': 'csv'}, 3),
+  ('block', 'code', 'print(1)', 1, 'text', MAP {'language': 'python'}, 4),
+  ('inline', 'code', 'a,b', 2, 'text', MAP {'language': 'csv'}, 5)
+) t(kind, element_type, content, level, encoding, attributes, element_order);
+
+statement ok
+CREATE TABLE parsed AS SELECT unnest(panduck_blocks_parse_embedded(list(d ORDER BY d.element_order))) AS b FROM doc d;
+
+# Two tables, the broken csv left as code, python and the inline untouched.
+query IIII
+SELECT b.element_order, b.kind, b.element_type, b.encoding FROM parsed ORDER BY 1;
+----
+0	block	heading	text
+1	block	table	json
+2	block	table	json
+3	block	code	text
+4	block	code	text
+5	inline	code	text
+
+# A table keeps its attributes, language included, and keeps the source text.
+query III
+SELECT b.attributes['language'], b.attributes['source_text'] = E'a,b\n1,"x, y"\n2,z', b.content FROM parsed WHERE b.element_order = 1;
+----
+csv	true	{"headers":["a","b"],"rows":[["1","x, y"],["2","z"]]}
+
+# A block that fails stays code, its content unchanged, with the reason. One bad block
+# does not fail the document.
+query III
+SELECT b.content = E'a,b\n1,"unterminated', b.attributes['parse_error'], b.attributes['source_text'] FROM parsed WHERE b.element_order = 3;
+----
+true	csv: unterminated quote in record 2	NULL
+
+# Running it twice gives the same blocks as running it once.
+query I
+SELECT panduck_blocks_parse_embedded(panduck_blocks_parse_embedded(list(d ORDER BY d.element_order)))
+     = panduck_blocks_parse_embedded(list(d ORDER BY d.element_order)) FROM doc d;
+----
+true
+
+# `formats` limits which languages convert.
+query II
+SELECT u.b.element_order, u.b.element_type FROM (
+  SELECT unnest(panduck_blocks_parse_embedded(list(d ORDER BY d.element_order), ['json'])) AS b FROM doc d) u
+WHERE u.b.element_order IN (1, 2) ORDER BY 1;
+----
+1	code
+2	table

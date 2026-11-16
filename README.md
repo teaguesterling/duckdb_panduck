@@ -25,6 +25,14 @@ SELECT * FROM doc_reader('page.html');            -- reading mode: drop nav, asi
 -- expand_embedded parses them, and makes the notebook navigable.
 -- Needs the markdown extension; without it this errors rather than returning 0 headings.
 SELECT * FROM doc_toc('analysis.ipynb', expand_embedded := true);
+
+-- expand_embedded also turns a ```csv, ```tsv, ```json or ```jsonl code block into a
+-- native `table` block. A block that does not parse stays code, with the reason in
+-- attributes['parse_error']; the source text is kept in attributes['source_text'].
+SELECT * FROM read_panduck_doc('notes.md', expand_embedded := true);
+-- The same conversion on its own, with no other extension needed:
+SELECT panduck_blocks_parse_embedded(list(b)) FROM read_docx_blocks('report.docx') b;
+SELECT panduck_embedded_to_table(E'a,b\n1,2', 'csv');   -- STRUCT(content, error)
 ```
 
 **PDF needs one more extension.** `read_pdf_blocks` is panduck's; it delegates to

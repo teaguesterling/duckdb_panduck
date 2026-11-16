@@ -18,6 +18,7 @@
 #include "rst_reader.hpp"
 #include "rtf_reader.hpp"
 #include "supported_extensions.hpp"
+#include "table_read.hpp"
 #include "textile_reader.hpp"
 
 #include "duckdb.hpp"
@@ -136,6 +137,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// these are scalars over a JSON string or a block list.
 	PandocBlockConvert::Register(loader);
 	PandocInlineConvert::Register(loader);
+	// A table block's content back to a typed relation. Moved from
+	// duck_block_utils (#78), which keeps only macros.
+	panduck::RegisterTableReadFunctions(loader);
 
 	RegisterSupportedExtensionsFunction(loader);
 	RegisterReaderRegistry(loader);

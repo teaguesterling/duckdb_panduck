@@ -1,0 +1,206 @@
+# name: test/sql/table_read.test
+# description: panduck_table_read - a table block's content back to a typed relation
+# group: [sql]
+
+require panduck
+
+# Moved from duck_block_utils (#78), where it was duck_block_table_read. This
+# file needs neither duck_block_utils nor json, so neither can make it skip.
+
+# ============================================================================
+# Round trip: rows -> table block -> rows, with types restored.
+# The forward direction stringifies every cell; the inverse must recover the
+# column types by sniffing, or every client re-types columns by hand.
+# ============================================================================
+
+statement ok
+CREATE TABLE src AS SELECT * FROM (VALUES
+    (1, 2.5,  DATE '2024-01-02', 'a|b',          true),
+    (2, 3.0,  DATE '2024-02-29', E'line1\nline2', false),
+    (3, NULL, NULL,              NULL,           NULL)
+) v(i, d, dt, txt, flag);
+
+# The content duck_block_utils' forward direction writes for src: measured
+# 2026-11-16 as (duck_blocks_query_table('SELECT * FROM src'))[1].content at
+# duck_block_utils c38c2a5. Every cell is a string, and NULL is an empty cell.
+statement ok
+SET VARIABLE tbl = '{"headers":["i","d","dt","txt","flag"],"rows":[["1","2.5","2024-01-02","a|b","true"],["2","3.0","2024-02-29","line1\nline2","false"],["3","","","",""]]}';
+
+# Column names come from the headers, types from the cells.
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM panduck_table_read(getvariable('tbl')));
+----
+i	BIGINT
+d	DOUBLE
+dt	DATE
+txt	VARCHAR
+flag	BOOLEAN
+
+# The values come back equal to the source, NULLs included (the forward
+# direction writes NULL as an empty cell; an empty cell reads back as NULL).
+query I
+SELECT count(*) FROM (
+    (SELECT i, d, dt, txt, flag FROM src
+     EXCEPT
+     SELECT * FROM panduck_table_read(getvariable('tbl')))
+    UNION ALL
+    (SELECT * FROM panduck_table_read(getvariable('tbl'))
+     EXCEPT
+     SELECT i, d, dt, txt, flag FROM src)
+);
+----
+0
+
+# A newline inside a cell survives as a real newline, a pipe as a pipe.
+query II
+SELECT txt = E'line1\nline2', (SELECT txt FROM panduck_table_read(getvariable('tbl')) WHERE i = 1)
+FROM panduck_table_read(getvariable('tbl')) WHERE i = 2;
+----
+true	a|b
+
+# Row order is the table's row order.
+query I
+SELECT list(i) FROM panduck_table_read(getvariable('tbl'));
+----
+[1, 2, 3]
+
+# More rows than one output vector holds (2048): every row arrives, in order.
+statement ok
+SET VARIABLE big = (SELECT '{"headers":["n"],"rows":[' || string_agg('["' || r || '"]', ',' ORDER BY r) || ']}' FROM range(5000) t(r));
+
+query IIII
+SELECT count(*), sum(n), min(n), max(n) FROM panduck_table_read(getvariable('big'));
+----
+5000	12497500	0	4999
+
+query I
+SELECT bool_and(n = rn - 1) FROM (SELECT n, row_number() OVER () rn FROM panduck_table_read(getvariable('big')));
+----
+true
+
+# A prepared parameter is a constant at bind, so clients can bind the content.
+statement ok
+PREPARE read_tbl AS SELECT * FROM panduck_table_read($1);
+
+query I
+EXECUTE read_tbl('{"headers":["a"],"rows":[["1"],["2"]]}');
+----
+1
+2
+
+# ============================================================================
+# Sniffing: a column takes the narrowest type every non-empty cell fits.
+# ============================================================================
+
+# Integers and decimals mixed -> DOUBLE; integers and words mixed -> VARCHAR.
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["n","m"],"rows":[["1","1"],["2.5","x"]]}'));
+----
+n	DOUBLE
+m	VARCHAR
+
+# A timestamp is not narrowed to a DATE.
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["ts"],"rows":[["2024-01-02 03:04:05"],["2024-01-03"]]}'));
+----
+ts	TIMESTAMP
+
+# A column whose cells are all empty stays VARCHAR, with NULL values.
+query II
+SELECT column_type, (SELECT count(e) FROM panduck_table_read('{"headers":["e"],"rows":[[""],[""]]}'))
+FROM (DESCRIBE SELECT * FROM panduck_table_read('{"headers":["e"],"rows":[[""],[""]]}'));
+----
+VARCHAR	0
+
+# Zero-padded codes (zip codes, ids) stay text: the strict integer cast rejects
+# a leading zero, so 007 is not silently turned into 7.
+query II
+SELECT column_type, (SELECT list(z) FROM panduck_table_read('{"headers":["z"],"rows":[["007"],["010"]]}'))
+FROM (DESCRIBE SELECT * FROM panduck_table_read('{"headers":["z"],"rows":[["007"],["010"]]}'));
+----
+VARCHAR	[007, 010]
+
+# A word that DuckDB would cast to BOOLEAN ('t', 'yes') is still a word.
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["w"],"rows":[["t"],["f"]]}'));
+----
+w	VARCHAR
+
+# ============================================================================
+# Shape repair: header names and ragged rows.
+# ============================================================================
+
+# Empty and duplicate header names become column_<n>, n = 1-based position.
+query I
+SELECT list(column_name) FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["a","","a"],"rows":[["1","2","3"]]}'));
+----
+[a, column_2, column_3]
+
+# A short row pads with NULL; a long row adds a column named by position.
+query III
+SELECT * FROM panduck_table_read('{"headers":["a","b"],"rows":[["x"],["y","z","w"]]}');
+----
+x	NULL	NULL
+y	z	w
+
+query I
+SELECT list(column_name) FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["a","b"],"rows":[["x"],["y","z","w"]]}'));
+----
+[a, b, column_3]
+
+# Headers but no rows: the columns exist, as VARCHAR, with zero rows.
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM panduck_table_read(
+    '{"headers":["a","b"],"rows":[]}'));
+----
+a	VARCHAR
+b	VARCHAR
+
+# ============================================================================
+# Inputs that are not a table block's content fail at bind, with a reason.
+# ============================================================================
+
+statement error
+SELECT * FROM panduck_table_read('not json');
+----
+panduck_table_read
+
+statement error
+SELECT * FROM panduck_table_read('{"rows":[["1"]]}');
+----
+headers
+
+statement error
+SELECT * FROM panduck_table_read(NULL);
+----
+panduck_table_read
+
+# ============================================================================
+# Padding is bounded. A short row pads with NULL, so one wide row and many
+# short ones would make rows x width cells from little input. Past
+# max(1,000,000, cells present) padded cells, bind fails rather than allocate.
+# ============================================================================
+
+statement ok
+SET VARIABLE wide = (SELECT '{"headers":["a"],"rows":[[' || (SELECT string_agg('"x"', ',') FROM range(2000)) || '],'
+    || (SELECT string_agg('["y"]', ',') FROM range(2000)) || ']}');
+
+statement error
+SELECT count(*) FROM panduck_table_read(getvariable('wide'));
+----
+padding
+
+# A dense table far past the padding limit is still read: the limit counts
+# only invented cells, and dense cells are bounded by the input itself.
+statement ok
+SET VARIABLE dense = (SELECT '{"headers":["a","b"],"rows":[' || string_agg('["1","2"]', ',') || ']}' FROM range(600000));
+
+query I
+SELECT count(*) FROM panduck_table_read(getvariable('dense'));
+----
+600000

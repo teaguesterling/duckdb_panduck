@@ -11,8 +11,9 @@
 #      from all four functions. A NULL appears only when the CALLER aggregates zero rows.
 #
 # Fixtures: glob_patterns.textile (textile slugs heading ids), and pandoc_outlinelevel.rtf
-# (rtf headings carry no id, as in pandoc). Both are read natively. The no-id fixture was
-# handwritten.org until org headings gained pandoc's id (#85).
+# with its ids REMOVED in SQL. Since #182 every panduck reader gives a heading an id, so
+# no fixture has a heading without one; a duck_block list from elsewhere still can. The
+# no-id fixture was handwritten.org until #85, then this rtf until #182.
 
 require panduck
 
@@ -48,21 +49,23 @@ SELECT count(*) FROM doc_section('test/fixtures/glob_patterns.textile', 'a\_b-an
 ----
 0
 
-# A heading with no id is reachable only by its title. rtf headings carry no id, and
-# doc_section derives no slug for them.
+# A heading with no id is reachable only by its title, and doc_section derives no slug
+# for it. The list below is the rtf's blocks with every id removed.
 query I
-SELECT count(*) FROM read_panduck_doc('test/fixtures/pandoc_outlinelevel.rtf')
-WHERE element_type = 'heading' AND attributes['id'] IS NOT NULL;
+WITH b AS (SELECT list(struct_update(r, attributes := map_from_entries(list_filter(map_entries(r.attributes), lambda e: e.key <> 'id'))) ORDER BY r.element_order) AS bl FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf') r)
+SELECT count(*) FROM unnest((SELECT bl FROM b)) u(x) WHERE x.attributes['id'] IS NOT NULL;
 ----
 0
 
 query I
-SELECT count(*) FROM doc_section('test/fixtures/pandoc_outlinelevel.rtf', 'heading-one', match := 'contains');
+WITH b AS (SELECT list(struct_update(r, attributes := map_from_entries(list_filter(map_entries(r.attributes), lambda e: e.key <> 'id'))) ORDER BY r.element_order) AS bl FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf') r)
+SELECT count(*) FROM doc_section_blocks((SELECT bl FROM b), 'heading-one', match := 'contains');
 ----
 0
 
 query I
-SELECT count(*) > 0 FROM doc_section('test/fixtures/pandoc_outlinelevel.rtf', 'Heading One');
+WITH b AS (SELECT list(struct_update(r, attributes := map_from_entries(list_filter(map_entries(r.attributes), lambda e: e.key <> 'id'))) ORDER BY r.element_order) AS bl FROM read_rtf_blocks('test/fixtures/pandoc_outlinelevel.rtf') r)
+SELECT count(*) > 0 FROM doc_section_blocks((SELECT bl FROM b), 'Heading One');
 ----
 true
 

@@ -1516,7 +1516,12 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // at bind time. `make check-lambda-syntax` scans every SQL string in src/
      // for it, because without the markdown extension these lambdas are never
      // bound and a test cannot see them.
-     "panduck_renumber_blocks("
+     // EMBEDDED DATA BECOMES TABLES TOO (#188). The outer call turns every csv, tsv,
+     // json and jsonl code block, the host's own and any a markdown fragment just
+     // produced, into a `table` block. It runs AFTER the splice, so a fence inside an
+     // ipynb markdown cell converts as well. It is a C++ scalar and needs no other
+     // extension.
+     "panduck_blocks_parse_embedded(panduck_renumber_blocks("
      "  flatten(list_transform(blocks, lambda pd_blk: "
      "    CASE WHEN pd_blk.element_type = 'raw' "
      "          AND pd_blk.attributes['format'] = 'markdown' "
@@ -1537,7 +1542,7 @@ const panduck::PanduckMacro SCALAR_MACROS[] = {
      // own origin is kept and the disagreement stays visible where it belongs
      // -- upstream.
      "  coalesce(list_min(list_transform(blocks, lambda pd_ord: "
-     "pd_ord.element_order)), 0))"},
+     "pd_ord.element_order)), 0)))"},
 
     //! panduck_expand_embedded(blocks) -- replace embedded-format `raw` blocks
     //! with their parsed contents. Gated, so a missing markdown extension is

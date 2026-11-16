@@ -277,6 +277,27 @@ back to *valid* pandoc JSON stays total. Diverge where the source justifies it, 
 nothing, and never emit JSON pandoc rejects. `make check-writeback` enforces the last
 clause by feeding every fixture and a set of hand-built constructs to a real pandoc.
 
+## Reading a table block back as data
+
+`panduck_table_read(content)` turns a `table` block's content
+(`{"headers": [...], "rows": [[...]]}`) back into a relation with typed columns. It moved
+from duck_block_utils, where it was `duck_block_table_read`.
+
+```sql
+SET VARIABLE t = (SELECT content FROM blocks WHERE element_type = 'table' LIMIT 1);
+SELECT * FROM panduck_table_read(getvariable('t'));
+```
+
+- **Types.** Each column takes the first type that every non-empty cell fits under a
+  strict cast: `BIGINT`, `DOUBLE`, `DATE`, `TIMESTAMP`, `BOOLEAN` (only `true`/`false`),
+  else `VARCHAR`. `007` stays `VARCHAR`.
+- **Empty cells are NULL**, in every column.
+- **Names.** An empty or duplicate header becomes `column_<n>`, 1-based.
+- **Ragged rows.** A short row pads with NULL; a long row adds a column. Padding may add
+  at most max(1,000,000, cells present) cells, else the bind fails.
+- **The argument must be a constant** (a literal, `getvariable()`, a prepared
+  parameter): the bind step reads it to decide the columns. A subquery is rejected.
+
 ## Formats
 
 | Format | Extensions | Status |

@@ -15,8 +15,8 @@ require panduck
 # is also pandoc's: `pandoc -f csv` gives the same headers and rows (measured in #188).
 #
 # The table content is the shape every panduck reader emits for a table:
-# {"headers":[...],"rows":[[...]]}, all cells strings. duck_block_utils'
-# duck_block_table_read reads it back with types.
+# {"headers":[...],"rows":[[...]]}, all cells strings. panduck_table_read
+# (#191, formerly duck_block_utils' duck_block_table_read) reads it back with types.
 # ---------------------------------------------------------------------------
 
 # --- one text: panduck_embedded_to_table(text, format) -> STRUCT(content, error) ---

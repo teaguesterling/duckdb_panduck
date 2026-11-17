@@ -568,15 +568,15 @@ SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_str
 1	paragraph	1. item :
 1	code	code
 
-# CONTROL: a BULLET below the threshold is NOT folded. docutils keeps the bullet_list and
-# puts the run in a paragraph inside the item; pandoc reads the whole thing as prose; the
-# two references disagree, and panduck matches neither exactly. That is the #87 transition
-# story rather than this one, so it is pinned unchanged rather than swept into the fold.
+# CONTROL: a BULLET below the threshold is NOT folded into the item. pandoc reads the whole
+# thing as prose. docutils (0.20.1, measured 2026-11-16) keeps the bullet_list and puts
+# `---` in a paragraph AFTER it. panduck emitted an `hr` here until #192 gave transitions
+# their four-character minimum, and now matches docutils exactly.
 query I
 SELECT string_agg(element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
   E'- item\n---\n\nBody.\n');
 ----
-list,list_item,hr,paragraph
+list,list_item,paragraph,paragraph
 
 # ---------------------------------------------------------------------------------------
 # THE ADORNMENT THRESHOLD IS `min(4, title length)` (#88), NOT A FLAT FLOOR.

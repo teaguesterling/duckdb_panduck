@@ -677,6 +677,16 @@ private:
 					blocks_.push_back(std::move(b));
 					continue;
 				}
+				// A TRANSITION NEEDS FOUR CHARACTERS (docutils; pandoc 3.1.3 reads `---`
+				// and `...` alone as a paragraph, measured 2026-11-16). A shorter run
+				// standing alone is prose. #192 made `...` reach this arm, where it had
+				// been dropped as a comment. A short run with a line right after it may
+				// be an overline, so it keeps the old path.
+				if (line.text.size() < RST_MIN_SECTION_ADORNMENT &&
+				    (i + 1 >= to || lines_[i + 1].kind == LineKind::BLANK)) {
+					para.push_back(line.text);
+					continue;
+				}
 				flush();
 				RstBlock b;
 				b.element_type = DuckBlockVocabulary::TYPE_HR;

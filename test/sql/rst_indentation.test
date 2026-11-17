@@ -414,6 +414,46 @@ SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id
 1	div	(empty)	CIT2002
 2	paragraph	A citation body.	(empty)
 
+# ---------------------------------------------------------------------------------------
+# A BLANK LINE DOES NOT END A FOOTNOTE BODY. Every indented line after the label belongs to
+# it, across blank lines, until a line at or left of the `..` column. That is docutils' rule
+# for footnotes and citations (a COMMENT's body must start on the very next line), and
+# pandoc 3.1.3 reads all three shapes below into the Note (measured 2026-11-16). panduck
+# ended the body at the first blank line, so paragraph 2 came out as a level-1 blockquote
+# in the main text, outside the div. duckeye found it when .rst moved off pandoc(1).
+# ---------------------------------------------------------------------------------------
+
+# Both paragraphs sit under the div, and the anchor carries the whole body's text.
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
+  E'A note [#]_ here.\n\n.. [#] The footnote body.\n\n       Second para of the body.\n\nClosing paragraph.\n') ORDER BY element_order;
+----
+1	paragraph	(empty)	(empty)
+2	text	A note	(empty)
+2	note	The footnote body. Second para of the body.	#1
+2	text	here.	(empty)
+1	div	(empty)	#1
+2	paragraph	The footnote body.	(empty)
+2	paragraph	Second para of the body.	(empty)
+1	paragraph	Closing paragraph.	(empty)
+
+# An empty label line, then a blank line, then the body. Before, this gave an empty
+# footnote and a blockquote.
+query IIII
+SELECT level, element_type, coalesce(trim(content), ''), coalesce(attributes['id'], '') FROM read_rst_blocks_string(
+  E'.. [1]\n\n   Body after blank.\n\nAfter.\n') ORDER BY element_order;
+----
+1	div	(empty)	1
+2	paragraph	Body after blank.	(empty)
+1	paragraph	After.	(empty)
+
+# A body with a later block that is not a paragraph: the list is in the footnote too.
+query I
+SELECT string_agg(level || ':' || element_type, ',' ORDER BY element_order) FROM read_rst_blocks_string(
+  E'.. [1] Body one.\n\n     - item\n\nAfter.\n') WHERE kind = 'block';
+----
+1:div,2:paragraph,2:list,3:list_item,1:paragraph
+
 # THE CONTROL that keeps the fix honest: an ordinary comment still produces nothing, whether
 # its text is on the label line or indented below it. Only a `[` label makes it document text.
 query III

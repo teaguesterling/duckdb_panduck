@@ -543,11 +543,19 @@ private:
 						// The scanner already trimmed this line, so the remainder needs no
 						// trim.
 						const std::string seed = b == std::string::npos ? std::string() : line.text.substr(b);
-						// The body run starts on the VERY NEXT line, as for any comment:
-						// a blank line straight after means the label line is all of it.
+						// THE BODY IS EVERY INDENTED LINE AFTER THE LABEL, across blank
+						// lines, until a line at or left of the `..` column. Unlike a
+						// comment, a blank line straight after the label does not end it:
+						// docutils strips leading blanks from a footnote's indented block,
+						// and pandoc 3.1.3 keeps a second paragraph in the Note (measured
+						// 2026-11-16). Before, paragraph 2 leaked out as a blockquote.
+						size_t first = i + 1;
+						while (first < to && lines_[first].kind == LineKind::BLANK) {
+							first++;
+						}
 						size_t end = i + 1;
-						if (i + 1 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].indent > line.indent) {
-							end = std::min(IndentedRun(i + 1, line.indent), to);
+						if (first < to && lines_[first].indent > line.indent) {
+							end = std::min(IndentedRun(first, line.indent), to);
 						}
 						if (!seed.empty() || end > i + 1) {
 							flush();

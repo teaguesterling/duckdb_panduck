@@ -385,8 +385,19 @@ private:
 		if (role) {
 			b.role = role;
 		}
+		// A RUN OF SPACES OR TABS IS ONE SPACE (#196). pandoc 3.1.3 collapses it in
+		// prose, emphasis and inline literals alike. A literal block never comes
+		// through here, so code keeps its spaces.
+		std::string collapsed;
+		collapsed.reserve(text.size());
+		for (char ch : text) {
+			bool space = ch == ' ' || ch == '\t';
+			if (!(space && !collapsed.empty() && collapsed.back() == ' ')) {
+				collapsed += space ? ' ' : ch;
+			}
+		}
 		std::vector<RstInline> runs;
-		ParseInlines(text, level + 1, runs);
+		ParseInlines(collapsed, level + 1, runs);
 		if (runs.size() == 1 && runs[0].element_type == DuckBlockVocabulary::INLINE_TEXT) {
 			b.content = runs[0].content;
 		} else if (!runs.empty()) {
@@ -672,6 +683,16 @@ private:
 					// parameter.
 					b.id = HeadingSlug(b.content, '-');
 					blocks_.push_back(std::move(b));
+					continue;
+				}
+				// A TRANSITION NEEDS FOUR CHARACTERS (docutils; pandoc 3.1.3 reads `---`
+				// and `...` alone as a paragraph, measured 2026-11-16). A shorter run
+				// standing alone is prose. #192 made `...` reach this arm, where it had
+				// been dropped as a comment. A short run with a line right after it may
+				// be an overline, so it keeps the old path.
+				if (line.text.size() < RST_MIN_SECTION_ADORNMENT &&
+				    (i + 1 >= to || lines_[i + 1].kind == LineKind::BLANK)) {
+					para.push_back(line.text);
 					continue;
 				}
 				flush();

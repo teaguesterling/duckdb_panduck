@@ -122,7 +122,12 @@ std::vector<Line> ScanRst(const std::string &src) {
 
 		// `..` BEFORE ADORNMENT: `..` is itself two punctuation characters and
 		// would otherwise read as a two-character adornment run.
-		if (t.rfind("..", 0) == 0) {
+		//
+		// EXPLICIT MARKUP is `..` followed by whitespace or the end of the line,
+		// per docutils. A doctest's `...` continuation, an ellipsis that opens a
+		// line, and `..x` are all text (#192). Before, they were dropped as
+		// comments.
+		if (t.rfind("..", 0) == 0 && (t.size() == 2 || t[2] == ' ' || t[2] == '\t')) {
 			auto rest = TrimBoth(t.substr(2));
 			auto colons = rest.find("::");
 			if (colons != std::string::npos && colons > 0) {

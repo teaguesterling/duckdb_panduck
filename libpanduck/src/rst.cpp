@@ -365,17 +365,72 @@ private:
 	//! character it is -- measured, and the opposite of the usual assumption that
 	//! `=` is level 1. A reader that hardcodes the conventional order is right on
 	//! conventional documents and wrong on valid ones.
-	std::vector<char> adornments_;
+	//!
+	//! A STYLE IS THE CHARACTER AND WHETHER THE TITLE HAS AN OVERLINE (#200).
+	//! `===` above and below a title is a different style from `===` below only:
+	//! `A/=`, `===/B/===`, `C/=` is levels 1, 2, 1 in docutils 0.20.1 and pandoc
+	//! 3.1.3 (measured 2026-11-17).
+	std::vector<std::pair<char, bool>> adornments_;
 
-	int LevelFor(char c) {
+	int LevelFor(char c, bool overlined) {
+		const std::pair<char, bool> style(c, overlined);
 		for (size_t i = 0; i < adornments_.size(); i++) {
-			if (adornments_[i] == c) {
+			if (adornments_[i] == style) {
 				return static_cast<int>(i) + 1;
 			}
 		}
-		adornments_.push_back(c);
+		adornments_.push_back(style);
 		auto n = static_cast<int>(adornments_.size());
 		return n > 6 ? 6 : n;
+	}
+
+	//! One section title at `depth`, its level from its adornment style.
+	void EmitHeading(const std::string &title, char adornment, bool overlined, int depth) {
+		RstBlock b;
+		b.element_type = DuckBlockVocabulary::TYPE_HEADING;
+		b.heading_level = LevelFor(adornment, overlined);
+		b.level = depth;
+		// THE TITLE WAS NOT PARSED AT ALL, so `**Bold** title` reached
+		// `content` as literal source -- markup leaking as text, which is
+		// worse than the flattening the other readers did. Now it is parsed
+		// like any other run.
+		std::vector<RstInline> runs;
+		ParseInlines(title, depth + 1, runs);
+		if (runs.size() == 1 && runs[0].element_type == DuckBlockVocabulary::INLINE_TEXT) {
+			b.content = runs[0].content;
+		} else {
+			// A HEADING CARRIES BOTH: a flattened title in `content` AND the
+			// rich inline children beside it (duck_block ruling d003d32).
+			//
+			// Flattening alone loses formatting irreversibly -- `**Bold**
+			// title` and `Bold title` become byte-identical, so a round trip
+			// rewrites the first as the second. Children alone break every
+			// consumer that reads a title from `content`, which doc_toc does.
+			//
+			// The structure marks itself and needs no new vocabulary: a lone
+			// text child lives in `content` and produces NO children, so
+			// children alongside non-empty content can only mean the content is
+			// a DERIVED flattening. CHILDREN ARE AUTHORITATIVE when both are
+			// present.
+			std::string all;
+			for (auto &r : runs) {
+				all += r.content;
+			}
+			b.content = all;
+			b.inlines = std::move(runs);
+		}
+		// THE ANCHOR (#85). RST emitted none, so doc_render produced `<h1>Title</h1>`
+		// where pandoc produces `<h1 id="title">`, and doc_section -- which matches
+		// `content = section OR attributes['id'] = section` -- could not find a
+		// heading by anchor. webbed's renderer needed no change; it emits the id
+		// whenever the block carries one, which textile already demonstrated.
+		//
+		// Derived from `content`, the FLATTENED title in both branches above, so
+		// `**Bold** Title` slugs as `bold-title` and the delimiters contribute
+		// nothing. slugify.hpp holds the rule and why the separator is its only
+		// parameter.
+		b.id = HeadingSlug(b.content, '-');
+		blocks_.push_back(std::move(b));
 	}
 
 	void Emit(const char *type, const std::string &text, int level, const char *role = nullptr) {
@@ -638,51 +693,19 @@ private:
 					std::string title = para.back();
 					para.pop_back();
 					flush();
-					RstBlock b;
-					b.element_type = DuckBlockVocabulary::TYPE_HEADING;
-					b.heading_level = LevelFor(line.adornment);
-					b.level = depth;
-					// THE TITLE WAS NOT PARSED AT ALL, so `**Bold** title` reached
-					// `content` as literal source -- markup leaking as text, which is
-					// worse than the flattening the other readers did. Now it is parsed
-					// like any other run.
-					std::vector<RstInline> runs;
-					ParseInlines(title, depth + 1, runs);
-					if (runs.size() == 1 && runs[0].element_type == DuckBlockVocabulary::INLINE_TEXT) {
-						b.content = runs[0].content;
-					} else {
-						// A HEADING CARRIES BOTH: a flattened title in `content` AND the
-						// rich inline children beside it (duck_block ruling d003d32).
-						//
-						// Flattening alone loses formatting irreversibly -- `**Bold**
-						// title` and `Bold title` become byte-identical, so a round trip
-						// rewrites the first as the second. Children alone break every
-						// consumer that reads a title from `content`, which doc_toc does.
-						//
-						// The structure marks itself and needs no new vocabulary: a lone
-						// text child lives in `content` and produces NO children, so
-						// children alongside non-empty content can only mean the content is
-						// a DERIVED flattening. CHILDREN ARE AUTHORITATIVE when both are
-						// present.
-						std::string all;
-						for (auto &r : runs) {
-							all += r.content;
-						}
-						b.content = all;
-						b.inlines = std::move(runs);
-					}
-					// THE ANCHOR (#85). RST emitted none, so doc_render produced `<h1>Title</h1>`
-					// where pandoc produces `<h1 id="title">`, and doc_section -- which matches
-					// `content = section OR attributes['id'] = section` -- could not find a
-					// heading by anchor. webbed's renderer needed no change; it emits the id
-					// whenever the block carries one, which textile already demonstrated.
-					//
-					// Derived from `content`, the FLATTENED title in both branches above, so
-					// `**Bold** Title` slugs as `bold-title` and the delimiters contribute
-					// nothing. slugify.hpp holds the rule and why the separator is its only
-					// parameter.
-					b.id = HeadingSlug(b.content, '-');
-					blocks_.push_back(std::move(b));
+					EmitHeading(title, line.adornment, false, depth);
+					continue;
+				}
+				// AN OVERLINE (#200): a run, a title line, and a run of the SAME character.
+				// Before, the overline fell through to the transition arm below, so the
+				// title got a spurious `hr` in front of it. The title line may be inset;
+				// the scanner has already trimmed it. An enumerated title keeps its marker.
+				if (i + 2 < to && lines_[i + 1].kind != LineKind::BLANK && lines_[i + 1].kind != LineKind::ADORNMENT &&
+				    lines_[i + 2].kind == LineKind::ADORNMENT && lines_[i + 2].adornment == line.adornment) {
+					flush();
+					const auto &t = lines_[i + 1];
+					EmitHeading(t.raw_text.empty() ? t.text : t.raw_text, line.adornment, true, depth);
+					i += 2;
 					continue;
 				}
 				// A TRANSITION NEEDS FOUR CHARACTERS (docutils; pandoc 3.1.3 reads `---`

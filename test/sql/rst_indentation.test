@@ -832,3 +832,43 @@ SELECT level, element_type, coalesce(attributes['role'], '-') || '|' || coalesce
 3	list	-|
 4	list_item	-|a
 4	list_item	-|b
+
+# ---------------------------------------------------------------------------------------
+# AN OVERLINED TITLE IS ONE HEADING (#200). `=====` above and below a title is a section
+# title in docutils 0.20.1 and pandoc 3.1.3. panduck read the overline as a transition, so
+# it emitted an `hr` before the heading. Measured 2026-11-17 against both references.
+# ---------------------------------------------------------------------------------------
+
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'=====\nTitle\n=====\n\nB.\n') ORDER BY element_order;
+----
+1	heading	Title
+1	paragraph	B.
+
+# The title may be inset inside its adornment lines. Both references strip the spaces.
+query III
+SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_string(
+  E'=========\n  Inset  \n=========\n\nBody.\n') ORDER BY element_order;
+----
+1	heading	Inset
+1	paragraph	Body.
+
+# OVERLINE + UNDERLINE IS A DIFFERENT STYLE from underline only, even with the same
+# character. docutils and pandoc both give the three titles the levels 1, 2, 1. A level
+# keyed by the character alone gives 1, 1, 1. The titles are five characters long because
+# the scanner does not take a one-character run as an adornment, a separate rule.
+query II
+SELECT content, attributes['heading_level'] FROM read_rst_blocks_string(
+  E'Alpha\n=====\n\n=====\nBeta\n=====\n\nGamma\n=====\n') WHERE element_type = 'heading' ORDER BY element_order;
+----
+Alpha	1
+Beta	2
+Gamma	1
+
+# The overlined heading gets its anchor like any other heading.
+query I
+SELECT attributes['id'] FROM read_rst_blocks_string(
+  E'=====\nTitle\n=====\n') WHERE element_type = 'heading';
+----
+title

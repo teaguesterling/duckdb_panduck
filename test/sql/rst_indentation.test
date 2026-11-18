@@ -855,15 +855,16 @@ SELECT level, element_type, coalesce(content, '<none>') FROM read_rst_blocks_str
 1	paragraph	Body.
 
 # OVERLINE + UNDERLINE IS A DIFFERENT STYLE from underline only, even with the same
-# character. docutils and pandoc both give A, B, C the levels 1, 2, 1. A level keyed by the
-# character alone gives 1, 1, 1.
+# character. docutils and pandoc both give the three titles the levels 1, 2, 1. A level
+# keyed by the character alone gives 1, 1, 1. The titles are five characters long because
+# the scanner does not take a one-character run as an adornment, a separate rule.
 query II
 SELECT content, attributes['heading_level'] FROM read_rst_blocks_string(
-  E'A\n=\n\n===\nB\n===\n\nC\n=\n') WHERE element_type = 'heading' ORDER BY element_order;
+  E'Alpha\n=====\n\n=====\nBeta\n=====\n\nGamma\n=====\n') WHERE element_type = 'heading' ORDER BY element_order;
 ----
-A	1
-B	2
-C	1
+Alpha	1
+Beta	2
+Gamma	1
 
 # The overlined heading gets its anchor like any other heading.
 query I

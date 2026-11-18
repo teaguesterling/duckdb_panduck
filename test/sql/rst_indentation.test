@@ -779,3 +779,56 @@ SELECT element_type, content FROM read_rst_blocks_string(
 ----
 paragraph	Plain text.
 code	a  =  1
+
+# ---------------------------------------------------------------------------------------
+# A DEFINITION'S BODY IS BLOCKS, NOT ONE TEXT (#194). panduck joined the body into the
+# definition item's content, so a nested definition list or a second paragraph lost its
+# structure. The body now parses like a list item's body: the first paragraph is the item's
+# content, and the rest are blocks one level below it. Consecutive definitions are ONE list.
+# pandoc 3.1.3 gives each shape below (measured 2026-11-17).
+# ---------------------------------------------------------------------------------------
+
+# The issue's shape, from qemu's docs/specs: a nested definition list inside a definition,
+# then two more top-level definitions in the same list.
+query III
+SELECT level, element_type, coalesce(attributes['role'], '-') || '|' || coalesce(content, '') FROM read_rst_blocks_string(
+  E'0x20 (RW) : status register\n            Bitwise OR of:\n\n            0x01\n              computing factorial (RO)\n            0x80\n              raise interrupt\n\n0x01\n  first\n0x80\n  second\n') ORDER BY element_order;
+----
+1	list	-|
+2	list_item	term|0x20 (RW) : status register
+2	list_item	definition|Bitwise OR of:
+3	list	-|
+4	list_item	term|0x01
+4	list_item	definition|computing factorial (RO)
+4	list_item	term|0x80
+4	list_item	definition|raise interrupt
+2	list_item	term|0x01
+2	list_item	definition|first
+2	list_item	term|0x80
+2	list_item	definition|second
+
+# A second paragraph in a definition is a paragraph below the item. A blank line between
+# definitions does not end the list.
+query III
+SELECT level, element_type, coalesce(attributes['role'], '-') || '|' || coalesce(content, '') FROM read_rst_blocks_string(
+  E'term\n   P one.\n\n   P two.\n\nnext\n   d\n') ORDER BY element_order;
+----
+1	list	-|
+2	list_item	term|term
+2	list_item	definition|P one.
+3	paragraph	-|P two.
+2	list_item	term|next
+2	list_item	definition|d
+
+# A body that opens with a bullet is still a definition. Its definition item is empty and
+# the list is below it, as in the LaTeX reader.
+query III
+SELECT level, element_type, coalesce(attributes['role'], '-') || '|' || coalesce(content, '') FROM read_rst_blocks_string(
+  E'term\n   - a\n   - b\n') ORDER BY element_order;
+----
+1	list	-|
+2	list_item	term|term
+2	list_item	definition|
+3	list	-|
+4	list_item	-|a
+4	list_item	-|b

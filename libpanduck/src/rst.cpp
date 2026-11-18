@@ -1126,18 +1126,7 @@ private:
 			const size_t item = blocks_.size();
 			Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, std::string(), depth + 1, DuckBlockVocabulary::ROLE_DEFINITION);
 			Run(j + 1, end, depth + 2, MinIndent(j + 1, end, indent + 1));
-			// Run() only appends, so the body's blocks are exactly those after `item`,
-			// and the erase moves no block outside this body.
-			if (blocks_.size() > item + 1 && blocks_[item + 1].element_type == DuckBlockVocabulary::TYPE_PARAGRAPH &&
-			    blocks_[item + 1].level == depth + 2) {
-				auto &first = blocks_[item + 1];
-				blocks_[item].content = std::move(first.content);
-				blocks_[item].inlines = std::move(first.inlines);
-				for (auto &r : blocks_[item].inlines) {
-					r.level--;
-				}
-				blocks_.erase(blocks_.begin() + static_cast<long>(item) + 1);
-			}
+			HoistFirstParagraph(item, depth + 2);
 			// The next definition, past any blank lines, at the same indent.
 			size_t k = end;
 			while (k < to && lines_[k].kind == LineKind::BLANK) {

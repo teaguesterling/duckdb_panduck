@@ -2,6 +2,7 @@
 
 #include "panduck/block.hpp"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,8 @@ struct RstInline {
 	//! An auto-numbered `#` or `*` label is numbered in document order.
 	std::string id;
 	int level = 2;
+	//! A role's `class` and `role`, or a math run's `display` (#193).
+	std::map<std::string, std::string> attributes;
 };
 
 struct RstBlock {

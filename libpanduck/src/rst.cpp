@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstring>
 #include <map>
 #include <string>
 #include <utility>
@@ -120,6 +121,60 @@ bool IsNoteReference(const std::string &s, size_t i, size_t &label_len) {
 	return true;
 }
 
+//! The length of a role marker `:name:` at `i`, or 0. A role name is letters
+//! and digits, with single `-`, `_`, `+`, `.` or `:` between them, so
+//! `:py:func:` is the role `py:func` (docutils' rule).
+size_t RoleAt(const std::string &s, size_t i) {
+	if (i >= s.size() || s[i] != ':') {
+		return 0;
+	}
+	auto alnum = [&](size_t k) {
+		return k < s.size() && std::isalnum(static_cast<unsigned char>(s[k]));
+	};
+	size_t j = i + 1;
+	while (alnum(j) || (j > i + 1 && std::strchr("-_+.:", s[j]) && s[j] != '\0' && alnum(j + 1))) {
+		j++;
+	}
+	if (j == i + 1 || j >= s.size() || s[j] != ':') {
+		return 0;
+	}
+	return j + 1 - i;
+}
+
+//! INTERPRETED TEXT (#193), as pandoc 3.1.3 reads it. A standard role maps to
+//! its inline type. `title-reference`, which is also the default role, is a
+//! span with class `title-ref`. Any other role is code with class
+//! `interpreted-text` and the role name, because only the producer knows what
+//! `:class:` or `:rfc:` means. The text is not parsed further: a role's
+//! content is raw, as in docutils.
+RstInline RoleRun(const std::string &role, const std::string &content, int level) {
+	RstInline run;
+	run.content = content;
+	run.level = level;
+	if (role == "code" || role == "literal") {
+		run.element_type = DuckBlockVocabulary::INLINE_CODE;
+	} else if (role == "emphasis") {
+		run.element_type = DuckBlockVocabulary::INLINE_ITALIC;
+	} else if (role == "strong") {
+		run.element_type = DuckBlockVocabulary::INLINE_BOLD;
+	} else if (role == "sub" || role == "subscript") {
+		run.element_type = DuckBlockVocabulary::INLINE_SUBSCRIPT;
+	} else if (role == "sup" || role == "superscript") {
+		run.element_type = DuckBlockVocabulary::INLINE_SUPERSCRIPT;
+	} else if (role == "math") {
+		run.element_type = DuckBlockVocabulary::INLINE_MATH;
+		run.attributes["display"] = "inline";
+	} else if (role.empty() || role == "title-reference" || role == "title" || role == "t") {
+		run.element_type = DuckBlockVocabulary::INLINE_SPAN;
+		run.attributes["class"] = "title-ref";
+	} else {
+		run.element_type = DuckBlockVocabulary::INLINE_CODE;
+		run.attributes["class"] = "interpreted-text";
+		run.attributes["role"] = role;
+	}
+	return run;
+}
+
 //! Split text into inline runs. `**strong**` is tested BEFORE `*emph*`: the
 //! shorter marker is a prefix of the longer one, so checking emphasis first
 //! turns every bold run into an empty italic followed by stray asterisks.
@@ -139,7 +194,34 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 		run.level = level;
 		out.push_back(std::move(run));
 	};
+	auto role_run = [&](const std::string &role, const std::string &content) {
+		flush();
+		out.push_back(RoleRun(role, content, level));
+	};
 	while (i < s.size()) {
+		// A BACKSLASH ESCAPES THE NEXT CHARACTER and is dropped (#193). Before a
+		// space it drops the space too: `H\ :sub:`2`\ O` is H, 2, O with no gaps,
+		// in docutils and pandoc 3.1.3. Before, both stayed in the text.
+		if (s[i] == '\\' && i + 1 < s.size()) {
+			if (s[i + 1] != ' ') {
+				plain.push_back(s[i + 1]);
+			}
+			i += 2;
+			continue;
+		}
+		// A ROLE BEFORE THE TEXT, `:name:`text``.
+		if (s[i] == ':') {
+			const size_t len = RoleAt(s, i);
+			const size_t open = i + len;
+			if (len > 0 && open < s.size() && s[open] == '`' && s.compare(open, 2, "``") != 0) {
+				auto close = s.find('`', open + 1);
+				if (close != std::string::npos && close > open + 1) {
+					role_run(s.substr(i + 1, len - 2), s.substr(open + 1, close - open - 1));
+					i = close + 1;
+					continue;
+				}
+			}
+		}
 		if (s.compare(i, 2, "``") == 0) {
 			auto close = s.find("``", i + 2);
 			if (close != std::string::npos) {
@@ -165,24 +247,33 @@ void ParseInlines(const std::string &s, int level, std::vector<RstInline> &out) 
 			}
 		}
 		if (s[i] == '`') {
-			// `text <url>`_ -- the trailing underscore is what makes it a link rather
-			// than interpreted text, so it is required here.
-			auto close = s.find("`_", i + 1);
-			if (close != std::string::npos) {
+			// SINGLE BACKTICKS: a link when `_` follows the closing backtick, a role
+			// when `:name:` follows it, else the default role (#193). Before #193 the
+			// closing `` `_ `` was searched for anywhere ahead, so `a` and `b <u>`_
+			// became one link with the text `a` and `b`.
+			auto close = s.find('`', i + 1);
+			if (close != std::string::npos && close > i + 1) {
 				auto body = s.substr(i + 1, close - i - 1);
-				auto lt = body.rfind(" <");
-				std::string text = body, href = body;
-				if (lt != std::string::npos && !body.empty() && body.back() == '>') {
-					text = body.substr(0, lt);
-					href = body.substr(lt + 2, body.size() - lt - 3);
+				if (close + 1 < s.size() && s[close + 1] == '_') {
+					auto lt = body.rfind(" <");
+					std::string text = body, href = body;
+					if (lt != std::string::npos && !body.empty() && body.back() == '>') {
+						text = body.substr(0, lt);
+						href = body.substr(lt + 2, body.size() - lt - 3);
+					}
+					emit(DuckBlockVocabulary::INLINE_LINK, text, href);
+					i = close + 2;
+					// A named reference may be spelled with two underscores; consume the
+					// second.
+					if (i < s.size() && s[i] == '_') {
+						i++;
+					}
+					continue;
 				}
-				emit(DuckBlockVocabulary::INLINE_LINK, text, href);
-				i = close + 2;
-				// A named reference may be spelled with two underscores; consume the
-				// second.
-				if (i < s.size() && s[i] == '_') {
-					i++;
-				}
+				// A ROLE AFTER THE TEXT, `text`:name:.
+				const size_t len = RoleAt(s, close + 1);
+				role_run(len > 0 ? s.substr(close + 2, len - 2) : std::string(), body);
+				i = close + 1 + len;
 				continue;
 			}
 		}
@@ -1130,6 +1221,7 @@ std::vector<Block> ReadRst(const std::string &src) {
 			child.content = inl.content;
 			child.level = inl.level > 0 ? inl.level : block_level + 1;
 			child.element_order = order++;
+			child.attributes = inl.attributes;
 			if (!inl.href.empty()) {
 				child.attributes["href"] = inl.href;
 			}

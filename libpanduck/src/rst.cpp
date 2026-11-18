@@ -934,18 +934,137 @@ private:
 		flush();
 	}
 
+	//! A DIRECTIVE'S OPTIONS: the field list that starts on the line right after
+	//! the directive, wrapped values included (#195). A blank line ends it, so a
+	//! field list after a blank line is body content, as in pandoc 3.1.3. Returns
+	//! the first line after the options.
+	size_t Options(size_t from, size_t to, std::map<std::string, std::string> &options) const {
+		size_t j = from;
+		while (j < to && lines_[j].kind == LineKind::FIELD) {
+			const int field_indent = lines_[j].indent;
+			std::string value = lines_[j].text;
+			const std::string name = lines_[j].name;
+			j++;
+			while (j < to && lines_[j].kind == LineKind::TEXT && lines_[j].indent > field_indent) {
+				value += (value.empty() ? "" : " ") + lines_[j].text;
+				j++;
+			}
+			options[name] = value;
+		}
+		return j;
+	}
+
+	//! An image's inlines: the image, inside a link when `:target:` is set, as in
+	//! pandoc 3.1.3. `:alt:` is the image's content and its `alt` attribute, the
+	//! vocabulary's rule. With no `:alt:` there is no alt: pandoc invents the word
+	//! "image", docutils sets none. Every other option stays on the image.
+	static std::vector<RstInline> ImageInlines(const std::string &src, std::map<std::string, std::string> options,
+	                                           int level) {
+		std::vector<RstInline> runs;
+		auto target = options.find("target");
+		if (target != options.end()) {
+			RstInline link;
+			link.element_type = DuckBlockVocabulary::INLINE_LINK;
+			link.href = target->second;
+			link.level = level++;
+			runs.push_back(std::move(link));
+			options.erase(target);
+		}
+		RstInline img;
+		img.element_type = DuckBlockVocabulary::INLINE_IMAGE;
+		img.level = level;
+		auto alt = options.find("alt");
+		if (alt != options.end()) {
+			img.content = alt->second;
+		}
+		img.attributes = std::move(options);
+		img.attributes["src"] = src;
+		runs.push_back(std::move(img));
+		return runs;
+	}
+
+	//! Move the paragraph right after blocks_[item] into it, when Run() put one
+	//! there at `child_level`. Run() only appends, so the erase moves no block
+	//! outside the run that made the paragraph.
+	void HoistFirstParagraph(size_t item, int child_level) {
+		if (blocks_.size() <= item + 1 || blocks_[item + 1].element_type != DuckBlockVocabulary::TYPE_PARAGRAPH ||
+		    blocks_[item + 1].level != child_level) {
+			return;
+		}
+		auto &first = blocks_[item + 1];
+		blocks_[item].content = std::move(first.content);
+		blocks_[item].inlines = std::move(first.inlines);
+		for (auto &r : blocks_[item].inlines) {
+			r.level--;
+		}
+		blocks_.erase(blocks_.begin() + static_cast<long>(item) + 1);
+	}
+
 	void Directive(const Line &line, size_t from, size_t to, int depth) {
 		auto name = line.name;
 		for (auto &c : name) {
 			c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
 		}
+		std::map<std::string, std::string> options;
+		const size_t body = Options(from, to, options);
 		if (name == "code-block" || name == "code" || name == "sourcecode") {
+			// THE OPTIONS ARE NOT CODE (#195). Before, `:emphasize-lines: 2` put `2`
+			// in front of the code.
+			size_t code = body;
+			while (code < to && lines_[code].kind == LineKind::BLANK) {
+				code++;
+			}
 			RstBlock b;
 			b.element_type = DuckBlockVocabulary::TYPE_CODE;
-			b.content = RawBody(from, to, line.indent);
+			b.content = RawBody(code, to, line.indent);
 			b.language = line.text;
 			b.level = depth;
+			b.attributes = std::move(options);
 			blocks_.push_back(std::move(b));
+			return;
+		}
+		// AN IMAGE is a paragraph holding an inline image, as pandoc 3.1.3 reads it.
+		// The argument is the URL. Before #195 it was an empty div, the URL lost.
+		if (name == "image") {
+			RstBlock p;
+			p.element_type = DuckBlockVocabulary::TYPE_PARAGRAPH;
+			p.level = depth;
+			p.inlines = ImageInlines(line.text, std::move(options), depth + 1);
+			blocks_.push_back(std::move(p));
+			return;
+		}
+		// A FIGURE is figure > plain > image, then the caption: the order panduck's
+		// pandoc converter gives a pandoc Figure, content before caption. The
+		// caption is the body's first paragraph. A legend after it goes below the
+		// caption, as pandoc puts it in the Caption. `figwidth` and `figclass`
+		// belong to the figure; the other options to the image. The MediaWiki
+		// reader puts its caption first, which differs.
+		if (name == "figure") {
+			RstBlock fig;
+			fig.element_type = DuckBlockVocabulary::TYPE_FIGURE;
+			fig.level = depth;
+			for (const char *own : {"figwidth", "figclass"}) {
+				auto o = options.find(own);
+				if (o != options.end()) {
+					fig.attributes[o->first] = o->second;
+					options.erase(o);
+				}
+			}
+			blocks_.push_back(std::move(fig));
+			RstBlock plain;
+			plain.element_type = DuckBlockVocabulary::TYPE_PLAIN;
+			plain.level = depth + 1;
+			plain.inlines = ImageInlines(line.text, std::move(options), depth + 2);
+			blocks_.push_back(std::move(plain));
+			if (to > body) {
+				const size_t item = blocks_.size();
+				RstBlock cap;
+				cap.element_type = DuckBlockVocabulary::TYPE_CAPTION;
+				cap.level = depth + 1;
+				blocks_.push_back(std::move(cap));
+				Run(body, to, depth + 2, MinIndent(body, to, line.indent + 1));
+				HoistFirstParagraph(item, depth + 2);
+			}
 			return;
 		}
 		// EVERY OTHER DIRECTIVE IS A DIV, with the directive NAME in
@@ -958,12 +1077,18 @@ private:
 		b.element_type = DuckBlockVocabulary::TYPE_DIV;
 		b.source_type = line.name;
 		b.level = depth;
+		b.attributes = std::move(options);
 		blocks_.push_back(std::move(b));
 		// THE BODY IS DESCENDED INTO, never dropped. A directive body is prose, and
 		// the LaTeX reader's rule applies: an unknown environment usually wraps
 		// paragraphs, so dropping it loses them.
-		if (to > from) {
-			Run(from, to, depth + 1, MinIndent(from, to, line.indent + 1));
+		//
+		// THE ARGUMENT SEEDS THE BODY'S FIRST PARAGRAPH (#195), as pandoc 3.1.3
+		// reads `.. module:: email` and `.. note:: Arg text`. Before, it was lost.
+		// pandoc also adds a title div with the word "Note"; panduck does not
+		// invent that text.
+		if (to > body || !line.text.empty()) {
+			Run(body, to, depth + 1, MinIndent(body, to, line.indent + 1), line.text);
 		}
 	}
 
@@ -1001,18 +1126,7 @@ private:
 			const size_t item = blocks_.size();
 			Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, std::string(), depth + 1, DuckBlockVocabulary::ROLE_DEFINITION);
 			Run(j + 1, end, depth + 2, MinIndent(j + 1, end, indent + 1));
-			// Run() only appends, so the body's blocks are exactly those after `item`,
-			// and the erase moves no block outside this body.
-			if (blocks_.size() > item + 1 && blocks_[item + 1].element_type == DuckBlockVocabulary::TYPE_PARAGRAPH &&
-			    blocks_[item + 1].level == depth + 2) {
-				auto &first = blocks_[item + 1];
-				blocks_[item].content = std::move(first.content);
-				blocks_[item].inlines = std::move(first.inlines);
-				for (auto &r : blocks_[item].inlines) {
-					r.level--;
-				}
-				blocks_.erase(blocks_.begin() + static_cast<long>(item) + 1);
-			}
+			HoistFirstParagraph(item, depth + 2);
 			// The next definition, past any blank lines, at the same indent.
 			size_t k = end;
 			while (k < to && lines_[k].kind == LineKind::BLANK) {
@@ -1176,6 +1290,8 @@ std::vector<Block> ReadRst(const std::string &src) {
 		// data change no compiler catches.
 		row.encoding = block.encoding.empty() ? DuckBlockVocabulary::ENCODING_TEXT : block.encoding;
 		row.element_order = order++;
+		// OPTIONS FIRST (#195), so the typed fields below win a name clash.
+		row.attributes = block.attributes;
 		if (block.heading_level > 0) {
 			row.attributes[DuckBlockVocabulary::ATTR_HEADING_LEVEL] = std::to_string(block.heading_level);
 		}

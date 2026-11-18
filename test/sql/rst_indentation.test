@@ -872,3 +872,96 @@ SELECT attributes['id'] FROM read_rst_blocks_string(
   E'=====\nTitle\n=====\n') WHERE element_type = 'heading';
 ----
 title
+
+# ---------------------------------------------------------------------------------------
+# A FIELD LIST AT THE START OF A DIRECTIVE BODY IS THE DIRECTIVE'S OPTIONS (#195). panduck
+# read the options as a definition list in the body, and it dropped the directive's
+# argument: an image's URL, a module's name, a note's first words. The options now go into
+# the block's attributes, and the argument is kept. The shapes follow pandoc 3.1.3 as
+# panduck's own pandoc converter reads it (measured 2026-11-17).
+# ---------------------------------------------------------------------------------------
+
+# A generic directive: the argument is the first paragraph, the options are attributes.
+# A wrapped option value joins with a space, as a wrapped field value does. pandoc keeps
+# the newline, "Mail\nhandling."; the words are the same.
+query IIIII
+SELECT level, element_type, coalesce(content, '-'), coalesce(attributes['source_type'], '-'),
+       coalesce(attributes['synopsis'], '-') FROM read_rst_blocks_string(
+  E'.. module:: email\n   :synopsis: Mail\n      handling.\n') ORDER BY element_order;
+----
+1	div	-	module	Mail handling.
+2	paragraph	email	-	-
+
+# An admonition with an argument, an option and a body. pandoc also adds a title div with
+# the word "Note". panduck does not invent that text.
+query IIII
+SELECT level, element_type, coalesce(content, '-'), coalesce(attributes['class'], '-') FROM read_rst_blocks_string(
+  E'.. note:: Arg text\n   :class: tip\n\n   Body para.\n') ORDER BY element_order;
+----
+1	div	-	tip
+2	paragraph	Arg text	-
+2	paragraph	Body para.	-
+
+# An option cannot replace an attribute the reader sets itself.
+query I
+SELECT attributes['source_type'] FROM read_rst_blocks_string(
+  E'.. note::\n   :source_type: x\n\n   Body.\n') WHERE element_type = 'div';
+----
+note
+
+# GUARD: a field list AFTER a blank line is body content, not options. pandoc gives a
+# DefinitionList inside the Div.
+query III
+SELECT level, element_type, coalesce(content, '-') FROM read_rst_blocks_string(
+  E'.. note::\n\n   :a: b\n\n   Body.\n') ORDER BY element_order;
+----
+1	div	-
+2	list	-
+3	list_item	a
+3	list_item	b
+2	paragraph	Body.
+
+# AN IMAGE is a paragraph holding an inline image, its URL in `src`. `:target:` makes it a
+# link around the image, as in pandoc.
+query IIIII
+SELECT level, kind, element_type, coalesce(attributes['src'], '-'), coalesce(attributes['href'], '-') FROM read_rst_blocks_string(
+  E'.. image:: https://example.com/x.png\n   :target: https://example.com/\n') ORDER BY element_order;
+----
+1	block	paragraph	-	-
+2	inline	link	-	https://example.com/
+3	inline	image	https://example.com/x.png	-
+
+# `:alt:` is the image's content and its `alt` attribute. Other options are attributes. With
+# no `:alt:` there is no alt; pandoc invents the word "image", docutils sets none.
+query IIIII
+SELECT level, element_type, coalesce(nullif(content, ''), '-'), coalesce(attributes['alt'], '-'),
+       coalesce(attributes['width'], '-') FROM read_rst_blocks_string(
+  E'.. image:: a.png\n   :alt: An A\n   :width: 40px\n\n.. image:: b.png\n') ORDER BY element_order;
+----
+1	paragraph	-	-	-
+2	image	An A	An A	40px
+1	paragraph	-	-	-
+2	image	-	-	-
+
+# A FIGURE is the figure, its image, then its caption: the order panduck's pandoc converter
+# gives. The caption is the body's first paragraph. A legend after it is below the caption,
+# as pandoc puts it in the Caption.
+query IIIIII
+SELECT level, kind, element_type, coalesce(nullif(content, ''), '-'), coalesce(attributes['src'], '-'),
+       coalesce(attributes['alt'], '-') FROM read_rst_blocks_string(
+  E'.. figure:: pic.png\n   :alt: Alt\n\n   Caption.\n\n   Legend para.\n') ORDER BY element_order;
+----
+1	block	figure	-	-	-
+2	block	plain	-	-	-
+3	inline	image	Alt	pic.png	Alt
+2	block	caption	Caption.	-	-
+3	block	paragraph	Legend para.	-	-
+
+# A CODE BLOCK'S OPTIONS were part of the code: `:emphasize-lines: 2` put `2` in front of
+# it. They are now attributes, a flag option with an empty value. pandoc gives
+# CodeBlock{linenos="", emphasize-lines="2"} "x = 1\ny = 2".
+query IIII
+SELECT replace(content, chr(10), '|'), attributes['language'], attributes['emphasize-lines'], attributes['linenos'] FROM read_rst_blocks_string(
+  E'.. code-block:: python\n   :emphasize-lines: 2\n   :linenos:\n\n   x = 1\n   y = 2\n');
+----
+x = 1|y = 2	python	2	(empty)

@@ -21,7 +21,8 @@ struct RstInline {
 	//! An auto-numbered `#` or `*` label is numbered in document order.
 	std::string id;
 	int level = 2;
-	//! A role's `class` and `role`, or a math run's `display` (#193).
+	//! A role's `class` and `role`, or a math run's `display` (#193). An image's `src`
+	//! and `alt`, and the directive options it carries (#195).
 	std::map<std::string, std::string> attributes;
 };
 
@@ -40,6 +41,10 @@ struct RstBlock {
 	int heading_level = 0;
 	int level = 1;
 	std::vector<RstInline> inlines;
+	//! A directive's options (#195), by name. ReadRst copies them BEFORE the
+	//! typed fields above, so an option named `source_type` or `language`
+	//! cannot replace what the reader sets.
+	std::map<std::string, std::string> attributes;
 };
 
 //! Parse reStructuredText into format-shaped blocks. Never throws: malformed

@@ -807,25 +807,9 @@ private:
 				continue;
 			}
 			case LineKind::TEXT: {
-				// A DEFINITION: a term line whose next line is indented and not a list.
-				if (para.empty() && i + 1 < to && lines_[i + 1].indent > line.indent &&
-				    lines_[i + 1].kind == LineKind::TEXT) {
-					size_t end = std::min(IndentedRun(i + 1, line.indent), to);
-					RstBlock list;
-					list.element_type = DuckBlockVocabulary::TYPE_LIST;
-					list.list_type = DuckBlockVocabulary::LIST_TYPE_DEFINITION;
-					list.level = depth;
-					blocks_.push_back(std::move(list));
-					Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, line.text, depth + 1, DuckBlockVocabulary::ROLE_TERM);
-					std::string def;
-					for (size_t k = i + 1; k < end; k++) {
-						if (lines_[k].kind == LineKind::BLANK) {
-							continue;
-						}
-						def += (def.empty() ? "" : " ") + lines_[k].text;
-					}
-					Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, def, depth + 1, DuckBlockVocabulary::ROLE_DEFINITION);
-					i = end - 1;
+				// A DEFINITION: a term line whose next line is indented.
+				if (para.empty() && IsDefinitionAt(i, to)) {
+					i = Definitions(i, to, depth) - 1;
 					continue;
 				}
 				para.push_back(line.text);
@@ -866,6 +850,65 @@ private:
 		// paragraphs, so dropping it loses them.
 		if (to > from) {
 			Run(from, to, depth + 1, MinIndent(from, to, line.indent + 1));
+		}
+	}
+
+	//! Whether line `i` opens a definition: a TEXT term whose next line is
+	//! indented deeper and starts a paragraph or a list. pandoc 3.1.3 also reads a
+	//! body that opens with a bullet as a definition (#194, measured 2026-11-17).
+	bool IsDefinitionAt(size_t i, size_t to) const {
+		if (lines_[i].kind != LineKind::TEXT || i + 1 >= to || lines_[i + 1].indent <= lines_[i].indent) {
+			return false;
+		}
+		const auto next = lines_[i + 1].kind;
+		return next == LineKind::TEXT || next == LineKind::BULLET || next == LineKind::ENUM;
+	}
+
+	//! A DEFINITION LIST from line `i`: every definition at the same indent, blank
+	//! lines between them allowed. Returns the line after the list.
+	//!
+	//! THE BODY IS BLOCKS, NOT ONE TEXT (#194). Before, the body was joined into
+	//! the definition item, so a nested definition list or a second paragraph lost
+	//! its structure, and each definition made its own list. The body now goes
+	//! through Run() one level below the item, like a list item's body. Its FIRST
+	//! PARAGRAPH is then moved into the definition item, the shape List() gives a
+	//! list item. Moving it after Run() keeps every paragraph rule, `::` included.
+	size_t Definitions(size_t i, size_t to, int depth) {
+		const int indent = lines_[i].indent;
+		RstBlock list;
+		list.element_type = DuckBlockVocabulary::TYPE_LIST;
+		list.list_type = DuckBlockVocabulary::LIST_TYPE_DEFINITION;
+		list.level = depth;
+		blocks_.push_back(std::move(list));
+		size_t j = i;
+		while (true) {
+			Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, lines_[j].text, depth + 1, DuckBlockVocabulary::ROLE_TERM);
+			const size_t end = std::min(IndentedRun(j + 1, indent), to);
+			const size_t item = blocks_.size();
+			Emit(DuckBlockVocabulary::TYPE_LIST_ITEM, std::string(), depth + 1, DuckBlockVocabulary::ROLE_DEFINITION);
+			Run(j + 1, end, depth + 2, MinIndent(j + 1, end, indent + 1));
+			// Run() only appends, so the body's blocks are exactly those after `item`,
+			// and the erase moves no block outside this body.
+			if (blocks_.size() > item + 1 && blocks_[item + 1].element_type == DuckBlockVocabulary::TYPE_PARAGRAPH &&
+			    blocks_[item + 1].level == depth + 2) {
+				auto &first = blocks_[item + 1];
+				blocks_[item].content = std::move(first.content);
+				blocks_[item].inlines = std::move(first.inlines);
+				for (auto &r : blocks_[item].inlines) {
+					r.level--;
+				}
+				blocks_.erase(blocks_.begin() + static_cast<long>(item) + 1);
+			}
+			// The next definition, past any blank lines, at the same indent.
+			size_t k = end;
+			while (k < to && lines_[k].kind == LineKind::BLANK) {
+				k++;
+			}
+			if (k < to && lines_[k].indent == indent && IsDefinitionAt(k, to)) {
+				j = k;
+				continue;
+			}
+			return end;
 		}
 	}
 

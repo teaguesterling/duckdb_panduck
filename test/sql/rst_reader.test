@@ -316,3 +316,65 @@ query I
 SELECT content FROM read_panduck_doc('test/fixtures/table_markup.rst') WHERE element_type = 'table';
 ----
 {"headers":["Name","Value"],"rows":[["a","b"],["c","plain"]]}
+
+# ---------------------------------------------------------------------------
+# INTERPRETED TEXT: ROLES (#193). `:role:`text`` and `` `text`:role: `` stayed
+# literal markup. They now follow pandoc 3.1.3 (measured 2026-11-17): a standard
+# role maps to its inline type, any other role is code with class
+# `interpreted-text` and the role name, and text in single backticks with no role
+# is a span with class `title-ref`, the default role.
+# ---------------------------------------------------------------------------
+
+# The standard roles. Text runs are left out, so no row ends in a space.
+query III
+SELECT element_type, content, coalesce(attributes['display'], '-') FROM read_rst_blocks_string(
+  E'X :sub:`2` :sup:`3` :math:`x^2` :code:`c` :literal:`l` :emphasis:`e` :strong:`s` `x`:sup:.\n')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+subscript	2	-
+superscript	3	-
+math	x^2	inline
+code	c	-
+code	l	-
+italic	e	-
+bold	s	-
+superscript	x	-
+
+# Any other role, prefix or suffix, and a role name with a colon.
+query IIII
+SELECT element_type, content, attributes['class'], attributes['role'] FROM read_rst_blocks_string(
+  E'A :class:`Foo` and `bar`:func: and :py:func:`f`.\n')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+code	Foo	interpreted-text	class
+code	bar	interpreted-text	func
+code	f	interpreted-text	py:func
+
+# The default role and the title-reference role, `:t:` included, are a title-ref span.
+# A link in backticks is still a link.
+query III
+SELECT element_type, content, coalesce(attributes['class'], '-') FROM read_rst_blocks_string(
+  E'See `email` and :title-reference:`T` and :t:`U` and `Py <https://python.org>`_.\n')
+WHERE kind = 'inline' AND element_type <> 'text' ORDER BY element_order;
+----
+span	email	title-ref
+span	T	title-ref
+span	U	title-ref
+link	Py	-
+
+# BACKSLASH ESCAPES (#193). `\ ` is removed, so `H\ :sub:`2`\ O` is H, 2, O with no
+# spaces: the idiom test/fixtures/constructs.rst uses. A backslash before any other
+# character keeps that character and drops the backslash. pandoc 3.1.3 and docutils
+# agree.
+query II
+SELECT element_type, content FROM read_rst_blocks_string(
+  E'H\\ :sub:`2`\\ O.\n') WHERE kind = 'inline' ORDER BY element_order;
+----
+text	H
+subscript	2
+text	O.
+
+query I
+SELECT content FROM read_rst_blocks_string(E'\\*lit\\* and C:\\\\path.\n');
+----
+*lit* and C:\path.

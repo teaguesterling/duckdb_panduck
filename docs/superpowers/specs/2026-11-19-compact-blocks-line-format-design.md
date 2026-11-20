@@ -1,10 +1,16 @@
 # Compact duck_blocks line format (V1)
 
-**Status:** design, not implemented. Written 2026-11-19. Decisions by Teague; measurements by
-Claude Opus 5.5.
+**Status:** implemented in duck_block_utils (teaguesterling/duckdb_duck_block_utils#86) as
+`duck_blocks_to_compact`, `duck_blocks_from_compact` and `read_compact_blocks`. Written
+2026-11-19. Decisions by Teague; measurements by Claude Opus 5.5.
+
+**The source of the format is now duck_block_utils:** the macro text in its
+`src/doc_macros.cpp` holds both code tables, and its `docs/api.md` ("Compact Line Format")
+documents them. Where this note and duck_block_utils disagree, duck_block_utils is right.
+This note keeps the design reasons and the measurements.
 
 **Goal:** a line format for duck_blocks rows that is small, has a fixed schema, and reads back
-into the duck_blocks schema with plain DuckDB `read_json` and no decoder written in code.
+into the duck_blocks schema with plain DuckDB SQL and no decoder written in code.
 
 Teague's brief: "compressed, omit null fields, line delimited, fixed schema, one letter labels
 and types. Order implicit and preserved."
@@ -32,7 +38,8 @@ Leaving fields out does most of the work. Omission alone (long keys kept) takes 
 from 1.68 to 1.09 raw. The short codes take it to 0.52.
 
 **Round trip (measured):** all 1,475 rows in 32 files (16 fixtures, two readers each) read back
-exactly through the SQL in section 6. A row changed on purpose was caught.
+exactly through the draft `read_json` reader. A row changed on purpose was caught. The shipped
+reader in duck_block_utils round-trips the three fixtures it keeps (section 6).
 
 ## 2. The line
 
@@ -124,8 +131,8 @@ key in `a`, where an older reader does not look for it. Until then, a new key go
 every reader keeps it.
 
 Not every key has a `DuckBlockTypes::ATTR_*` constant (`class`, `href` and `src` do not). So
-the table cannot be generated from the constants alone. This document is the source of the
-table.
+the table cannot be generated from the constants alone. The macro text in duck_block_utils'
+`src/doc_macros.cpp` is the source of the table.
 
 ## 5. Order: the line number
 
@@ -141,57 +148,38 @@ not information the format must keep.
 ## 6. Reading it in DuckDB
 
 ```sql
-CREATE OR REPLACE TEMP MACRO read_compact_blocks(f) AS TABLE
-WITH src AS (
-  SELECT (row_number() OVER () - 1)::INTEGER AS element_order, *,
-         coalesce(MAP {'h': 'block:heading', 'p': 'block:paragraph', 'i': 'block:list_item',
-           'l': 'block:list', 'q': 'block:blockquote', 'C': 'block:code', 'd': 'block:div',
-           'T': 'block:table', 'R': 'block:raw', 'r': 'block:hr', 'f': 'block:figure',
-           's': 'block:section', 'P': 'block:plain', 'n': 'block:caption',
-           'x': 'inline:text', 'S': 'inline:space', 'b': 'inline:bold', 'e': 'inline:italic',
-           'c': 'inline:code', 'k': 'inline:strikethrough', 'a': 'inline:link',
-           'N': 'inline:note', 'g': 'inline:image', 'v': 'inline:subscript',
-           'u': 'inline:superscript', 'z': 'inline:cite', 'w': 'inline:raw',
-           'o': 'inline:caption', 'y': 'inline:span', 'B': 'inline:linebreak',
-           'j': 'inline:softbreak', 'V': 'value:inlines', 'L': 'value:list',
-           'Z': 'value:string', 'M': 'value:map'}[t], t) AS kt
-  FROM read_json(f, format := 'newline_delimited', columns := {
-    t: 'VARCHAR', c: 'VARCHAR', l: 'INTEGER', e: 'VARCHAR',
-    a: 'STRUCT(c VARCHAR, i VARCHAR, s VARCHAR, h VARCHAR, t VARCHAR, o VARCHAR,
-               k VARCHAR, r VARCHAR, w VARCHAR, f VARCHAR, u VARCHAR, g VARCHAR,
-               d VARCHAR, y VARCHAR, n VARCHAR, m VARCHAR, a VARCHAR, l VARCHAR,
-               p VARCHAR, x VARCHAR, e VARCHAR)',
-    m: 'MAP(VARCHAR, VARCHAR)'})
-)
-SELECT split_part(kt, ':', 1) AS kind,
-       split_part(kt, ':', 2) AS element_type,
-       c AS content,
-       l AS level,
-       CASE coalesce(e, 't') WHEN 't' THEN 'text' WHEN 'j' THEN 'json' ELSE e END AS encoding,
-       map_from_entries(list_sort(map_entries(map_concat(
-         coalesce(m, MAP {}::MAP(VARCHAR, VARCHAR)),
-         map_from_entries(list_filter([
-           {k: 'class', v: a.c}, {k: 'id', v: a.i}, {k: 'source_type', v: a.s},
-           {k: 'heading_level', v: a.h}, {k: 'list_type', v: a.t}, {k: 'ordered', v: a.o},
-           {k: 'key', v: a.k}, {k: 'role', v: a.r}, {k: 'href', v: a.w},
-           {k: 'format', v: a.f}, {k: 'src', v: a.u}, {k: 'language', v: a.g},
-           {k: 'number_delim', v: a.d}, {k: 'number_style', v: a.y}, {k: 'start', v: a.n},
-           {k: 'template_name', v: a.m}, {k: 'alt', v: a.a}, {k: 'link_type', v: a.l},
-           {k: 'pandoc_ast', v: a.p}, {k: 'execution_count', v: a.x}, {k: 'title', v: a.e}],
-           lambda x: x.v IS NOT NULL)))))) AS attributes,
-       element_order
-FROM src ORDER BY element_order;
+LOAD duck_block_utils;
 
-FROM read_compact_blocks('doc.v1.jsonl');
+-- a list of duck_blocks to compact text, and back
+SELECT duck_blocks_to_compact(blocks) FROM doc;
+SELECT duck_blocks_from_compact(text) FROM compact_doc;
+
+-- write a file, then read it (or a glob of them) as rows
+COPY (SELECT rtrim(duck_blocks_to_compact(blocks), chr(10)) FROM doc)
+TO 'doc.compact.jsonl' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '', DELIMITER E'\x01');
+
+FROM read_compact_blocks('doc.compact.jsonl');
 ```
 
-The reader sorts attribute keys, because `map_concat` does not keep the source order. Every
-source map in the corpus was already sorted by key (measured by the subagent, 178 of 178), so
-the sort gives back the source order.
+`read_compact_blocks` returns the seven canonical fields and then `filename` (spec 6.4), ordered
+by `filename` and `element_order`.
 
-`row_number() OVER ()` takes the order in which `read_json` returns lines. That order is the
-file order with `preserve_insertion_order` on, which is DuckDB's default. This is inferred
-from the round trip, not from a test with many threads or a large file.
+**What changed from the draft reader in this section.** The draft used `read_json` and
+`row_number() OVER ()`, and its line order was inferred, not tested. Line order is the format's
+one invariant, so the shipped reader does not depend on how DuckDB schedules a scan. It reads
+the file with `read_text`, splits it on newlines, and numbers each line with
+`list_transform`'s index. A 4,000-element file read with 8 threads comes back in order
+(measured, `test/sql/compact.test` in duck_block_utils).
+
+The reader returns attribute keys sorted, because `a` and `m` are two objects and the format
+cannot keep the source's key order across them. Every source map in the corpus was already
+sorted by key (178 of 178, measured by the subagent), so for those maps the sort gives back the
+source order. DuckDB compares MAPs in key order (measured: `MAP{'b':'1','a':'2'} =
+MAP{'a':'2','b':'1'}` is false), so a map that was not sorted reads back equal to the sorted
+map, not to itself.
+
+The shipped writer's output is byte-identical to the measured V1 files for the three fixtures
+duck_block_utils keeps (1929, 766 and 929 bytes), so the sizes in section 1 apply to it.
 
 ## 7. What was tried and rejected
 
@@ -201,27 +189,31 @@ from the round trip, not from a test with many threads or a large file.
 | V2: V1 + default rules (predicted level, sparse `o`, `h2`, table → `json`) | 0.45 | 0.89 | 2% smaller compressed, needs a decoder in code; larger than V1 on identical content |
 | V3: V2 as a positional array | 0.37 | 0.87 | Same, and lines no longer name their fields |
 
-## 8. Side findings in `read_pandoc_blocks` (measured, not filed)
+## 8. Side findings in `read_pandoc_blocks` (measured)
 
-- It writes one row per `Str` and per `Space` token.
+- It writes one row per `Str` and per `Space` token. Not filed.
 - Each table is stored twice, as rows and in a `pandoc_ast` attribute (6.9 KB across the corpus).
-- It drops an image's width and height.
-- It drops the trailing newline from code blocks.
-- It drops a link's classes and key-value attributes: `[link](u){.big data-foo=bar}` gives only
-  `{href=u}`.
+  Not filed.
+- It drops the trailing newline from code blocks. Not filed.
+- ~~It drops an image's width and height, and a link's classes and key-value attributes.~~
+  Fixed in v0.11.2 (#208, #209): inline Link, Image, Span and Code keep their pandoc `Attr`.
 
-## 9. Left to the builder
+## 9. Decided while building it
 
-- Where the writer and reader live: a `COPY ... (FORMAT compact_blocks)` function, two macros,
-  or a duck_block_utils function shared by the fleet.
-- Whether the format carries a version, and where, given that there is no header line.
-- Behaviour on an unknown `t` code without `:`. The SQL above returns it as `kind`, with an
-  empty `element_type`. A real reader should refuse it.
-- Encodings other than `text` and `json` are written as they are. `t` and `j` are then
-  reserved and cannot be used as encoding names.
+These were open in the first version of this note. duck_block_utils#86 settled them.
+
+| Question | Decision |
+|---|---|
+| Where the writer and reader live | Three SQL macros in duck_block_utils, registered at LOAD. No C++, and no `COPY ... (FORMAT ...)` function: the `COPY` recipe in section 6 writes the file. Teague chose duck_block_utils, so every producer in the fleet gets the format |
+| A version | None. Adding a code changes the format; until a key or type has a code, it goes in `m` or in `kind:element_type`, and every reader keeps it. The codes freeze at the first duck_block_utils release with the format |
+| An unknown `t` code without `:` | Refused with an error |
+| A line without `l` | Refused with an error |
+| Encodings `t` and `j` | Refused by the writer, because they are codes. Any other encoding is written as it is |
+| A NULL attribute value | Refused by the writer, like a NULL `level`, `encoding` or `attributes` map |
+| Empty lines | Skipped by the reader, so files concatenate |
 
 ---
 
 The encoder scripts and per-file tables from the measurement were in a session scratchpad and
-are not kept in the repo. Section 2 specifies the writer completely enough to rebuild them.
-Section 6 is the exact reader used for the round trip.
+are not kept in the repo. The writer and reader that ship are in duck_block_utils, with their
+tests in `test/sql/compact.test`.

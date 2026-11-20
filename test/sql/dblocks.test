@@ -16,8 +16,8 @@ require json
 # register the same function name").
 #
 # The two implementations must agree, and test/fixtures/dblocks is how: the golden
-# corpus, copied byte for byte from duck_block_utils' test/fixtures/compact/golden at the
-# commit scripts/check_duck_block_compact.py pins. Each <name>.dblocks reads to exactly
+# corpus, copied byte for byte from duck_block_utils' test/fixtures/compact/golden; CI's
+# scripts/check_duck_block_compact.py compares it against upstream's latest release. Each <name>.dblocks reads to exactly
 # the rows in <name>.expected.jsonl, and those rows write back to the .dblocks byte for
 # byte -- the same assertions duck_block_utils' compact.test makes of its SQL.
 

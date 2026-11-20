@@ -953,15 +953,14 @@ jobs:
           exit $rc
 
       # The compact line format's header (src/include/duck_block_compact.hpp) and its
-      # golden corpus (test/fixtures/dblocks), against duck_block_utils at the PINNED
-      # commit in the script -- no duck_block_utils release contains them yet, so this one
-      # is commit-pinned rather than release-based (Teague's call, 2026-11-20). The
-      # self-test first, for the same reason as the vocabulary job's: a drift guard that
+      # golden corpus (test/fixtures/dblocks), against duck_block_utils' LATEST RELEASE,
+      # resolved and printed -- release-based like the vocabulary job, since v4.2.0 shipped
+      # the header (2026-11-20). The self-test first, for the same reason as the vocabulary job's: a drift guard that
       # cannot tell a re-wrap from a changed code reports clean either way.
       - name: Prove the compact-header checker can classify drift
         run: python3 scripts/check_duck_block_compact.py --self-test
 
-      - name: Compare the vendored compact header and corpus against the pinned upstream
+      - name: Compare the vendored compact header and corpus against upstream's latest release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

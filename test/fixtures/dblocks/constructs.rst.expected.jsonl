@@ -1,0 +1,49 @@
+{"kind":"block","element_type":"heading","content":"Heading One","level":1,"encoding":"text","attributes":{"heading_level":"1","id":"heading-one"},"element_order":0}
+{"kind":"block","element_type":"paragraph","content":null,"level":1,"encoding":"text","attributes":{},"element_order":1}
+{"kind":"inline","element_type":"text","content":"Paragraph with ","level":2,"encoding":"text","attributes":{},"element_order":2}
+{"kind":"inline","element_type":"bold","content":"bold","level":2,"encoding":"text","attributes":{},"element_order":3}
+{"kind":"inline","element_type":"text","content":", ","level":2,"encoding":"text","attributes":{},"element_order":4}
+{"kind":"inline","element_type":"italic","content":"italic","level":2,"encoding":"text","attributes":{},"element_order":5}
+{"kind":"inline","element_type":"text","content":", ","level":2,"encoding":"text","attributes":{},"element_order":6}
+{"kind":"inline","element_type":"code","content":"inline code","level":2,"encoding":"text","attributes":{},"element_order":7}
+{"kind":"inline","element_type":"text","content":", [STRIKEOUT:struck], and a ","level":2,"encoding":"text","attributes":{},"element_order":8}
+{"kind":"inline","element_type":"link","content":"link","level":2,"encoding":"text","attributes":{"href":"https://example.com"},"element_order":9}
+{"kind":"inline","element_type":"text","content":".","level":2,"encoding":"text","attributes":{},"element_order":10}
+{"kind":"block","element_type":"heading","content":"Heading Two","level":1,"encoding":"text","attributes":{"heading_level":"2","id":"heading-two"},"element_order":11}
+{"kind":"block","element_type":"heading","content":"Heading Three","level":1,"encoding":"text","attributes":{"heading_level":"3","id":"heading-three"},"element_order":12}
+{"kind":"block","element_type":"table","content":"{\"headers\":[\"Name\",\"Value\",\"Note\"],\"rows\":[[\"a\",\"1\",\"x\"],[\"b\",\"2\",\"y\"]]}","level":1,"encoding":"json","attributes":{},"element_order":13}
+{"kind":"block","element_type":"list","content":null,"level":1,"encoding":"text","attributes":{"list_type":"ordered","number_delim":"Period","number_style":"Decimal","ordered":"true","start":"1"},"element_order":14}
+{"kind":"block","element_type":"list_item","content":"first","level":2,"encoding":"text","attributes":{},"element_order":15}
+{"kind":"block","element_type":"list_item","content":"second","level":2,"encoding":"text","attributes":{},"element_order":16}
+{"kind":"block","element_type":"list","content":null,"level":3,"encoding":"text","attributes":{"list_type":"bullet","ordered":"false"},"element_order":17}
+{"kind":"block","element_type":"list_item","content":"nested bullet","level":4,"encoding":"text","attributes":{},"element_order":18}
+{"kind":"block","element_type":"list_item","content":"nested two","level":4,"encoding":"text","attributes":{},"element_order":19}
+{"kind":"block","element_type":"list_item","content":"third","level":2,"encoding":"text","attributes":{},"element_order":20}
+{"kind":"block","element_type":"list","content":null,"level":1,"encoding":"text","attributes":{"list_type":"bullet","ordered":"false"},"element_order":21}
+{"kind":"block","element_type":"list_item","content":"plain bullet","level":2,"encoding":"text","attributes":{},"element_order":22}
+{"kind":"block","element_type":"list_item","content":"second bullet","level":2,"encoding":"text","attributes":{},"element_order":23}
+{"kind":"block","element_type":"list","content":null,"level":1,"encoding":"text","attributes":{"list_type":"definition","ordered":"false"},"element_order":24}
+{"kind":"block","element_type":"list_item","content":"Term","level":2,"encoding":"text","attributes":{"role":"term"},"element_order":25}
+{"kind":"block","element_type":"list_item","content":"The definition of the term.","level":2,"encoding":"text","attributes":{"role":"definition"},"element_order":26}
+{"kind":"block","element_type":"blockquote","content":null,"level":1,"encoding":"text","attributes":{},"element_order":27}
+{"kind":"block","element_type":"paragraph","content":"A quote.","level":2,"encoding":"text","attributes":{},"element_order":28}
+{"kind":"block","element_type":"blockquote","content":null,"level":2,"encoding":"text","attributes":{},"element_order":29}
+{"kind":"block","element_type":"paragraph","content":"A nested quote.","level":3,"encoding":"text","attributes":{},"element_order":30}
+{"kind":"block","element_type":"code","content":"def hello():\nreturn 1","level":1,"encoding":"text","attributes":{"language":"python"},"element_order":31}
+{"kind":"block","element_type":"code","content":"an indented code block","level":1,"encoding":"text","attributes":{},"element_order":32}
+{"kind":"block","element_type":"hr","content":null,"level":1,"encoding":"text","attributes":{},"element_order":33}
+{"kind":"block","element_type":"figure","content":null,"level":1,"encoding":"text","attributes":{},"element_order":34}
+{"kind":"block","element_type":"plain","content":null,"level":2,"encoding":"text","attributes":{},"element_order":35}
+{"kind":"inline","element_type":"image","content":"A caption","level":3,"encoding":"text","attributes":{"alt":"A caption","src":"pic.png"},"element_order":36}
+{"kind":"block","element_type":"caption","content":"A caption","level":2,"encoding":"text","attributes":{},"element_order":37}
+{"kind":"block","element_type":"paragraph","content":null,"level":1,"encoding":"text","attributes":{},"element_order":38}
+{"kind":"inline","element_type":"text","content":"Text with a footnote. ","level":2,"encoding":"text","attributes":{},"element_order":39}
+{"kind":"inline","element_type":"note","content":"The footnote body.","level":2,"encoding":"text","attributes":{"id":"1"},"element_order":40}
+{"kind":"block","element_type":"paragraph","content":null,"level":1,"encoding":"text","attributes":{},"element_order":41}
+{"kind":"inline","element_type":"text","content":"H","level":2,"encoding":"text","attributes":{},"element_order":42}
+{"kind":"inline","element_type":"subscript","content":"2","level":2,"encoding":"text","attributes":{},"element_order":43}
+{"kind":"inline","element_type":"text","content":"O and E=mc","level":2,"encoding":"text","attributes":{},"element_order":44}
+{"kind":"inline","element_type":"superscript","content":"2","level":2,"encoding":"text","attributes":{},"element_order":45}
+{"kind":"inline","element_type":"text","content":".","level":2,"encoding":"text","attributes":{},"element_order":46}
+{"kind":"block","element_type":"div","content":null,"level":1,"encoding":"text","attributes":{"id":"1","source_type":"footnote"},"element_order":47}
+{"kind":"block","element_type":"paragraph","content":"The footnote body.","level":2,"encoding":"text","attributes":{},"element_order":48}

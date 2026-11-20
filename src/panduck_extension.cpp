@@ -15,6 +15,7 @@
 #include "pandoc_block_convert.hpp"
 #include "pandoc_inline_convert.hpp"
 #include "pandoc_reader.hpp"
+#include "dblocks_reader.hpp"
 #include "reader_registry.hpp"
 #include "rst_reader.hpp"
 #include "rtf_reader.hpp"
@@ -131,6 +132,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	mediawiki::RegisterMediaWikiReader(loader);
 	textile::RegisterTextileReader(loader);
 	RegisterPandocReader(loader);
+	RegisterDblocksFunctions(loader);
 	// The converter scalars -- panduck_blocks_to_pandoc_ast and friends, and the
 	// canonical names panduck took over from duck_block_utils in converter handoff
 	// step 4. Registered here rather than from RegisterPandocReader because the

@@ -1,0 +1,50 @@
+{"@":"4.2.0"}
+{"t":"H","c":"Heading One","l":1,"a":{"h":"1","i":"heading-one"}}
+{"t":"P","l":1}
+{"t":"t","c":"Paragraph with ","l":2}
+{"t":"b","c":"bold","l":2}
+{"t":"t","c":", ","l":2}
+{"t":"i","c":"italic","l":2}
+{"t":"t","c":", ","l":2}
+{"t":"c","c":"inline code","l":2}
+{"t":"t","c":", [STRIKEOUT:struck], and a ","l":2}
+{"t":"a","c":"link","l":2,"a":{"w":"https://example.com"}}
+{"t":"t","c":".","l":2}
+{"t":"H","c":"Heading Two","l":1,"a":{"h":"2","i":"heading-two"}}
+{"t":"H","c":"Heading Three","l":1,"a":{"h":"3","i":"heading-three"}}
+{"t":"T","c":"{\"headers\":[\"Name\",\"Value\",\"Note\"],\"rows\":[[\"a\",\"1\",\"x\"],[\"b\",\"2\",\"y\"]]}","l":1,"e":"j"}
+{"t":"L","l":1,"a":{"t":"ordered","d":"Period","y":"Decimal","o":"true","n":"1"}}
+{"t":"I","c":"first","l":2}
+{"t":"I","c":"second","l":2}
+{"t":"L","l":3,"a":{"t":"bullet","o":"false"}}
+{"t":"I","c":"nested bullet","l":4}
+{"t":"I","c":"nested two","l":4}
+{"t":"I","c":"third","l":2}
+{"t":"L","l":1,"a":{"t":"bullet","o":"false"}}
+{"t":"I","c":"plain bullet","l":2}
+{"t":"I","c":"second bullet","l":2}
+{"t":"L","l":1,"a":{"t":"definition","o":"false"}}
+{"t":"I","c":"Term","l":2,"a":{"r":"term"}}
+{"t":"I","c":"The definition of the term.","l":2,"a":{"r":"definition"}}
+{"t":"Q","l":1}
+{"t":"P","c":"A quote.","l":2}
+{"t":"Q","l":2}
+{"t":"P","c":"A nested quote.","l":3}
+{"t":"C","c":"def hello():\nreturn 1","l":1,"a":{"g":"python"}}
+{"t":"C","c":"an indented code block","l":1}
+{"t":"R","l":1}
+{"t":"F","l":1}
+{"t":"N","l":2}
+{"t":"g","c":"A caption","l":3,"a":{"a":"A caption","u":"pic.png"}}
+{"t":"A","c":"A caption","l":2}
+{"t":"P","l":1}
+{"t":"t","c":"Text with a footnote. ","l":2}
+{"t":"f","c":"The footnote body.","l":2,"a":{"i":"1"}}
+{"t":"P","l":1}
+{"t":"t","c":"H","l":2}
+{"t":"d","c":"2","l":2}
+{"t":"t","c":"O and E=mc","l":2}
+{"t":"u","c":"2","l":2}
+{"t":"t","c":".","l":2}
+{"t":"D","l":1,"a":{"i":"1","s":"footnote"}}
+{"t":"P","c":"The footnote body.","l":2}

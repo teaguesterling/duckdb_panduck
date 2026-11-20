@@ -1,0 +1,10 @@
+{"kind":"block","element_type":"code","content":"tab\tnl\nquote \" back \\ ctl\u0001 end\n","level":1,"encoding":"text","attributes":{"language":"py"},"element_order":0}
+{"kind":"inline","element_type":"text","content":"école Ünd — 日本 🦆   sep","level":2,"encoding":"text","attributes":{},"element_order":1}
+{"kind":"block","element_type":"paragraph","content":null,"level":1,"encoding":"text","attributes":{},"element_order":2}
+{"kind":"block","element_type":"paragraph","content":"","level":1,"encoding":"text","attributes":{},"element_order":3}
+{"kind":"block","element_type":"table","content":"{\"headers\":[\"a\"],\"rows\":[[\"1\"]]}","level":1,"encoding":"json","attributes":{},"element_order":4}
+{"kind":"block","element_type":"metadata","content":"a: 1","level":1,"encoding":"yaml","attributes":{"role":"frontmatter"},"element_order":5}
+{"kind":"inline","element_type":"caption","content":"Cap","level":1,"encoding":"text","attributes":{},"element_order":6}
+{"kind":"block","element_type":"x:custom","content":null,"level":1,"encoding":"text","attributes":{},"element_order":7}
+{"kind":"inline","element_type":"span","content":null,"level":1,"encoding":"text","attributes":{"c":"unknown-c","class":"note","lang":"fr","zeta":"1"},"element_order":8}
+{"kind":"block","element_type":"div","content":null,"level":1,"encoding":"text","attributes":{"alt":"1","class":"2","execution_count":"3","format":"4","heading_level":"5","href":"6","id":"7","key":"8","language":"9","link_type":"10","list_type":"11","number_delim":"12","number_style":"13","ordered":"14","pandoc_ast":"15","role":"16","source_type":"17","src":"18","start":"19","template_name":"20","title":"21"},"element_order":9}

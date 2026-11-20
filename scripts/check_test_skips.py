@@ -72,6 +72,11 @@ COMMUNITY = ("webbed", "duck_block_utils", "pdf", "markdown", "duck_tails")
 # requires -- not a speculative list of everything core ships.
 STATICALLY_LINKED = (
     "parquet",  # test/sql/ has one `require parquet`; parquet ships in DuckDB's default build.
+    # dblocks.test has `require json` (it reads its expected rows with read_json). json ships in
+    # DuckDB's default build too. Measured, not assumed: duckdb_extensions() on this build says
+    # json STATICALLY_LINKED, and CI's linux_amd64 leg went from 43 passed / 5 skipped on main
+    # (82ee450) to 44 passed / 5 skipped with dblocks.test added -- it ran, it did not skip.
+    "json",
 )
 
 # `require <word>` DOES NOT ALWAYS NAME AN EXTENSION. sqllogictest takes runner

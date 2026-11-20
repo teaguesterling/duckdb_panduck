@@ -26,6 +26,7 @@ static const char *const EXT_ORG[] = {"org", nullptr};
 static const char *const EXT_MEDIAWIKI[] = {"wiki", "mediawiki", nullptr};
 static const char *const EXT_TEXTILE[] = {"textile", nullptr};
 static const char *const EXT_RTF[] = {"rtf", nullptr};
+static const char *const EXT_DBLOCKS[] = {"dblocks", nullptr};
 
 // The formats panduck claims. `format` is pandoc's own name for it, so a reader
 // added here lines up with the `--from` value a human would reach for.
@@ -250,6 +251,11 @@ const FormatReader FORMATS[] = {
      "a run of \\intbl paragraphs with \\cell and \\row as terminators, "
      "accumulated "
      "rather than descended into"},
+    {"dblocks", EXT_DBLOCKS, "read_dblocks_blocks", STATUS_IMPLEMENTED,
+     "the compact duck_blocks line format: one JSON object per line, short codes, "
+     "the line number as element_order. duck_block_utils' format, read and written "
+     "here with the codec vendored from it (duck_block_compact.hpp), so it needs no "
+     "duck_block_utils at runtime; streamed, one piece of the file at a time"},
 };
 
 const size_t FORMAT_COUNT = sizeof(FORMATS) / sizeof(FORMATS[0]);

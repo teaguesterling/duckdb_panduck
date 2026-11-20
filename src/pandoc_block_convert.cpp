@@ -86,79 +86,6 @@ static string ValToJsonString(yyjson_val *val) {
 	return res;
 }
 
-// A parsed Pandoc attr triple: ["id", ["class", ...], [["key","value"], ...]]
-struct PandocAttr {
-	string id;
-	vector<string> classes;
-	vector<std::pair<string, string>> key_values;
-};
-
-static void ParsePandocAttrVal(yyjson_val *attr_val, PandocAttr &attr) {
-	if (!attr_val || !yyjson_is_arr(attr_val)) {
-		return;
-	}
-	// Element 0: id
-	yyjson_val *id_val = yyjson_arr_get(attr_val, 0);
-	if (id_val && yyjson_is_str(id_val)) {
-		attr.id = string(yyjson_get_str(id_val), yyjson_get_len(id_val));
-	}
-	// Element 1: classes
-	yyjson_val *classes_val = yyjson_arr_get(attr_val, 1);
-	if (classes_val && yyjson_is_arr(classes_val)) {
-		size_t idx, max;
-		yyjson_val *cls;
-		yyjson_arr_foreach(classes_val, idx, max, cls) {
-			if (yyjson_is_str(cls)) {
-				attr.classes.emplace_back(yyjson_get_str(cls), yyjson_get_len(cls));
-			}
-		}
-	}
-	// Element 2: key-values
-	yyjson_val *kvs_val = yyjson_arr_get(attr_val, 2);
-	if (kvs_val && yyjson_is_arr(kvs_val)) {
-		size_t idx, max;
-		yyjson_val *kv;
-		yyjson_arr_foreach(kvs_val, idx, max, kv) {
-			if (yyjson_is_arr(kv) && yyjson_arr_size(kv) >= 2) {
-				yyjson_val *k = yyjson_arr_get(kv, 0);
-				yyjson_val *v = yyjson_arr_get(kv, 1);
-				if (k && yyjson_is_str(k) && v && yyjson_is_str(v)) {
-					attr.key_values.emplace_back(string(yyjson_get_str(k), yyjson_get_len(k)),
-					                             string(yyjson_get_str(v), yyjson_get_len(v)));
-				}
-			}
-		}
-	}
-}
-
-static bool IsReservedAttrKey(const string &key) {
-	return key == "id" || key == "class" || key == DuckBlockTypes::ATTR_HEADING_LEVEL || key == "language" ||
-	       key == DuckBlockTypes::ATTR_LIST_TYPE || key == "format" || key == "src" || key == "alt" || key == "title" ||
-	       key == "href" || key == "quote_type" || key == "display";
-}
-
-static void StorePandocAttr(const PandocAttr &attr, map<string, string> &attrs) {
-	if (!attr.id.empty()) {
-		attrs["id"] = attr.id;
-	}
-	if (!attr.classes.empty()) {
-		string joined;
-		for (auto &cls : attr.classes) {
-			if (!joined.empty()) {
-				joined += " ";
-			}
-			joined += cls;
-		}
-		attrs["class"] = joined;
-	}
-	for (auto &kv : attr.key_values) {
-		if (IsReservedAttrKey(kv.first) || attrs.find(kv.first) != attrs.end()) {
-			continue;
-		}
-		attrs[kv.first] = kv.second;
-	}
-}
-
 static void ExtractInlinesTextValInto(yyjson_val *node, string &out, idx_t depth);
 
 //! `depth` IS LOAD-BEARING, and it went missing for a day.
@@ -1120,88 +1047,12 @@ static string GetElementStringField(const Value &element, idx_t field_idx) {
 	return children[field_idx].GetValue<string>();
 }
 
-static string GetElementAttribute(const Value &element, const string &key) {
-	auto &children = StructValue::GetChildren(element);
-	auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-	if (attrs.IsNull()) {
-		return "";
-	}
-
-	auto &map_entries = MapValue::GetChildren(attrs);
-	for (auto &entry : map_entries) {
-		if (entry.IsNull()) {
-			continue;
-		}
-		auto &kv = StructValue::GetChildren(entry);
-		if (kv.size() >= 2 && !kv[0].IsNull() && kv[0].GetValue<string>() == key) {
-			if (!kv[1].IsNull()) {
-				return kv[1].GetValue<string>();
-			}
-		}
-	}
-	return "";
-}
-
 static int32_t GetElementLevel(const Value &element) {
 	auto &children = StructValue::GetChildren(element);
 	if (children[DuckBlockTypes::LEVEL_IDX].IsNull()) {
 		return 1;
 	}
 	return children[DuckBlockTypes::LEVEL_IDX].GetValue<int32_t>();
-}
-
-static yyjson_mut_val *CreatePandocAttrVal(yyjson_mut_doc *doc, const Value &element, const string &fallback_class) {
-	auto id = GetElementAttribute(element, "id");
-	auto classes = GetElementAttribute(element, "class");
-	if (classes.empty()) {
-		classes = fallback_class;
-	}
-
-	yyjson_mut_val *attr_arr = yyjson_mut_arr(doc);
-	yyjson_mut_arr_add_strncpy(doc, attr_arr, id.data(), id.size());
-
-	yyjson_mut_val *classes_arr = yyjson_mut_arr(doc);
-	size_t start = 0;
-	while (start < classes.length()) {
-		size_t space = classes.find(' ', start);
-		size_t len = (space == string::npos) ? string::npos : space - start;
-		string cls = classes.substr(start, len);
-		if (!cls.empty()) {
-			yyjson_mut_arr_add_strncpy(doc, classes_arr, cls.data(), cls.size());
-		}
-		if (space == string::npos) {
-			break;
-		}
-		start = space + 1;
-	}
-	yyjson_mut_arr_add_val(attr_arr, classes_arr);
-
-	yyjson_mut_val *kvs_arr = yyjson_mut_arr(doc);
-	auto &children = StructValue::GetChildren(element);
-	auto &attrs = children[DuckBlockTypes::ATTRIBUTES_IDX];
-	if (!attrs.IsNull()) {
-		auto &map_entries = MapValue::GetChildren(attrs);
-		for (auto &entry : map_entries) {
-			if (entry.IsNull()) {
-				continue;
-			}
-			auto &kv = StructValue::GetChildren(entry);
-			if (kv.size() < 2 || kv[0].IsNull() || kv[1].IsNull()) {
-				continue;
-			}
-			string key = kv[0].GetValue<string>();
-			if (IsReservedAttrKey(key)) {
-				continue;
-			}
-			string val = kv[1].GetValue<string>();
-			yyjson_mut_val *pair_arr = yyjson_mut_arr(doc);
-			yyjson_mut_arr_add_strncpy(doc, pair_arr, key.data(), key.size());
-			yyjson_mut_arr_add_strncpy(doc, pair_arr, val.data(), val.size());
-			yyjson_mut_arr_add_val(kvs_arr, pair_arr);
-		}
-	}
-	yyjson_mut_arr_add_val(attr_arr, kvs_arr);
-	return attr_arr;
 }
 
 static yyjson_mut_val *ConvertListToPandocVal(yyjson_mut_doc *doc, const vector<Value> &blocks_list, idx_t &start_idx,

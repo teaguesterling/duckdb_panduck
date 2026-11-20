@@ -35,6 +35,20 @@ static Value CreateDocInline(const string &inline_type, const string &content, i
 
 using namespace duckdb_yyjson;
 
+// Slot 0 of an inline Code, Link, Image or Span is its Attr: [id, [class], [[k, v]]].
+// These arms read the rest of the constructor and skipped slot 0, so an inline lost
+// what the same Attr keeps on a block (#208). The mapping is the block arms' own:
+// id and class under their keys, each pair under its key, reserved keys never
+// overwritten.
+static void ReadInlineAttr(yyjson_val *c_val, map<string, string> &attrs) {
+	if (!c_val || !yyjson_is_arr(c_val) || yyjson_arr_size(c_val) < 1) {
+		return;
+	}
+	PandocAttr attr;
+	ParsePandocAttrVal(yyjson_arr_get(c_val, 0), attr);
+	StorePandocAttr(attr, attrs);
+}
+
 static string InlineValuesToText(const vector<Value> &inlines) {
 	string out;
 	for (auto &el : inlines) {
@@ -131,6 +145,7 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 			return;
 		} else if (strcmp(pandoc_type, "Code") == 0) {
 			inline_type = DuckBlockTypes::INLINE_CODE;
+			ReadInlineAttr(c_val, attrs);
 			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
 				yyjson_val *code_val = yyjson_arr_get(c_val, 1);
 				if (code_val && yyjson_is_str(code_val)) {
@@ -156,6 +171,7 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 			}
 		} else if (strcmp(pandoc_type, "Link") == 0) {
 			inline_type = DuckBlockTypes::INLINE_LINK;
+			ReadInlineAttr(c_val, attrs);
 			yyjson_val *inlines = nullptr;
 			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
 				inlines = yyjson_arr_get(c_val, 1);
@@ -181,6 +197,7 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 			return;
 		} else if (strcmp(pandoc_type, "Image") == 0) {
 			inline_type = DuckBlockTypes::INLINE_IMAGE;
+			ReadInlineAttr(c_val, attrs);
 			string alt_text;
 			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
 				yyjson_val *alt_inlines = yyjson_arr_get(c_val, 1);
@@ -352,6 +369,7 @@ static void FlattenPandocInlinesVal(yyjson_val *inlines_val, int32_t level, int3
 			return;
 		} else if (strcmp(pandoc_type, "Span") == 0) {
 			inline_type = DuckBlockTypes::INLINE_SPAN;
+			ReadInlineAttr(c_val, attrs);
 			yyjson_val *inlines = nullptr;
 			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
 				inlines = yyjson_arr_get(c_val, 1);
@@ -531,11 +549,7 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, obj, "t", "Code");
 			yyjson_mut_val *c_arr = yyjson_mut_arr(doc);
-			yyjson_mut_val *attr_arr = yyjson_mut_arr(doc);
-			yyjson_mut_arr_add_str(doc, attr_arr, "");
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(c_arr, attr_arr);
+			yyjson_mut_arr_add_val(c_arr, CreatePandocAttrVal(doc, inline_val, ""));
 			yyjson_mut_arr_add_strncpy(doc, c_arr, content.data(), content.size());
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);
@@ -565,11 +579,7 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, obj, "t", "Link");
 			yyjson_mut_val *c_arr = yyjson_mut_arr(doc);
-			yyjson_mut_val *attr_arr = yyjson_mut_arr(doc);
-			yyjson_mut_arr_add_str(doc, attr_arr, "");
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(c_arr, attr_arr);
+			yyjson_mut_arr_add_val(c_arr, CreatePandocAttrVal(doc, inline_val, ""));
 			yyjson_mut_arr_add_val(c_arr, nested);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, href.data(), href.size());
@@ -605,11 +615,7 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, obj, "t", "Image");
 			yyjson_mut_val *c_arr = yyjson_mut_arr(doc);
-			yyjson_mut_val *attr_arr = yyjson_mut_arr(doc);
-			yyjson_mut_arr_add_str(doc, attr_arr, "");
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(c_arr, attr_arr);
+			yyjson_mut_arr_add_val(c_arr, CreatePandocAttrVal(doc, inline_val, ""));
 			yyjson_mut_arr_add_val(c_arr, alt);
 			yyjson_mut_val *target_arr = yyjson_mut_arr(doc);
 			yyjson_mut_arr_add_strncpy(doc, target_arr, src.data(), src.size());
@@ -678,11 +684,7 @@ yyjson_mut_val *PandocInlineConvert::ConvertDbInlinesToPandocVal(yyjson_mut_doc 
 			yyjson_mut_val *obj = yyjson_mut_obj(doc);
 			yyjson_mut_obj_add_str(doc, obj, "t", "Span");
 			yyjson_mut_val *c_arr = yyjson_mut_arr(doc);
-			yyjson_mut_val *attr_arr = yyjson_mut_arr(doc);
-			yyjson_mut_arr_add_str(doc, attr_arr, "");
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(attr_arr, yyjson_mut_arr(doc));
-			yyjson_mut_arr_add_val(c_arr, attr_arr);
+			yyjson_mut_arr_add_val(c_arr, CreatePandocAttrVal(doc, inline_val, ""));
 			yyjson_mut_arr_add_val(c_arr, nested);
 			yyjson_mut_obj_add_val(doc, obj, "c", c_arr);
 			yyjson_mut_arr_add_val(arr, obj);

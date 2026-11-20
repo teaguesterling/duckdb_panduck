@@ -224,3 +224,47 @@ SELECT panduck_blocks_to_pandoc_blocks([
   LIKE '[{"t":"Div","c":[["",[],[]],[{"t":"Table","c":[["",[],[]],[null,[]],[[{"t":"AlignDefault"},{"t":"ColWidthDefault"}]],%';
 ----
 true
+
+# ---------------------------------------------------------------------------------------
+# THE Attr OF AN INLINE Link, Image, Span AND Code (#208).
+#
+# Each of these four constructors carries pandoc's Attr in slot 0: [id, [class], [[k, v]]].
+# The block arms read and write it (ParsePandocAttrVal / CreatePandocAttrVal). The inline
+# arms did neither: import never read slot 0, and export wrote ["",[],[]] whatever the row
+# held. So `[link](u){#lk .big data-foo=bar}` came back as a bare link, an image lost its
+# width, and attributes that panduck's OWN readers put on an inline (#195's image options,
+# #193's role class) never reached pandoc JSON at all.
+
+# Import: the Attr lands in the row's attributes, id and class under their own keys and
+# each key-value pair under its key -- the same mapping the block arms use.
+query II
+SELECT b.element_type, b.attributes::VARCHAR
+FROM (SELECT unnest(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Para","c":[{"t":"Link","c":[["lk",["big"],[["data-foo","bar"]]],[{"t":"Str","c":"link"}],["u",""]]},{"t":"Image","c":[["",[],[["width","50%"]]],[{"t":"Str","c":"cat"}],["c.png",""]]},{"t":"Span","c":[["",["note"],[["lang","fr"]]],[{"t":"Str","c":"span"}]]},{"t":"Code","c":[["",["py"],[]],"x"]}]}]')) AS b)
+WHERE b.element_type IN ('link', 'image', 'span', 'code')
+ORDER BY b.element_order;
+----
+link	{class=big, data-foo=bar, href=u, id=lk}
+image	{alt=cat, src=c.png, width=50%}
+span	{class=note, lang=fr}
+code	{class=py}
+
+# Round trip: pandoc AST -> duck_blocks -> pandoc AST gives the input back. One key-value
+# pair per element, because the attributes map is key-sorted and pandoc's list is not.
+query I
+SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks(
+  '[{"t":"Para","c":[{"t":"Link","c":[["lk",["big"],[["data-foo","bar"]]],[{"t":"Str","c":"link"}],["u",""]]},{"t":"Image","c":[["",[],[["width","50%"]]],[{"t":"Str","c":"cat"}],["c.png",""]]},{"t":"Span","c":[["",["note"],[["lang","fr"]]],[{"t":"Str","c":"span"}]]},{"t":"Code","c":[["",["py"],[]],"x"]}]}]'));
+----
+[{"t":"Para","c":[{"t":"Link","c":[["lk",["big"],[["data-foo","bar"]]],[{"t":"Str","c":"link"}],["u",""]]},{"t":"Image","c":[["",[],[["width","50%"]]],[{"t":"Str","c":"cat"}],["c.png",""]]},{"t":"Span","c":[["",["note"],[["lang","fr"]]],[{"t":"Str","c":"span"}]]},{"t":"Code","c":[["",["py"],[]],"x"]}]}]
+
+# Export of a NATIVE row: an inline image with a width, the shape read_rst_blocks gives an
+# `.. image::` with `:width:` (#195). pandoc 3.1.3 writes the same width for the same RST
+# as [["width","200px"]].
+query I
+SELECT panduck_blocks_to_pandoc_blocks([
+  {'kind':'block','element_type':'paragraph','content':NULL,'level':1,
+   'encoding':'text','attributes':MAP{}::MAP(VARCHAR, VARCHAR),'element_order':0},
+  {'kind':'inline','element_type':'image','content':NULL,'level':2,
+   'encoding':'text','attributes':MAP{'src':'cat.png','width':'200px'},'element_order':1}]);
+----
+[{"t":"Para","c":[{"t":"Image","c":[["",[],[["width","200px"]]],[],["cat.png",""]]}]}]

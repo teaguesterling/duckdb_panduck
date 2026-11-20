@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compare panduck's vendored compact-format header and golden corpus against
-duck_block_utils at the PINNED commit.
+duck_block_utils' LATEST RELEASE.
 
 panduck vendors src/include/duck_block_compact.hpp (the compact line format's code
 tables and C++ codec) and test/fixtures/dblocks/ (the golden corpus) from
@@ -8,10 +8,12 @@ duck_block_utils. The two implementations of the format -- duck_block_utils' SQL
 macros and this codec -- agree only while the tables and the corpus are the same, so
 both are compared here.
 
-PINNED TO A COMMIT, NOT A RELEASE. The vocabulary check compares against upstream's
-latest release; no duck_block_utils release contains this header yet, so this one
-compares against PIN_SHA. Teague's call, 2026-11-20. Move PIN_SHA when panduck takes a
-newer copy, and switch to the release once one ships.
+RELEASE-BASED, like the vocabulary check: the contract with upstream is its published
+releases, so this compares against the latest one (resolved and PRINTED), at that
+release's commit. It was pinned to a main commit until v4.2.0 shipped the header
+(2026-11-20). A newer release that changes the tables or the corpus turns this red until
+panduck re-vendors -- which is the point. --ref compares against a given tag or commit
+instead.
 
 THE HEADER IS COMPARED IGNORING FORMATTING. panduck's clang-format re-wraps vendored
 files (its copy of duck_block_normalize.hpp differs from upstream only in wrapping), so
@@ -33,13 +35,13 @@ import urllib.request
 from pathlib import Path
 
 UPSTREAM_REPO = "teaguesterling/duckdb_duck_block_utils"
-PIN_SHA = "16991845940d6fa7a952a8ea30269a591d687d5b"
 UPSTREAM_HEADER = "vendor/duck_block_compact.hpp"
 UPSTREAM_CORPUS = "test/fixtures/compact/golden"
 LOCAL_HEADER = "src/include/duck_block_compact.hpp"
 LOCAL_CORPUS = "test/fixtures/dblocks"
 RAW = "https://raw.githubusercontent.com/" + UPSTREAM_REPO + "/{sha}/{path}"
 API_TREE = "https://api.github.com/repos/" + UPSTREAM_REPO + "/contents/{path}?ref={sha}"
+API = "https://api.github.com/repos/" + UPSTREAM_REPO
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,39 +56,76 @@ class Unreachable(Exception):
     pass
 
 
-def fetch_https(path: str) -> bytes:
-    try:
-        with urllib.request.urlopen(RAW.format(sha=PIN_SHA, path=path), timeout=20) as r:
-            return r.read()
-    except Exception as e:  # noqa: BLE001 -- any failure to reach upstream is one outcome
-        raise Unreachable(f"{path}: {e}") from e
-
-
-def list_https(path: str):
+def api_json(url: str):
     import json
 
-    req = urllib.request.Request(API_TREE.format(sha=PIN_SHA, path=path))
+    req = urllib.request.Request(url)
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            return sorted(e["name"] for e in json.load(r) if e["type"] == "file")
+            return json.load(r)
     except Exception as e:  # noqa: BLE001
+        raise Unreachable(f"{url}: {e}") from e
+
+
+def resolve_https(ref):
+    """(label, sha): the given ref, or upstream's latest published release."""
+    if ref is None:
+        ref = api_json(API + "/releases/latest")["tag_name"]
+    return ref, api_json(f"{API}/commits/{ref}")["sha"]
+
+
+def resolve_git(repo: Path, ref):
+    """(label, sha) from a local clone: the given ref, or its newest v* tag."""
+    try:
+        if ref is None:
+            tags = subprocess.run(["git", "-C", str(repo), "tag", "--list", "v*", "--sort=-v:refname"],
+                                  check=True, capture_output=True, text=True).stdout.split()
+            if not tags:
+                raise Unreachable("no v* tags in the clone")
+            ref = tags[0]
+        sha = subprocess.run(["git", "-C", str(repo), "rev-parse", f"{ref}^{{commit}}"],
+                             check=True, capture_output=True, text=True).stdout.strip()
+    except subprocess.CalledProcessError as e:
+        raise Unreachable(f"{ref}: {e.stderr.strip()}") from e
+    return ref, sha
+
+
+def https_source(sha: str):
+    def show(path: str) -> bytes:
+        return fetch_https(sha, path)
+
+    def ls(path: str):
+        return list_https(sha, path)
+
+    return show, ls
+
+
+def fetch_https(sha: str, path: str) -> bytes:
+    try:
+        with urllib.request.urlopen(RAW.format(sha=sha, path=path), timeout=20) as r:
+            return r.read()
+    except Exception as e:  # noqa: BLE001 -- any failure to reach upstream is one outcome
         raise Unreachable(f"{path}: {e}") from e
 
 
-def git_source(repo: Path):
+def list_https(sha: str, path: str):
+    return sorted(e["name"] for e in api_json(API_TREE.format(sha=sha, path=path)) if e["type"] == "file")
+
+
+def git_source(repo: Path, sha: str):
     def show(path: str) -> bytes:
         try:
-            return subprocess.run(["git", "-C", str(repo), "show", f"{PIN_SHA}:{path}"],
+            return subprocess.run(["git", "-C", str(repo), "show", f"{sha}:{path}"],
                                   check=True, capture_output=True).stdout
         except subprocess.CalledProcessError as e:
             raise Unreachable(f"{path}: {e.stderr.decode().strip()}") from e
 
     def ls(path: str):
         try:
-            out = subprocess.run(["git", "-C", str(repo), "ls-tree", "--name-only", f"{PIN_SHA}:{path}"],
+            out = subprocess.run(["git", "-C", str(repo), "ls-tree", "--name-only", f"{sha}:{path}"],
                                  check=True, capture_output=True, text=True).stdout
         except subprocess.CalledProcessError as e:
             raise Unreachable(f"{path}: {e.stderr.strip()}") from e
@@ -140,7 +179,8 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true", help="an unreachable upstream is a failure")
-    ap.add_argument("--upstream-git", type=Path, help="a local duck_block_utils clone holding PIN_SHA")
+    ap.add_argument("--upstream-git", type=Path, help="a local duck_block_utils clone")
+    ap.add_argument("--ref", help="compare against this tag or commit instead of the latest release")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -154,12 +194,17 @@ def main() -> int:
     local_dir = ROOT / LOCAL_CORPUS
     local_files = {p.name: p.read_bytes() for p in sorted(local_dir.iterdir()) if p.is_file()} if local_dir.is_dir() else {}
 
-    show, ls = git_source(args.upstream_git) if args.upstream_git else (fetch_https, list_https)
     try:
+        if args.upstream_git:
+            label, sha = resolve_git(args.upstream_git, args.ref)
+            show, ls = git_source(args.upstream_git, sha)
+        else:
+            label, sha = resolve_https(args.ref)
+            show, ls = https_source(sha)
         upstream_header = show(UPSTREAM_HEADER).decode()
         upstream_files = {n: show(f"{UPSTREAM_CORPUS}/{n}") for n in ls(UPSTREAM_CORPUS)}
     except Unreachable as e:
-        msg = f"could not read upstream at {PIN_SHA[:10]}: {e}"
+        msg = f"could not read upstream ({args.ref or 'latest release'}): {e}"
         if args.strict:
             print(f"FAIL: {msg}\n      --strict: an unreachable upstream is not a pass.")
             return 1
@@ -167,12 +212,12 @@ def main() -> int:
         return 0
 
     print(f"Comparing {LOCAL_HEADER} and {LOCAL_CORPUS}/ ({len(local_files)} files) "
-          f"against {UPSTREAM_REPO}@{PIN_SHA[:10]}")
+          f"against {UPSTREAM_REPO} {label} ({sha[:10]})")
     problems = compare(local_header, upstream_header, local_files, upstream_files)
     for p in problems:
         print(f"  {p}")
     if problems:
-        print(f"FAIL: {len(problems)} difference(s) from the pinned upstream")
+        print(f"FAIL: {len(problems)} difference(s) from upstream {label}")
         return 1
     print(f"OK: the vendored compact header and the {len(upstream_files)}-file corpus match upstream")
     return 0

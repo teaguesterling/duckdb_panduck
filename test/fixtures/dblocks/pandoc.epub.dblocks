@@ -1,0 +1,25 @@
+{"@":"4.2.0"}
+{"t":"S","l":1,"a":{"c":"level1","r":"section"}}
+{"t":"H","c":"Heading One","l":2,"a":{"h":"1","i":"heading-one"}}
+{"t":"P","l":2}
+{"t":"t","c":"A paragraph with ","l":3}
+{"t":"b","c":"bold","l":3}
+{"t":"t","c":", ","l":3}
+{"t":"i","c":"italic","l":3}
+{"t":"t","c":", and ","l":3}
+{"t":"k","c":"strike","l":3}
+{"t":"t","c":" text.","l":3}
+{"t":"S","l":2,"a":{"c":"level2","r":"section"}}
+{"t":"H","c":"Heading Two","l":3,"a":{"h":"2","i":"heading-two"}}
+{"t":"L","l":3,"a":{"t":"bullet","o":"false"}}
+{"t":"I","c":"bullet one","l":4}
+{"t":"I","c":"bullet two","l":4}
+{"t":"Q","l":3}
+{"t":"P","c":"A block quote.","l":4}
+{"t":"P","c":"Unicode: café — em-dash, and a tab.","l":3}
+{"t":"~","l":1,"a":{"k":"date"}}
+{"t":"t","c":"2026-09-01T01:20:24Z","l":2}
+{"t":"~","l":1,"a":{"k":"identifier"}}
+{"t":"t","c":"urn:uuid:2de3e5d7-f4aa-40fe-acf7-76ca33766b4a","l":2}
+{"t":"~","l":1,"a":{"k":"language"}}
+{"t":"t","c":"en-US","l":2}

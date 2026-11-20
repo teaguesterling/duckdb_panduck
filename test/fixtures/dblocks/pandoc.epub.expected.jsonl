@@ -1,0 +1,24 @@
+{"kind":"block","element_type":"section","content":null,"level":1,"encoding":"text","attributes":{"class":"level1","role":"section"},"element_order":0}
+{"kind":"block","element_type":"heading","content":"Heading One","level":2,"encoding":"text","attributes":{"heading_level":"1","id":"heading-one"},"element_order":1}
+{"kind":"block","element_type":"paragraph","content":null,"level":2,"encoding":"text","attributes":{},"element_order":2}
+{"kind":"inline","element_type":"text","content":"A paragraph with ","level":3,"encoding":"text","attributes":{},"element_order":3}
+{"kind":"inline","element_type":"bold","content":"bold","level":3,"encoding":"text","attributes":{},"element_order":4}
+{"kind":"inline","element_type":"text","content":", ","level":3,"encoding":"text","attributes":{},"element_order":5}
+{"kind":"inline","element_type":"italic","content":"italic","level":3,"encoding":"text","attributes":{},"element_order":6}
+{"kind":"inline","element_type":"text","content":", and ","level":3,"encoding":"text","attributes":{},"element_order":7}
+{"kind":"inline","element_type":"strikethrough","content":"strike","level":3,"encoding":"text","attributes":{},"element_order":8}
+{"kind":"inline","element_type":"text","content":" text.","level":3,"encoding":"text","attributes":{},"element_order":9}
+{"kind":"block","element_type":"section","content":null,"level":2,"encoding":"text","attributes":{"class":"level2","role":"section"},"element_order":10}
+{"kind":"block","element_type":"heading","content":"Heading Two","level":3,"encoding":"text","attributes":{"heading_level":"2","id":"heading-two"},"element_order":11}
+{"kind":"block","element_type":"list","content":null,"level":3,"encoding":"text","attributes":{"list_type":"bullet","ordered":"false"},"element_order":12}
+{"kind":"block","element_type":"list_item","content":"bullet one","level":4,"encoding":"text","attributes":{},"element_order":13}
+{"kind":"block","element_type":"list_item","content":"bullet two","level":4,"encoding":"text","attributes":{},"element_order":14}
+{"kind":"block","element_type":"blockquote","content":null,"level":3,"encoding":"text","attributes":{},"element_order":15}
+{"kind":"block","element_type":"paragraph","content":"A block quote.","level":4,"encoding":"text","attributes":{},"element_order":16}
+{"kind":"block","element_type":"paragraph","content":"Unicode: café — em-dash, and a tab.","level":3,"encoding":"text","attributes":{},"element_order":17}
+{"kind":"value","element_type":"inlines","content":null,"level":1,"encoding":"text","attributes":{"key":"date"},"element_order":18}
+{"kind":"inline","element_type":"text","content":"2026-09-01T01:20:24Z","level":2,"encoding":"text","attributes":{},"element_order":19}
+{"kind":"value","element_type":"inlines","content":null,"level":1,"encoding":"text","attributes":{"key":"identifier"},"element_order":20}
+{"kind":"inline","element_type":"text","content":"urn:uuid:2de3e5d7-f4aa-40fe-acf7-76ca33766b4a","level":2,"encoding":"text","attributes":{},"element_order":21}
+{"kind":"value","element_type":"inlines","content":null,"level":1,"encoding":"text","attributes":{"key":"language"},"element_order":22}
+{"kind":"inline","element_type":"text","content":"en-US","level":2,"encoding":"text","attributes":{},"element_order":23}

@@ -1,0 +1,19 @@
+{"@":"4.2.0"}
+{"t":"D","l":1,"a":{"s":"markdown"}}
+{"t":"W","c":"# Notebook Title\n\nProse with *emphasis*.","l":2,"a":{"f":"markdown"}}
+{"t":"D","l":1,"a":{"s":"code"}}
+{"t":"C","c":"print('hello')","l":2,"a":{"g":"python"}}
+{"t":"D","l":2,"a":{"s":"stream"}}
+{"t":"C","c":"hello","l":3}
+{"t":"D","l":1,"a":{"s":"code"}}
+{"t":"C","c":"6 * 7","l":2,"a":{"g":"python"}}
+{"t":"D","l":2,"a":{"s":"execute_result"}}
+{"t":"C","c":"42","l":3}
+{"t":"D","l":1,"a":{"s":"raw"}}
+{"t":"W","c":"raw cell text","l":2}
+{"t":"~","l":1,"a":{"k":"author","s":"metadata.authors"}}
+{"t":"t","c":"A. Writer","l":2}
+{"t":"~","l":1,"a":{"k":"kernel","s":"metadata.kernelspec.language"}}
+{"t":"t","c":"python","l":2}
+{"t":"~","l":1,"a":{"k":"title","s":"metadata.title"}}
+{"t":"t","c":"NB Title","l":2}

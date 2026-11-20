@@ -40,6 +40,7 @@ query II
 SELECT format, reader FROM panduck_supported_extensions()
 WHERE status = 'implemented' ORDER BY format;
 ----
+dblocks	read_dblocks_blocks
 docx	read_docx_blocks
 epub	read_epub_blocks
 ipynb	read_ipynb_blocks
@@ -78,10 +79,13 @@ SELECT count(*) FROM (SELECT ext FROM claimed GROUP BY ext HAVING count(*) > 1);
 ----
 0
 
-# Format names are unique and are pandoc's own --from names.
+# Format names are unique, and are pandoc's own --from names -- except dblocks, the
+# compact duck_blocks line format, which is duck_block_utils' and which pandoc does not
+# read.
 query I
 SELECT format FROM panduck_supported_extensions() ORDER BY format;
 ----
+dblocks
 docx
 epub
 ipynb

@@ -1,0 +1,247 @@
+# name: test/sql/dblocks.test
+# description: the compact duck_blocks line format (.dblocks) -- read_dblocks_blocks, panduck_dblocks_to_blocks, panduck_blocks_to_dblocks, panduck_write_dblocks
+# group: [sql]
+
+require panduck
+
+require json
+
+# ---------------------------------------------------------------------------------------
+# WHY panduck HAS ITS OWN READER AND WRITER. The format is duck_block_utils' (its SQL
+# macros duck_blocks_to_compact, duck_blocks_from_compact, read_compact_blocks), but
+# panduck cannot assume duck_block_utils is loaded. So panduck vendors
+# src/include/duck_block_compact.hpp -- the format's code tables and a C++ codec -- from
+# duck_block_utils, and these are that codec. The names are panduck's own: a name has
+# exactly one owner in this family (duck_block_utils spec, "Two extensions must not
+# register the same function name").
+#
+# The two implementations must agree, and test/fixtures/dblocks is how: the golden
+# corpus, copied byte for byte from duck_block_utils' test/fixtures/compact/golden at the
+# commit scripts/check_duck_block_compact.py pins. Each <name>.dblocks reads to exactly
+# the rows in <name>.expected.jsonl, and those rows write back to the .dblocks byte for
+# byte -- the same assertions duck_block_utils' compact.test makes of its SQL.
+
+statement ok
+CREATE TABLE golden AS
+SELECT split_part(parse_filename(filename), '.expected', 1) AS name,
+       list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order)
+            ORDER BY element_order) AS blocks
+FROM read_json(['test/fixtures/dblocks/constructs.rst.expected.jsonl',
+                'test/fixtures/dblocks/every_type.expected.jsonl',
+                'test/fixtures/dblocks/hard.expected.jsonl',
+                'test/fixtures/dblocks/notebook.ipynb.expected.jsonl',
+                'test/fixtures/dblocks/pandoc.epub.expected.jsonl'], format := 'newline_delimited', filename := true,
+  columns := {kind: 'VARCHAR', element_type: 'VARCHAR', content: 'VARCHAR', level: 'INTEGER',
+              encoding: 'VARCHAR', attributes: 'MAP(VARCHAR, VARCHAR)', element_order: 'INTEGER'})
+GROUP BY filename;
+
+statement ok
+CREATE TABLE golden_text AS
+SELECT split_part(parse_filename(filename), '.dblocks', 1) AS name, content
+FROM read_text(['test/fixtures/dblocks/constructs.rst.dblocks',
+                'test/fixtures/dblocks/every_type.dblocks',
+                'test/fixtures/dblocks/hard.dblocks',
+                'test/fixtures/dblocks/notebook.ipynb.dblocks',
+                'test/fixtures/dblocks/pandoc.epub.dblocks']);
+
+# The scalar reader and the writer, on every golden file.
+query IIII
+SELECT g.name, len(g.blocks), panduck_dblocks_to_blocks(t.content) = g.blocks,
+       panduck_blocks_to_dblocks(g.blocks) = t.content
+FROM golden g JOIN golden_text t USING (name) ORDER BY 1;
+----
+constructs.rst	49	true	true
+every_type	50	true	true
+hard	10	true	true
+notebook.ipynb	18	true	true
+pandoc.epub	24	true	true
+
+# The table reader, file by file (a table function takes only literal paths).
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT blocks FROM golden WHERE name = 'hard')
+FROM read_dblocks_blocks('test/fixtures/dblocks/hard.dblocks');
+----
+true
+
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT blocks FROM golden WHERE name = 'every_type')
+FROM read_dblocks_blocks('test/fixtures/dblocks/every_type.dblocks');
+----
+true
+
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT blocks FROM golden WHERE name = 'constructs.rst')
+FROM read_dblocks_blocks('test/fixtures/dblocks/constructs.rst.dblocks');
+----
+true
+
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT blocks FROM golden WHERE name = 'notebook.ipynb')
+FROM read_dblocks_blocks('test/fixtures/dblocks/notebook.ipynb.dblocks');
+----
+true
+
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT blocks FROM golden WHERE name = 'pandoc.epub')
+FROM read_dblocks_blocks('test/fixtures/dblocks/pandoc.epub.dblocks');
+----
+true
+
+# The string form, as every panduck reader has.
+query I
+SELECT count(*) FROM read_dblocks_blocks_string('{"@":"4.2.0"}' || chr(10) || '{"t":"P","c":"x","l":1}' || chr(10));
+----
+1
+
+# The rows are the seven canonical columns, as every panduck reader's are.
+query I
+SELECT string_agg(column_name, ',') FROM (DESCRIBE SELECT * FROM read_dblocks_blocks('test/fixtures/dblocks/hard.dblocks'));
+----
+kind,element_type,content,level,encoding,attributes,element_order
+
+# A file whose maps were NOT key-sorted when written reads to SORTED rows.
+query I
+SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+     = (SELECT list(struct_pack(kind, element_type, content, level, encoding, attributes, element_order) ORDER BY element_order)
+        FROM read_json('test/fixtures/dblocks/read_only_unsorted_keys.expected.jsonl', format := 'newline_delimited',
+          columns := {kind: 'VARCHAR', element_type: 'VARCHAR', content: 'VARCHAR', level: 'INTEGER',
+                      encoding: 'VARCHAR', attributes: 'MAP(VARCHAR, VARCHAR)', element_order: 'INTEGER'}))
+FROM read_dblocks_blocks('test/fixtures/dblocks/read_only_unsorted_keys.dblocks');
+----
+true
+
+# Concatenated documents read as one: the second header and the empty line are skipped.
+query I
+SELECT string_agg(element_order || ':' || content, ' ' ORDER BY element_order)
+FROM read_dblocks_blocks('test/fixtures/dblocks/concat.dblocks');
+----
+0:one 1:two
+
+# The three refusals, from the table reader and from the scalar.
+statement error
+SELECT count(*) FROM read_dblocks_blocks('test/fixtures/dblocks/error_type_code.dblocks');
+----
+unknown type code
+
+statement error
+SELECT count(*) FROM read_dblocks_blocks('test/fixtures/dblocks/error_attribute_code.dblocks');
+----
+unknown attribute code
+
+statement error
+SELECT count(*) FROM read_dblocks_blocks('test/fixtures/dblocks/error_missing_level.dblocks');
+----
+missing level
+
+statement error
+SELECT panduck_dblocks_to_blocks(content) FROM read_text('test/fixtures/dblocks/error_attribute_code.dblocks');
+----
+unknown attribute code
+
+# ---------------------------------------------------------------------------------------
+# THE HEADER is the table version, a constant in the vendored header -- the same value
+# duck_block_utils' SQL writer stamps. An empty list is the header alone.
+query I
+SELECT panduck_blocks_to_dblocks([]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+  encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[]) = '{"@":"4.2.0"}' || chr(10);
+----
+true
+
+# THE WRITER'S REFUSALS match duck_block_utils': what the format cannot carry is refused,
+# not written as a default.
+statement error
+SELECT panduck_blocks_to_dblocks([{'kind':'block','element_type':'paragraph','content':'x','level':NULL::INTEGER,
+  'encoding':'text','attributes':MAP{}::MAP(VARCHAR, VARCHAR),'element_order':0}]);
+----
+NULL level
+
+statement error
+SELECT panduck_blocks_to_dblocks([{'kind':'block','element_type':'paragraph','content':'x','level':1,
+  'encoding':NULL::VARCHAR,'attributes':MAP{}::MAP(VARCHAR, VARCHAR),'element_order':0}]);
+----
+NULL encoding
+
+statement error
+SELECT panduck_blocks_to_dblocks([{'kind':'block','element_type':'paragraph','content':'x','level':1,
+  'encoding':'text','attributes':NULL::MAP(VARCHAR, VARCHAR),'element_order':0}]);
+----
+NULL attributes
+
+statement error
+SELECT panduck_blocks_to_dblocks([{'kind':'block','element_type':'paragraph','content':'x','level':1,
+  'encoding':'text','attributes':MAP{'lang':NULL::VARCHAR},'element_order':0}]);
+----
+NULL attribute value
+
+statement error
+SELECT panduck_blocks_to_dblocks([{'kind':'block','element_type':'raw','content':'x','level':1,
+  'encoding':'j','attributes':MAP{}::MAP(VARCHAR, VARCHAR),'element_order':0}]);
+----
+reserved
+
+# ---------------------------------------------------------------------------------------
+# panduck_write_dblocks writes the same bytes the scalar returns.
+query I
+SELECT panduck_write_dblocks('{TEST_DIR}/hard.dblocks', (SELECT blocks FROM golden WHERE name = 'hard'));
+----
+true
+
+query I
+SELECT content = (SELECT content FROM golden_text WHERE name = 'hard') FROM read_text('{TEST_DIR}/hard.dblocks');
+----
+true
+
+# ---------------------------------------------------------------------------------------
+# THE TABLE READER STREAMS: it reads the file in pieces, so a line may span two pieces,
+# and memory is bounded by the piece, not the file. 60,000 elements, one of them a
+# 3 MB line, read under a 200 MB limit.
+statement ok
+CREATE TABLE big AS
+SELECT list(struct_pack(kind := 'block', element_type := 'paragraph',
+                        content := CASE WHEN i = 30000 THEN repeat('x', 3000000) ELSE 'p' || i::VARCHAR END,
+                        level := 1, encoding := 'text',
+                        attributes := MAP{'id': 'e' || i::VARCHAR}, element_order := i::INTEGER) ORDER BY i) AS blocks
+FROM range(60000) t(i);
+
+query I
+SELECT panduck_write_dblocks('{TEST_DIR}/big.dblocks', blocks) FROM big;
+----
+true
+
+statement ok
+SET memory_limit = '200MB';
+
+query III
+SELECT count(*), count(*) FILTER (WHERE content = CASE WHEN element_order = 30000 THEN repeat('x', 3000000)
+                                                       ELSE 'p' || element_order::VARCHAR END
+                                       AND attributes['id'] = 'e' || element_order::VARCHAR),
+       max(element_order)
+FROM read_dblocks_blocks('{TEST_DIR}/big.dblocks');
+----
+60000	60000	59999
+
+statement ok
+RESET memory_limit;
+
+# ---------------------------------------------------------------------------------------
+# DISPATCH. .dblocks is panduck's own format, so read_panduck_doc routes it without
+# duck_block_utils loaded.
+query III
+SELECT ext, format, function FROM panduck_reader_registry() WHERE ext = '.dblocks';
+----
+.dblocks	dblocks	read_dblocks_blocks
+
+query I
+SELECT panduck_can_read('notes.dblocks');
+----
+true
+
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/dblocks/hard.dblocks');
+----
+10

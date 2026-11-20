@@ -283,3 +283,15 @@ SELECT array_to_string(list_transform(panduck_pandoc_ast_to_blocks(
   lambda b: b.element_order || ':' || b.element_type || ':' || coalesce(b.content, '')), ' ');
 ----
 0:list: 1:list_item:first 2:list_item:second 3:paragraph:after
+
+# The document METADATA comes after the body, numbered from the converter's running
+# counter. That counter still counted every plain row the collapse deleted, so the first
+# metadata row started past a hole: 4 of 16 fixtures still had one after the collapse
+# itself was fixed (18 numbers, measured). Every element_order, body and metadata, is
+# dense.
+query I
+SELECT list_transform(b, lambda e: e.element_order) = range(0, len(b))::INTEGER[]
+FROM (SELECT panduck_pandoc_ast_to_blocks(
+  '{"pandoc-api-version":[1,23,1],"meta":{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"T"}]}},"blocks":[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Str","c":"first"}]}],[{"t":"Plain","c":[{"t":"Str","c":"second"}]}]]}]}') AS b);
+----
+true

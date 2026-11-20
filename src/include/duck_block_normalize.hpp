@@ -141,6 +141,22 @@ inline void CollapseLonePlainIntoParent(vector<Value> &blocks, const LogicalType
 		}
 		blocks.erase(blocks.begin() + j);
 
+		// element_order is a position in the same depth-first sequence, so the deleted
+		// row's number goes with it: every LATER element moves down by one. This left
+		// the numbers alone, so each collapse left a hole -- a two-item tight list
+		// came back as 0, 1, 3, 5, and 11 of 16 pandoc fixtures had holes
+		// (duckdb_panduck#206). A hole the input already had is not this function's
+		// to close, so the shift is relative, not a renumbering from 0.
+		for (idx_t d = j; d < blocks.size(); d++) {
+			auto &order = StructValue::GetChildren(blocks[d])[DuckBlockVocabulary::ELEMENT_ORDER_IDX];
+			if (order.IsNull()) {
+				continue;
+			}
+			auto child = StructValue::GetChildren(blocks[d]);
+			child[DuckBlockVocabulary::ELEMENT_ORDER_IDX] = Value(order.GetValue<int32_t>() - 1);
+			blocks[d] = Value::STRUCT(block_type, std::move(child));
+		}
+
 		// STEP BACK and re-examine this parent. Its adopted content may be EMPTY --
 		// a plain whose own child holds the text -- in which case the parent is
 		// still eligible and its next child may now be a lone plain in turn.

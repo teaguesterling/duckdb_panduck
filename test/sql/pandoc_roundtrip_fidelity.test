@@ -268,3 +268,30 @@ SELECT panduck_blocks_to_pandoc_blocks([
    'encoding':'text','attributes':MAP{'src':'cat.png','width':'200px'},'element_order':1}]);
 ----
 [{"t":"Para","c":[{"t":"Image","c":[["",[],[["width","200px"]]],[],["cat.png",""]]}]}]
+
+# ---------------------------------------------------------------------------------------
+# element_order STAYS DENSE through the lone-plain collapse (#206).
+#
+# CollapseLonePlainIntoParent folds a tight list item's lone Plain into the item's
+# content and deletes the plain row, but left every later element_order unchanged. So a
+# two-item tight list read as 0, 1, 3, 5, and 11 of 16 fixtures' pandoc JSON had holes
+# (47 numbers). The fix is upstream's (duckdb_duck_block_utils#89), in the vendored
+# src/include/duck_block_normalize.hpp.
+query I
+SELECT array_to_string(list_transform(panduck_pandoc_ast_to_blocks(
+  '[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Str","c":"first"}]}],[{"t":"Plain","c":[{"t":"Str","c":"second"}]}]]},{"t":"Para","c":[{"t":"Str","c":"after"}]}]'),
+  lambda b: b.element_order || ':' || b.element_type || ':' || coalesce(b.content, '')), ' ');
+----
+0:list: 1:list_item:first 2:list_item:second 3:paragraph:after
+
+# The document METADATA comes after the body, numbered from the converter's running
+# counter. That counter still counted every plain row the collapse deleted, so the first
+# metadata row started past a hole: 4 of 16 fixtures still had one after the collapse
+# itself was fixed (18 numbers, measured). Every element_order, body and metadata, is
+# dense.
+query I
+SELECT list_transform(b, lambda e: e.element_order) = range(0, len(b))::INTEGER[]
+FROM (SELECT panduck_pandoc_ast_to_blocks(
+  '{"pandoc-api-version":[1,23,1],"meta":{"title":{"t":"MetaInlines","c":[{"t":"Str","c":"T"}]}},"blocks":[{"t":"BulletList","c":[[{"t":"Plain","c":[{"t":"Str","c":"first"}]}],[{"t":"Plain","c":[{"t":"Str","c":"second"}]}]]}]}') AS b);
+----
+true

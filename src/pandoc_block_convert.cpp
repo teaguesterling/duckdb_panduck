@@ -1000,7 +1000,14 @@ void PandocBlockConvert::ConvertPandocAstToBlocks(const string &json, vector<Val
 	// duckdb_panduck. Every other producer needs the same pass, and it is
 	// exported as duck_blocks_normalize() so they can call it instead of
 	// reimplementing it.
+	//
+	// The collapse deletes rows and closes the numbers behind them, so the running
+	// counter must lose one per deleted row too. Without this the metadata below
+	// started past a hole -- 0, 1, 2, 5, 6 for a two-item tight list with a title
+	// (#206).
+	const idx_t before_collapse = blocks.size();
 	CollapseLonePlainIntoParent(blocks);
+	order -= int32_t(before_collapse - blocks.size());
 
 	// Document metadata, AFTER the blocks so blocks[1] still points at the first
 	// content block. Previously dropped entirely: title, tags, author and draft

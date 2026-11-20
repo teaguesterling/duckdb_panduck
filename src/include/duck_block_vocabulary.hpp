@@ -12,7 +12,10 @@
 // available -- format.py's ignored_files lives in the duckdb submodule, which is
 // not ours and does not survive a bump.
 
-// Vendored at upstream commit: e00db698 (SPEC_VERSION 1.4)  [duck_block_utils v3.5.0]
+// Vendored at upstream commit: c978e076 (SPEC_VERSION 1.4)  [duck_block_utils v4.2.0]
+//
+// Re-stamped 2026-11-20 from e00db698 (v3.5.0): the header is byte-identical between
+// e00db698 and v4.2.0 (0 changed lines), so only this stamp moved.
 //
 // 1.3 -> 1.4 (#54) CHANGES EXACTLY TWO CODE LINES, verified by diff over the
 // whole file: SPEC_VERSION "1.3" -> "1.4", and a new PREDICATE_REVISION =

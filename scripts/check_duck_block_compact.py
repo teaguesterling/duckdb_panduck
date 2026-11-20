@@ -33,7 +33,7 @@ import urllib.request
 from pathlib import Path
 
 UPSTREAM_REPO = "teaguesterling/duckdb_duck_block_utils"
-PIN_SHA = "8e54e995b2ce19304c59df51697b044df3d88544"
+PIN_SHA = "16991845940d6fa7a952a8ea30269a591d687d5b"
 UPSTREAM_HEADER = "vendor/duck_block_compact.hpp"
 UPSTREAM_CORPUS = "test/fixtures/compact/golden"
 LOCAL_HEADER = "src/include/duck_block_compact.hpp"

@@ -1,0 +1,101 @@
+# name: test/sql/attach_tables.test
+# description: ATTACH (TYPE panduck) lists a document's tables and makes one view per table
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. The app's Extract menu offers each table in a document. ATTACH identifies them once
+# (one read of the blocks) and makes a view per table, so a listing parses none of them.
+# Spec: docs/superpowers/specs/2026-11-23-attach-documents-design.md, "The views".
+#
+# ORDER IS THE SPEC'S: real tables first, then embedded data (csv, tsv, json, jsonl code
+# blocks), each group in document order. N is the row in `tables`.
+#
+# TABLE_NAMES 'numbered' is explicit here so these names do not depend on the slug rules,
+# which attach_names.test covers.
+#
+# attach_tables.rst is read natively, so this file needs no sibling extension. It has an
+# embedded csv BEFORE the real table, to prove the real table still comes first, and that
+# csv's cells carry a single quote and a backslash, which go into the view SQL as a literal.
+# ---------------------------------------------------------------------------
+
+# --- the table content goes into the view as a literal: types are sniffed ---
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS c (TYPE panduck, TABLE_NAMES 'numbered');
+
+query IIIIII
+SELECT n, view, kind, title, columns, element_order FROM c.tables;
+----
+1	table_1	table	Heading Three	[Name, Value, Note]	15
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE c.table_1);
+----
+Name	VARCHAR
+Value	BIGINT
+Note	VARCHAR
+
+# --- a document with no tables: an empty listing, no table views ---
+
+statement ok
+ATTACH 'test/fixtures/lists.docx' AS l (TYPE panduck, TABLE_NAMES 'numbered');
+
+query I
+SELECT count(*) FROM l.tables;
+----
+0
+
+query I
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'l' AND view_name LIKE 'table%' AND view_name <> 'tables';
+----
+0
+
+# --- real tables first, then embedded data; a broken table does not break the listing ---
+
+statement ok
+ATTACH 'test/fixtures/attach_tables.rst' AS t (TYPE panduck, TABLE_NAMES 'numbered');
+
+query IIIII
+SELECT n, view, kind, title, columns FROM t.tables ORDER BY n;
+----
+1	table_1	table	Prices	[item, cost]
+2	table_2	csv	NULL	NULL
+3	table_3	json	Prices	NULL
+4	table_4	csv	Prices	NULL
+
+query I
+SELECT string_agg(view_name, ',' ORDER BY view_name) FROM duckdb_views() WHERE database_name = 't' AND view_name LIKE 'table\_%' ESCAPE '\';
+----
+table_1,table_2,table_3,table_4
+
+query II
+SELECT * FROM t.table_1;
+----
+tea	3
+
+# The quote and the backslash survive the trip through the view SQL.
+query II
+SELECT a, b FROM t.table_2 ORDER BY a;
+----
+2	z
+it's	back\slash
+
+query I
+SELECT count(*) FROM t.table_3;
+----
+2
+
+# The broken csv fails only when queried, with the parse reason -- not with
+# "the table content is NULL".
+statement error
+SELECT * FROM t.table_4;
+----
+unterminated quote
+
+# The other tables still read after it.
+query I
+SELECT count(*) FROM t.table_3;
+----
+2

@@ -26,6 +26,10 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
+#include "duckdb/main/connection.hpp"
+#include "yyjson.hpp"
+
+#include <algorithm>
 
 namespace duckdb {
 
@@ -43,6 +47,38 @@ struct AttachPlan {
 
 string Quote(const string &s) {
 	return SQLString::ToString(s);
+}
+
+//! One table found at ATTACH: a real `table` block, or a csv/tsv/json/jsonl code block.
+struct FoundTable {
+	idx_t n = 0;          //!< 1-based row in `tables`: real tables first, then embedded data
+	string kind;          //!< 'table', 'csv', 'tsv', 'json' or 'jsonl'
+	string content;       //!< the table JSON, or the embedded text
+	string title;         //!< caption, else the nearest heading above; empty = none
+	string heading_id;    //!< that heading's attributes['id'], if it had one
+	vector<string> columns; //!< header cells, real tables only
+	int64_t element_order = 0;
+	string view;          //!< the view name; empty = no view (TABLE_NAMES 'named_only')
+};
+
+vector<string> HeaderCells(const string &table_json) {
+	using namespace duckdb_yyjson; // NOLINT -- the spelling the json extension uses
+	vector<string> out;
+	auto doc = yyjson_read(table_json.data(), table_json.size(), 0);
+	if (!doc) {
+		return out;
+	}
+	auto root = yyjson_doc_get_root(doc);
+	auto headers = yyjson_is_obj(root) ? yyjson_obj_get(root, "headers") : nullptr;
+	if (yyjson_is_arr(headers)) {
+		size_t idx, max;
+		yyjson_val *h;
+		yyjson_arr_foreach(headers, idx, max, h) {
+			out.emplace_back(yyjson_is_str(h) ? string(yyjson_get_str(h), yyjson_get_len(h)) : string());
+		}
+	}
+	yyjson_doc_free(doc);
+	return out;
 }
 
 TableNames ParseTableNames(const string &raw) {
@@ -131,6 +167,124 @@ string ReadDocSql(const AttachPlan &plan) {
 	return "read_panduck_doc(" + Quote(plan.path) + ", format := " + Quote(plan.format) + ")";
 }
 
+//! IDENTIFY: one read of the blocks, on a fresh Connection to the same database. This is
+//! identifying, not running: the table views' names depend on how many tables there are
+//! and on their titles, so it must happen at ATTACH.
+vector<FoundTable> IdentifyTables(DatabaseInstance &instance, const AttachPlan &plan) {
+	Connection con(instance);
+	auto res = con.Query("SELECT element_type, kind, element_order, content, "
+	                     "coalesce(lower(attributes['language']), ''), coalesce(attributes['id'], '') FROM " +
+	                     ReadDocSql(plan) +
+	                     " WHERE element_type IN ('heading', 'table', 'code', 'caption') ORDER BY element_order");
+	if (res->HasError()) {
+		throw InvalidInputException("panduck: cannot attach '%s': %s", plan.path, res->GetError());
+	}
+	vector<FoundTable> real, embedded;
+	string heading, heading_id;
+	FoundTable *last_real = nullptr;
+	int64_t last_real_order = -2;
+	while (auto chunk = res->Fetch()) {
+		if (chunk->size() == 0) {
+			break;
+		}
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto type = chunk->GetValue(0, i).ToString();
+			auto kind = chunk->GetValue(1, i).ToString();
+			auto order = chunk->GetValue(2, i).GetValue<int64_t>();
+			auto content_v = chunk->GetValue(3, i);
+			auto content = content_v.IsNull() ? string() : content_v.ToString();
+			auto language = chunk->GetValue(4, i).ToString();
+			if (type == "heading") {
+				heading = content;
+				heading_id = chunk->GetValue(5, i).ToString();
+			} else if (type == "caption") {
+				// The vocabulary's caption belongs to the container just before it.
+				if (last_real && order == last_real_order + 1) {
+					last_real->title = content;
+					last_real->heading_id.clear();
+				}
+			} else if (type == "table") {
+				FoundTable t;
+				t.kind = "table";
+				t.content = content;
+				t.title = heading;
+				t.heading_id = heading_id;
+				t.columns = HeaderCells(content);
+				t.element_order = order;
+				real.push_back(std::move(t));
+				last_real = &real.back();
+				last_real_order = order;
+			} else if (kind == "block" &&
+			           (language == "csv" || language == "tsv" || language == "json" || language == "jsonl")) {
+				FoundTable t;
+				t.kind = language;
+				t.content = content;
+				t.title = heading;
+				t.heading_id = heading_id;
+				t.element_order = order;
+				embedded.push_back(std::move(t));
+			}
+		}
+	}
+	vector<FoundTable> all;
+	for (auto &t : real) {
+		all.push_back(std::move(t));
+	}
+	for (auto &t : embedded) {
+		all.push_back(std::move(t));
+	}
+	for (idx_t i = 0; i < all.size(); i++) {
+		all[i].n = i + 1;
+	}
+	return all;
+}
+
+string TableViewSql(const FoundTable &t) {
+	if (t.kind == "table") {
+		return "SELECT * FROM panduck_table_read(" + Quote(t.content) + ")";
+	}
+	// A failed parse leaves content NULL. error() raises the parse reason instead of
+	// panduck_table_read's "the table content is NULL" (src/table_read.cpp).
+	auto e = "panduck_embedded_to_table(" + Quote(t.content) + ", " + Quote(t.kind) + ")";
+	return "SELECT * FROM panduck_table_read(coalesce(" + e + ".content, error(" + e + ".error)))";
+}
+
+//! The view names. Every table is table_N here; TABLE_NAMES modes come next.
+void NameTables(vector<FoundTable> &tables, TableNames) {
+	for (auto &t : tables) {
+		t.view = "table_" + std::to_string(t.n);
+	}
+}
+
+string OrNull(const string &s) {
+	return s.empty() ? "NULL::VARCHAR" : Quote(s);
+}
+
+//! `tables` is literal data baked at ATTACH, so listing it parses nothing.
+string TablesListingSql(const vector<FoundTable> &tables) {
+	const string cols = " t(n, view, kind, title, columns, element_order)";
+	if (tables.empty()) {
+		return "SELECT * FROM (VALUES (NULL::BIGINT, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR, "
+		       "NULL::VARCHAR[], NULL::BIGINT))" +
+		       cols + " WHERE false";
+	}
+	string sql = "SELECT * FROM (VALUES ";
+	for (idx_t i = 0; i < tables.size(); i++) {
+		auto &t = tables[i];
+		string columns = "NULL::VARCHAR[]";
+		if (t.kind == "table") {
+			vector<string> quoted;
+			for (auto &c : t.columns) {
+				quoted.push_back(Quote(c));
+			}
+			columns = "[" + StringUtil::Join(quoted, ", ") + "]::VARCHAR[]";
+		}
+		sql += (i ? ", (" : "(") + std::to_string(t.n) + "::BIGINT, " + OrNull(t.view) + ", " + Quote(t.kind) +
+		       ", " + OrNull(t.title) + ", " + columns + ", " + std::to_string(t.element_order) + "::BIGINT)";
+	}
+	return sql + ")" + cols;
+}
+
 class DocViewGenerator : public DefaultGenerator {
 public:
 	DocViewGenerator(Catalog &catalog, SchemaCatalogEntry &schema, vector<std::pair<string, string>> views_p)
@@ -171,6 +325,15 @@ unique_ptr<Catalog> PanduckAttach(optional_ptr<StorageExtensionInfo>, ClientCont
 	plan.path = ResolvePath(context, info.path);
 
 	plan.views.emplace_back("blocks", "SELECT * FROM " + ReadDocSql(plan));
+
+	auto tables = IdentifyTables(db.GetDatabase(), plan);
+	NameTables(tables, plan.mode);
+	plan.views.emplace_back("tables", TablesListingSql(tables));
+	for (auto &t : tables) {
+		if (!t.view.empty()) {
+			plan.views.emplace_back(t.view, TableViewSql(t));
+		}
+	}
 
 	db.SetReadOnlyDatabase();
 	options.default_table = QualifiedName::Parse("blocks");

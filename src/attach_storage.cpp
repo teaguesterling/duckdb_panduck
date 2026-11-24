@@ -55,14 +55,14 @@ string Quote(const string &s) {
 
 //! One table found at ATTACH: a real `table` block, or a csv/tsv/json/jsonl code block.
 struct FoundTable {
-	idx_t n = 0;          //!< 1-based row in `tables`: real tables first, then embedded data
-	string kind;          //!< 'table', 'csv', 'tsv', 'json' or 'jsonl'
-	string content;       //!< the table JSON, or the embedded text
-	string title;         //!< caption, else the nearest heading above; empty = none
-	string heading_id;    //!< that heading's attributes['id'], if it had one
+	idx_t n = 0;            //!< 1-based row in `tables`: real tables first, then embedded data
+	string kind;            //!< 'table', 'csv', 'tsv', 'json' or 'jsonl'
+	string content;         //!< the table JSON, or the embedded text
+	string title;           //!< caption, else the nearest heading above; empty = none
+	string heading_id;      //!< that heading's attributes['id'], if it had one
 	vector<string> columns; //!< header cells, real tables only
 	int64_t element_order = 0;
-	string view;          //!< the view name; empty = no view (TABLE_NAMES 'named_only')
+	string view; //!< the view name; empty = no view (TABLE_NAMES 'named_only')
 };
 
 vector<string> HeaderCells(const string &table_json) {
@@ -99,8 +99,7 @@ TableNames ParseTableNames(const string &raw) {
 	if (v == "both") {
 		return TableNames::BOTH;
 	}
-	throw InvalidInputException("panduck: TABLE_NAMES must be one of slugs, numbered, named_only, both; got '%s'",
-	                            raw);
+	throw InvalidInputException("panduck: TABLE_NAMES must be one of slugs, numbered, named_only, both; got '%s'", raw);
 }
 
 //! FORMAT's valid values are the registry's document formats plus 'auto', so a reader
@@ -117,8 +116,7 @@ string ParseFormat(const string &raw) {
 		valid.push_back(e.format);
 	}
 	if (std::find(valid.begin(), valid.end(), v) == valid.end()) {
-		throw InvalidInputException("panduck: FORMAT must be one of %s; got '%s'", StringUtil::Join(valid, ", "),
-		                            raw);
+		throw InvalidInputException("panduck: FORMAT must be one of %s; got '%s'", StringUtil::Join(valid, ", "), raw);
 	}
 	return v;
 }
@@ -196,8 +194,8 @@ vector<FoundTable> IdentifyTables(ClientContext &context, DatabaseInstance &inst
 		if (set->HasError()) {
 			// An InvalidInputException, not an InternalException: an internal error during
 			// ATTACH invalidates the whole database.
-			throw InvalidInputException("panduck: cannot attach '%s': cannot pass %s to the ATTACH read: %s",
-			                            plan.path, name, set->GetError());
+			throw InvalidInputException("panduck: cannot attach '%s': cannot pass %s to the ATTACH read: %s", plan.path,
+			                            name, set->GetError());
 		}
 	}
 	auto res = con.Query("SELECT element_type, kind, element_order, content, "
@@ -279,8 +277,8 @@ string TableViewSql(const FoundTable &t) {
 
 //! The fixed views. A table slug never takes one of these names.
 const vector<string> &FixedViews() {
-	static const vector<string> names {"blocks", "tables", "headings", "sections",
-	                                   "code",   "metadata", "links", "images"};
+	static const vector<string> names {"blocks", "tables",   "headings", "sections",
+	                                   "code",   "metadata", "links",    "images"};
 	return names;
 }
 
@@ -374,8 +372,8 @@ string TablesListingSql(const vector<FoundTable> &tables) {
 			}
 			columns = "[" + StringUtil::Join(quoted, ", ") + "]::VARCHAR[]";
 		}
-		sql += (i ? ", (" : "(") + std::to_string(t.n) + "::BIGINT, " + OrNull(t.view) + ", " + Quote(t.kind) +
-		       ", " + OrNull(t.title) + ", " + columns + ", " + std::to_string(t.element_order) + "::BIGINT)";
+		sql += (i ? ", (" : "(") + std::to_string(t.n) + "::BIGINT, " + OrNull(t.view) + ", " + Quote(t.kind) + ", " +
+		       OrNull(t.title) + ", " + columns + ", " + std::to_string(t.element_order) + "::BIGINT)";
 	}
 	return sql + ")" + cols;
 }
@@ -402,8 +400,7 @@ vector<std::pair<string, string>> ContentViews(const AttachPlan &plan) {
 	                 "AS section FROM b c WHERE c.kind = 'block' AND c.element_type = 'code' ORDER BY element_order"},
 	    // A metadata value is a subtree: the keyed value row, then the inline text under it,
 	    // up to the next row at the same or a lower level.
-	    {"metadata", b +
-	                     ", m AS (SELECT attributes['key'] AS key, level, element_order FROM b "
+	    {"metadata", b + ", m AS (SELECT attributes['key'] AS key, level, element_order FROM b "
 	                     "WHERE kind = 'value' AND attributes['key'] IS NOT NULL) "
 	                     "SELECT m.key, (SELECT string_agg(x.content, '' ORDER BY x.element_order) FROM b x "
 	                     "WHERE x.kind = 'inline' AND x.element_order > m.element_order AND x.element_order < "

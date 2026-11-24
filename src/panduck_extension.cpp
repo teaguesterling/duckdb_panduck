@@ -25,6 +25,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "attach_storage.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 
@@ -148,6 +149,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// BEFORE THE REGISTRY, whose expand_embedded macro calls panduck_blocks_parse_embedded.
 	panduck::RegisterEmbeddedTableFunctions(loader);
 	RegisterReaderRegistry(loader);
+	RegisterAttachStorage(loader);
 }
 
 void PanduckExtension::Load(ExtensionLoader &loader) {

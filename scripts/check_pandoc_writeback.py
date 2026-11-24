@@ -36,6 +36,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def sql_str(s):
+    """A SQL string literal for s: single quotes doubled. A fixture path may hold a quote
+    (test/fixtures/it's.docx tests exactly that), so no path goes into SQL bare."""
+    return "'" + str(s).replace("'", "''") + "'"
+
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "test" / "fixtures"
 DUCKDB = REPO / "build" / "release" / "duckdb"
@@ -57,7 +63,7 @@ DOC_SUFFIXES = (
 )
 
 WRITE_SQL = """
-SELECT panduck_write_pandoc_ast('{out}', list(struct_pack(
+SELECT panduck_write_pandoc_ast({out}, list(struct_pack(
     kind := kind, element_type := element_type, content := content, level := level,
     encoding := encoding, attributes := attributes, element_order := element_order)
   ORDER BY element_order))
@@ -159,7 +165,7 @@ def duckdb_write(source: str, out: Path) -> str | None:
             "-c",
             f"LOAD '{EXT}';",
             "-c",
-            WRITE_SQL.format(out=out, source=source),
+            WRITE_SQL.format(out=sql_str(out), source=source),
         ],
         capture_output=True,
         text=True,
@@ -283,7 +289,7 @@ def main() -> int:
             out = tmp / "ast.json"
             if out.exists():
                 out.unlink()
-            err = duckdb_write(f"read_panduck_doc('{src}')", out) or pandoc_accepts(out)
+            err = duckdb_write(f"read_panduck_doc({sql_str(src)})", out) or pandoc_accepts(out)
             if err:
                 bad += 1
                 print(f"  REJECTED  {src.name}: {err}")

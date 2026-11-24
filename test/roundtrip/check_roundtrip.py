@@ -44,6 +44,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import canonical  # noqa: E402
 
+
+def sql_str(s):
+    """A SQL string literal for s: single quotes doubled. A fixture path may hold a quote
+    (test/fixtures/it's.docx tests exactly that), so no path goes into SQL bare."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
 REPO = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DUCKDB = REPO / "build" / "release" / "duckdb"
 
@@ -535,7 +542,7 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
         "attributes['href'] AS href, "
         "attributes['src'] AS src, "
         "attributes['key'] AS key "
-        f"FROM {reader}('{path}') ORDER BY element_order;"
+        f"FROM {reader}({sql_str(path)}) ORDER BY element_order;"
     )
     # CI runs a stock duckdb against the extension artifact the build matrix already
     # produced, rather than rebuilding panduck: -unsigned is required to LOAD a locally
@@ -543,7 +550,7 @@ def read_panduck(path, reader, duckdb_bin, extension=None):
     cmd = [str(duckdb_bin)]
     if extension:
         cmd.append("-unsigned")
-        sql = f"LOAD '{extension}'; " + sql
+        sql = f"LOAD {sql_str(extension)}; " + sql
     cmd += ["-json", "-c", sql]
     raw = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
     if raw.returncode != 0:

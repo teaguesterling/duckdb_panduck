@@ -620,6 +620,34 @@ void RegistryFieldFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	}
 }
 
+//! The registry looked up by FORMAT NAME rather than by path: the first document
+//! reader (kind 'doc', with a function) whose format is the argument. This is what
+//! lets read_panduck_doc(src, format := 'docx') read a file whose extension does not
+//! say docx -- a file the caller fetched under a temporary name. Empty maps to NULL,
+//! as in RegistryFieldFun.
+template <Field F>
+void FormatFieldFun(DataChunk &args, ExpressionState &, Vector &result) {
+	UnifiedVectorFormat input;
+	args.data[0].ToUnifiedFormat(input);
+	auto formats = UnifiedVectorFormat::GetData<string_t>(input);
+	auto entries = ReaderRegistry::Get().Entries();
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = input.sel->get_index(i);
+		Value out;
+		if (input.validity.RowIsValid(idx)) {
+			auto want = StringUtil::Lower(formats[idx].GetString());
+			for (auto &e : entries) {
+				if (e.format == want && e.kind == "doc" && !e.function.empty()) {
+					auto &v = F == Field::READER_EXT ? e.reader_ext : e.function;
+					out = v.empty() ? Value() : Value(v);
+					break;
+				}
+			}
+		}
+		result.SetValue(i, out);
+	}
+}
+
 void CanReadFun(DataChunk &args, ExpressionState &state, Vector &result) {
 	UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(), [&](string_t path) {
 		ReaderEntry entry;
@@ -3025,6 +3053,22 @@ SELECT * FROM query(panduck_wrap_expand(
         -- which is exactly the fallback branch's own first clause above -- so anything
         -- reaching this final ELSE already has a non-NULL resolved format. src::VARCHAR
         -- does not have that guarantee, hence the coalesce.
+        -- AN EXPLICIT format := NAMING A REGISTERED READER, for a path whose extension
+        -- says something else or nothing (a file fetched under a temporary name). Every
+        -- branch above keys the registered readers by EXTENSION, so before 2026-11-23
+        -- read_panduck_doc('page', format := 'html') landed in the ELSE below. LAST on
+        -- purpose: every special-cased format above (pandoc, pdf, toml, yaml, zim, code)
+        -- keeps its own branch. The policy gate above already checked the format named.
+        -- attributes and reader_params were refused above for anything not routed
+        -- through panduck_read_arms_opt, so this branch passes neither.
+        WHEN nullif(format, 'auto') IS NOT NULL AND panduck_reader_function_for_format(format) IS NOT NULL
+            THEN CASE WHEN panduck_reader_extension_for_format(format) IS NULL
+                      OR panduck_ensure_extension(panduck_reader_extension_for_format(format))
+                 THEN 'SELECT * FROM ' || panduck_reader_function_for_format(format) || '(' ||
+                      panduck_quote(src::VARCHAR) || ')'
+                 ELSE error('panduck: ' || src::VARCHAR || ' needs the ' ||
+                            panduck_reader_extension_for_format(format) || ' extension') END
+
         ELSE error('panduck: ' || coalesce(src::VARCHAR, '<NULL>') || ' resolves to format ''' ||
                    panduck_resolved_format(src::VARCHAR, format) ||
                    ''' but read_panduck_doc has no branch for it -- the registry claims ' ||
@@ -3404,6 +3448,18 @@ void RegisterReaderRegistry(ExtensionLoader &loader) {
 	                                      RegistryFieldFun<Field::FUNCTION>),
 	                       {"path_or_uri"}, "Return the reader table function name that handles a file path or URI.",
 	                       {"panduck_reader_function_for('doc.docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_function_for_format", {LogicalType::VARCHAR},
+	                                      LogicalType::VARCHAR, FormatFieldFun<Field::FUNCTION>),
+	                       {"format"}, "Return the reader table function for a document format name.",
+	                       {"panduck_reader_function_for_format('docx')"});
+
+	RegisterScalarWithDesc(loader,
+	                       ScalarFunction("panduck_reader_extension_for_format", {LogicalType::VARCHAR},
+	                                      LogicalType::VARCHAR, FormatFieldFun<Field::READER_EXT>),
+	                       {"format"}, "Return the extension a document format's reader needs, or NULL.",
+	                       {"panduck_reader_extension_for_format('html')"});
 
 	RegisterScalarWithDesc(loader,
 	                       ScalarFunction("panduck_reader_extension_for", {LogicalType::VARCHAR}, LogicalType::VARCHAR,

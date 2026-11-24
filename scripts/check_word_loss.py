@@ -26,6 +26,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def sql_str(s):
+    """A SQL string literal for s: single quotes doubled. A fixture path may hold a quote
+    (test/fixtures/it's.docx tests exactly that), so no path goes into SQL bare."""
+    return "'" + str(s).replace("'", "''") + "'"
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "test" / "fixtures"
 
@@ -64,7 +70,7 @@ def panduck_words(duckdb, reader, path, extension=None):
     # Both joins: a space-join splits H<sub>2</sub>O into "H 2 O", an empty join runs
     # neighbouring elements together. A word need only survive one of them.
     for sep in (" ", ""):
-        sql = f"SELECT coalesce(string_agg(content, '{sep}'), '') FROM {reader}('{path}');"
+        sql = f"SELECT coalesce(string_agg(content, '{sep}'), '') FROM {reader}({sql_str(path)});"
         # CI runs a stock duckdb against the extension artifact the build matrix already
         # produced, rather than rebuilding panduck: -unsigned is required to LOAD a
         # locally built .duckdb_extension. Locally, the statically linked build needs
@@ -72,7 +78,7 @@ def panduck_words(duckdb, reader, path, extension=None):
         cmd = [duckdb]
         if extension:
             cmd.append("-unsigned")
-            sql = f"LOAD '{extension}'; " + sql
+            sql = f"LOAD {sql_str(extension)}; " + sql
         out = subprocess.run(cmd + ["-noheader", "-list", "-c", sql],
                              capture_output=True, text=True)
         if out.returncode != 0:

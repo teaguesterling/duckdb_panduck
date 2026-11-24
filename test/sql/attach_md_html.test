@@ -1,0 +1,64 @@
+# name: test/sql/attach_md_html.test
+# description: ATTACH (TYPE panduck) reads markdown and html through their sibling extensions
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY (spec, risk 3). Markdown reads through duckdb_markdown and html through
+# duckdb_webbed. ATTACH's identifying read runs on a nested Connection, which must find
+# them as read_panduck_doc does in the caller's session.
+#
+# Both are COMMUNITY extensions, installed as html_reader.test does: a bare INSTALL looks
+# in the core repository and 404s. They SKIP in a local build, whose version string
+# (d54cbbe3df) has no community builds; they run where html_reader.test runs.
+#
+# MEASURED LOCALLY 2026-11-23 in the v2.0.0 CLI with this build loaded (the
+# allow_extensions_metadata_mismatch harness): every assertion below held.
+# ---------------------------------------------------------------------------
+
+statement ok
+INSTALL markdown FROM community;
+
+statement ok
+INSTALL webbed FROM community;
+
+statement ok
+LOAD markdown;
+
+statement ok
+LOAD webbed;
+
+statement ok
+ATTACH 'test/fixtures/constructs.html' AS h (TYPE panduck);
+
+query I
+SELECT (SELECT count(*) FROM h.blocks) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.html'));
+----
+true
+
+query I
+SELECT count(*) > 0 FROM h.headings;
+----
+true
+
+# embedded_data.md: two good embedded tables and one broken csv (embedded_tables.test).
+statement ok
+ATTACH 'test/fixtures/embedded_data.md' AS m (TYPE panduck, TABLE_NAMES 'numbered');
+
+query II
+SELECT n, kind FROM m.tables ORDER BY n;
+----
+1	csv
+2	json
+3	csv
+
+query I
+SELECT count(*) FROM m.table_1;
+----
+2
+
+statement error
+SELECT * FROM m.table_3;
+----
+unterminated

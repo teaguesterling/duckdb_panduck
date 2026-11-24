@@ -1,0 +1,160 @@
+# name: test/sql/attach.test
+# description: ATTACH '<doc>' AS r (TYPE panduck) gives a read-only catalog of views over one document
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. The duckeye-android app and the duckeye CLI each build their own SQL views over a
+# document's blocks. ATTACH moves that into panduck once: a document becomes a read-only
+# database (spec: docs/superpowers/specs/2026-11-23-attach-documents-design.md).
+#
+# Teague's rule (2026-11-13) governs it: "eager to identify and list, lazy to run". This
+# file covers the frame: the two ATTACH forms, read-only, the paths, the options and their
+# errors, and the `blocks` view. Tables, names and the content views have their own files.
+# ---------------------------------------------------------------------------
+
+# --- the TYPE form; `FROM r` reads `blocks` (options.default_table) ---
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS r (TYPE panduck);
+
+query I
+SELECT count(*) > 0 FROM r;
+----
+true
+
+# The view is the reader, not a copy: same row count as reading the file directly.
+query I
+SELECT (SELECT count(*) FROM r.blocks) = (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.docx'));
+----
+true
+
+# The path is made absolute at ATTACH, so the view does not depend on the cwd later.
+# Compared with \ mapped to /: on Windows DuckDB joins the working directory with its
+# native separator (FileSystem::PathSeparator), so the view holds D:\...\constructs.docx.
+# That native path is correct -- the reads above pass on Windows -- and only this
+# assertion assumed '/'.
+query I
+SELECT replace(sql, chr(92), '/') LIKE '%/test/fixtures/constructs.docx%'
+   AND replace(sql, chr(92), '/') NOT LIKE '%''test/fixtures/constructs.docx%'
+FROM duckdb_views() WHERE database_name = 'r' AND view_name = 'blocks';
+----
+true
+
+# --- read-only: no write reaches the document, or the catalog ---
+
+statement error
+CREATE TABLE r.x (i INT);
+----
+read-only mode
+
+statement error
+CREATE VIEW r.v AS SELECT 1;
+----
+read-only mode
+
+statement error
+DROP VIEW r.blocks;
+----
+read-only mode
+
+# --- DETACH, and re-ATTACH under the same name ---
+
+statement ok
+DETACH r;
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS r (TYPE panduck);
+
+query I
+SELECT count(*) > 0 FROM r.blocks;
+----
+true
+
+# --- the prefix form needs no TYPE; other readers attach too ---
+
+statement ok
+ATTACH 'panduck:test/fixtures/rich.docx' AS p;
+
+query I
+SELECT count(*) > 0 FROM p.blocks;
+----
+true
+
+statement ok
+ATTACH 'test/fixtures/constructs.odt' AS o (TYPE panduck);
+
+statement ok
+ATTACH 'test/fixtures/lists.rtf' AS t (TYPE panduck);
+
+query II
+SELECT (SELECT count(*) > 0 FROM o.blocks), (SELECT count(*) > 0 FROM t.blocks);
+----
+true	true
+
+# --- a single quote in the path must not break the view SQL ---
+
+statement ok
+ATTACH 'test/fixtures/it''s.docx' AS q (TYPE panduck);
+
+query I
+SELECT count(*) > 0 FROM q.blocks;
+----
+true
+
+# --- FORMAT reaches the reader ---
+#
+# This .json file is pandoc's AST. Without FORMAT, read_panduck_doc treats .json as data
+# and refuses it; with FORMAT 'pandoc' it reads. So the result shows the option arrived.
+#
+statement ok
+ATTACH 'test/fixtures/table_image.pandoc.json' AS f (TYPE panduck, FORMAT 'pandoc');
+
+query I
+SELECT count(*) > 0 FROM f.blocks;
+----
+true
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/table_image.pandoc.json');
+----
+panduck:
+
+# The case FORMAT exists for: a docx/odt file with no usable extension
+# (doc_format_override.test covers the reader side).
+statement ok
+ATTACH 'test/fixtures/constructs_dup.no_ext_needed' AS fo (TYPE panduck, FORMAT 'odt');
+
+query I
+SELECT count(*) FROM fo.tables;
+----
+1
+
+# --- failures happen at ATTACH, by name ---
+
+statement error
+ATTACH 'test/fixtures/nope.docx' AS m (TYPE panduck);
+----
+panduck: cannot attach
+
+statement error
+ATTACH 'https://example.com/x.html' AS w (TYPE panduck);
+----
+panduck: ATTACH reads local files only
+
+statement error
+ATTACH 'test/fixtures/constructs.docx' AS b1 (TYPE panduck, TABLE_NAMES 'slug');
+----
+panduck: TABLE_NAMES must be one of slugs, numbered, named_only, both; got 'slug'
+
+statement error
+ATTACH 'test/fixtures/constructs.docx' AS b2 (TYPE panduck, FORMAT 'nope');
+----
+panduck: FORMAT must be one of auto,
+
+# An option panduck does not own stays DuckDB's, and DuckDB rejects it by name.
+statement error
+ATTACH 'test/fixtures/constructs.docx' AS b3 (TYPE panduck, TABEL_NAMES 'slugs');
+----
+tabel_names

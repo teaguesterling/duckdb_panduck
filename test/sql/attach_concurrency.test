@@ -1,0 +1,151 @@
+# name: test/sql/attach_concurrency.test
+# description: ATTACH (TYPE panduck) reads the document on a nested Connection; it must behave like the caller's own read
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. ATTACH identifies the tables with one read on a FRESH Connection inside the attach
+# callback (spec, risks 1 and 2). The spike measured that once, single-threaded. This file
+# checks it under threads, inside transactions, from two connections, and against the
+# caller's session settings.
+#
+# THE POLICY CASE IS A FINDING (measured 2026-11-23, before the fix): a fresh Connection
+# does not see the caller's SESSION settings. With SET SESSION panduck_disabled_readers =
+# 'odt', ATTACH read the odt anyway, so the table views carried content the caller's policy
+# forbids. The caller's panduck_* settings must reach the nested read.
+# ---------------------------------------------------------------------------
+
+# --- threads ---
+
+statement ok
+SET threads = 4;
+
+statement ok
+ATTACH 'test/fixtures/attach_tables.rst' AS t4 (TYPE panduck);
+
+query I
+SELECT count(*) FROM t4.tables;
+----
+4
+
+# --- inside an explicit transaction ---
+
+statement ok
+BEGIN;
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS tx (TYPE panduck);
+
+query I
+SELECT count(*) FROM tx.tables;
+----
+1
+
+statement ok
+COMMIT;
+
+query I
+SELECT count(*) > 0 FROM tx.blocks;
+----
+true
+
+# A rolled-back ATTACH behaves as any ATTACH does: compare with an in-memory database.
+statement ok
+BEGIN;
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS rb (TYPE panduck);
+
+statement ok
+ATTACH ':memory:' AS rb_mem;
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT (SELECT count(*) FROM duckdb_databases() WHERE database_name = 'rb')
+     = (SELECT count(*) FROM duckdb_databases() WHERE database_name = 'rb_mem');
+----
+true
+
+# --- two connections, the same file under two names ---
+
+statement ok con1
+ATTACH 'test/fixtures/attach_names.rst' AS one (TYPE panduck);
+
+statement ok con2
+ATTACH 'test/fixtures/attach_names.rst' AS two (TYPE panduck, TABLE_NAMES 'numbered');
+
+query I con1
+SELECT count(*) FROM two.table_3;
+----
+1
+
+query I con2
+SELECT count(*) FROM one.prices;
+----
+1
+
+# --- the caller's session policy reaches the identifying read ---
+
+statement ok
+SET SESSION panduck_disabled_readers = 'odt';
+
+statement error
+ATTACH 'test/fixtures/constructs.odt' AS blocked (TYPE panduck);
+----
+is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+statement ok
+ATTACH 'test/fixtures/constructs.odt' AS allowed (TYPE panduck);
+
+# --- writes fail; INSERT too ---
+
+statement error
+INSERT INTO allowed.blocks SELECT * FROM allowed.blocks;
+----
+<REGEX>:.*(read-only|not an table|not a table).*
+
+# --- many connections attaching at once (spec, risk 1) ---
+
+concurrentloop i 0 8
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS cc_{i} (TYPE panduck);
+
+query I
+SELECT count(*) FROM cc_{i}.prices_2;
+----
+1
+
+statement ok
+DETACH cc_{i};
+
+endloop
+
+# --- a locked configuration (found by the final review, 2026-11-23) ---
+#
+# The caller's policy settings were copied with SET SESSION on every ATTACH, even when
+# nothing differed, and a failure threw an InternalException. Under lock_configuration
+# that SET fails, so one ATTACH invalidated the whole database: SELECT 1 then gave
+# "database has been invalidated". ATTACH must work, and the database must survive.
+
+statement ok
+SET lock_configuration = true;
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS locked (TYPE panduck);
+
+query I
+SELECT count(*) FROM locked.tables;
+----
+1
+
+query I
+SELECT 1;
+----
+1

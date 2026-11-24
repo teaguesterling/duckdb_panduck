@@ -1,0 +1,100 @@
+# name: test/sql/attach_names.test
+# description: TABLE_NAMES picks how ATTACH (TYPE panduck) names the table views
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. Teague, 2026-11-23: "Make it configurable on attach, slugs with numbers as a
+# fallback by default but numbered, named_only, and both as options". A named view
+# (r.prices) reads better than r.table_3; a number is stable when headings change.
+#
+# THE RULES (spec, "Names"): a table takes the slug of its caption, else of the nearest
+# heading above -- the heading's own id when it has one. Hyphens become underscores
+# (Teague, 2026-11-23), so every name is a plain SQL identifier. A repeated slug gets _2,
+# _3. A slug equal to a fixed view (blocks, tables, ...) or to any table_N gets a suffix,
+# so a fixed view never loses its name and table_N means the same table in every mode.
+#
+# attach_names.rst, in order: a table before any heading; tables under Costs, Prices,
+# Prices, Blocks, My Prices (id my-prices) and Table 1 (slug table_1, which collides).
+# No case here has a caption: no reader emits a caption block for a table today.
+# ---------------------------------------------------------------------------
+
+# --- slugs, the default ---
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS s (TYPE panduck);
+
+query III
+SELECT n, view, title FROM s.tables ORDER BY n;
+----
+1	table_1	NULL
+2	costs	Costs
+3	prices	Prices
+4	prices_2	Prices
+5	blocks_2	Blocks
+6	my_prices	My Prices
+7	table_1_2	Table 1
+
+# blocks is still the blocks view, not the table under the Blocks heading.
+query I
+SELECT count(*) > 7 FROM s.blocks;
+----
+true
+
+query II
+SELECT * FROM s.prices_2;
+----
+cake	5
+
+query II
+SELECT * FROM s.table_1_2;
+----
+7	8
+
+# --- numbered ---
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS nb (TYPE panduck, TABLE_NAMES 'numbered');
+
+query I
+SELECT string_agg(view, ',' ORDER BY n) FROM nb.tables;
+----
+table_1,table_2,table_3,table_4,table_5,table_6,table_7
+
+# --- named_only: a table with no title has no view, but keeps its row ---
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS no (TYPE panduck, TABLE_NAMES 'named_only');
+
+query II
+SELECT n, view FROM no.tables WHERE n IN (1, 2) ORDER BY n;
+----
+1	NULL
+2	costs
+
+statement error
+SELECT * FROM no.table_1;
+----
+does not exist
+
+# --- both: table_N for every table, and the slug as a second view over the same SQL ---
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS bo (TYPE panduck, TABLE_NAMES 'BOTH');
+
+query I
+SELECT string_agg(view_name, ',' ORDER BY view_name) FROM duckdb_views()
+WHERE database_name = 'bo' AND view_name NOT IN ('blocks', 'tables', 'headings', 'sections', 'code', 'metadata', 'links', 'images');
+----
+blocks_2,costs,my_prices,prices,prices_2,table_1,table_1_2,table_2,table_3,table_4,table_5,table_6,table_7
+
+query I
+SELECT count(*) FROM (SELECT * FROM bo.prices_2 EXCEPT SELECT * FROM bo.table_4);
+----
+0
+
+query II
+SELECT * FROM bo.table_4;
+----
+cake	5

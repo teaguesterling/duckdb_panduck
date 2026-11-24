@@ -1,0 +1,59 @@
+# name: test/sql/doc_format_override.test
+# description: read_panduck_doc(src, format := '<registered format>') reads a file whose extension does not say its format
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. A file a caller already fetched often has no extension, or a wrong one: the
+# duckeye-android app saves a shared page under a temporary name. `format :=` is how the
+# caller says what it is. Until 2026-11-23 dispatch chose a REGISTERED reader (docx,
+# odt, html, ...) by extension only, so format := 'odt' on such a file failed with
+# "has no branch for it -- ... This is a panduck bug." (measured on main 4901cef).
+# ATTACH ... (TYPE panduck, FORMAT ...) depends on this.
+#
+# THE FIXTURES are byte copies: constructs_dup.no_ext_needed of constructs.odt
+# (multidoc.test), constructs_docx_no_ext of constructs.docx.
+# ---------------------------------------------------------------------------
+
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs_dup.no_ext_needed', format := 'odt'))
+     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.odt'));
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs_docx_no_ext', format := 'docx'))
+     = (SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs.docx'));
+----
+true
+
+# The rows are the docx reader's, not a fallback's.
+query I
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs_docx_no_ext', format := 'docx') WHERE element_type = 'table';
+----
+1
+
+# A format that matches the extension still takes the ordinary path.
+query I
+SELECT count(*) > 0 FROM read_panduck_doc('test/fixtures/constructs.odt', format := 'odt');
+----
+true
+
+# The reader policy applies to the format named, not to the extension.
+statement ok
+SET panduck_disabled_readers = 'docx';
+
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/constructs_docx_no_ext', format := 'docx');
+----
+is disabled
+
+statement ok
+RESET panduck_disabled_readers;
+
+# A wrong format fails with the reader's own error, not a silent fallback.
+statement error
+SELECT count(*) FROM read_panduck_doc('test/fixtures/attach_names.rst', format := 'docx');
+----
+ZIP

@@ -1,0 +1,103 @@
+# name: test/sql/attach_views.test
+# description: ATTACH (TYPE panduck) gives headings, sections, code, metadata, links and images views
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY. These are the app's Extract menu kinds, built once in panduck so the app and the
+# CLI stop writing their own SQL over the blocks (spec, "The views").
+#
+# MEASURED BEFORE THE SQL WAS WRITTEN (risk 4, 2026-11-23, on rich/constructs docx, odt,
+# rtf, pandoc.rst, handwritten org and tex, notebook.ipynb, two epubs):
+#   - A heading's level is attributes['heading_level']. The `level` column is tree depth:
+#     every rst heading has level 1.
+#   - A link is element_type 'link', kind 'inline': text in content, address in
+#     attributes['href']. An image is 'image': address in attributes['src']; content is
+#     NULL and no reader sets alt or title, so those columns are NULL today.
+#   - Metadata is a SUBTREE, not one row: a kind='value' row carries attributes['key'],
+#     and its text is in the inline rows under it, up to the next row at the same or a
+#     lower level.
+#
+# Every expected value below is from read_panduck_doc's own rows for the same file.
+# duck_block_utils is not needed: doc_toc requires it, so `headings` does not use doc_toc.
+# ---------------------------------------------------------------------------
+
+statement ok
+ATTACH 'test/fixtures/attach_sections.rst' AS s (TYPE panduck);
+
+query IIII
+SELECT level, title, id, element_order FROM s.headings;
+----
+1	Top	top	0
+2	Sub	sub	2
+1	Top Two	top-two	5
+
+# A section ends at the next heading of the same or a higher level, as doc_section does.
+query IIIII
+SELECT id, level, title, start_order, end_order FROM s.sections;
+----
+top	1	Top	0	4
+sub	2	Sub	2	4
+top-two	1	Top Two	5	7
+
+query IIII
+SELECT language, replace(content, chr(10), '|'), element_order, section FROM s.code;
+----
+python	print(1)	4	Sub
+csv	a,b|1,2	7	Top Two
+
+# --- links, images and metadata, from a docx ---
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS c (TYPE panduck);
+
+query IIII
+SELECT text, address, title, element_order FROM c.links;
+----
+link	https://example.com	NULL	11
+
+query I
+SELECT address FROM c.images;
+----
+media/rId21.png
+
+query II
+SELECT key, value FROM c.metadata;
+----
+author	Test Author
+date	2026-09-03T05:45:59Z
+title	Audit Document
+
+# An inline code span is not a code block: constructs.docx has one of each.
+query I
+SELECT count(*) FROM c.code;
+----
+1
+
+# A value under a list (latex \author) is still found under its key.
+statement ok
+ATTACH 'test/fixtures/handwritten.tex' AS h (TYPE panduck);
+
+query II
+SELECT key, value FROM h.metadata;
+----
+author	Nobody
+title	Handwritten
+
+# --- the column names are the spec's ---
+
+query I
+SELECT string_agg(column_name, ',' ORDER BY column_index) FROM duckdb_columns() WHERE database_name = 's' AND table_name = 'headings';
+----
+level,title,id,element_order
+
+query I
+SELECT string_agg(column_name, ',' ORDER BY column_index) FROM duckdb_columns() WHERE database_name = 's' AND table_name = 'images';
+----
+alt,address,title,element_order
+
+query I
+SELECT string_agg(column_name, ',' ORDER BY column_index) FROM duckdb_columns() WHERE database_name = 's' AND table_name = 'metadata';
+----
+key,value

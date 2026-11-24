@@ -947,3 +947,7 @@ needs.
 `test/sql/doc_namespace.test` asserts which spelling the installed build has, so the day
 that changes the suite says so by name rather than failing three assertions later with
 `function ... does not exist`. It did exactly that on 2026-09-04.
+
+## ATTACH a document
+
+`ATTACH 'report.docx' AS r (TYPE panduck)` gives the same document as a read-only database of views. See [attach.md](attach.md).

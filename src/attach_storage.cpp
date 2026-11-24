@@ -356,6 +356,42 @@ string TablesListingSql(const vector<FoundTable> &tables) {
 	return sql + ")" + cols;
 }
 
+//! The content views. Each reads the document again through read_panduck_doc, not the
+//! `blocks` view, so it does not depend on how the attached name resolves. Attribute keys
+//! and the metadata shape were measured across readers first (attach_views.test header).
+vector<std::pair<string, string>> ContentViews(const AttachPlan &plan) {
+	const string b = "WITH b AS (SELECT * FROM " + ReadDocSql(plan) + ") ";
+	const string h = "h AS (SELECT TRY_CAST(attributes['heading_level'] AS INTEGER) AS level, content AS title, "
+	                 "attributes['id'] AS id, element_order FROM b WHERE element_type = 'heading') ";
+	return {
+	    {"headings", b + ", " + h + "SELECT level, title, id, element_order FROM h ORDER BY element_order"},
+	    // A section ends at the next heading of the same or a higher level (doc_section's rule),
+	    // else at the last row of the document.
+	    {"sections", b + ", " + h +
+	                     "SELECT id, level, title, element_order AS start_order, "
+	                     "coalesce((SELECT min(h2.element_order) FROM h h2 WHERE h2.element_order > h.element_order "
+	                     "AND h2.level <= h.level) - 1, (SELECT max(element_order) FROM b)) AS end_order "
+	                     "FROM h ORDER BY element_order"},
+	    {"code", b + ", " + h +
+	                 "SELECT attributes['language'] AS language, content, element_order, "
+	                 "(SELECT arg_max(h.title, h.element_order) FROM h WHERE h.element_order < c.element_order) "
+	                 "AS section FROM b c WHERE c.kind = 'block' AND c.element_type = 'code' ORDER BY element_order"},
+	    // A metadata value is a subtree: the keyed value row, then the inline text under it,
+	    // up to the next row at the same or a lower level.
+	    {"metadata", b +
+	                     ", m AS (SELECT attributes['key'] AS key, level, element_order FROM b "
+	                     "WHERE kind = 'value' AND attributes['key'] IS NOT NULL) "
+	                     "SELECT m.key, (SELECT string_agg(x.content, '' ORDER BY x.element_order) FROM b x "
+	                     "WHERE x.kind = 'inline' AND x.element_order > m.element_order AND x.element_order < "
+	                     "coalesce((SELECT min(y.element_order) FROM b y WHERE y.element_order > m.element_order "
+	                     "AND y.level <= m.level), 2147483647)) AS value FROM m ORDER BY m.element_order"},
+	    {"links", b + "SELECT content AS text, attributes['href'] AS address, attributes['title'] AS title, "
+	                  "element_order FROM b WHERE element_type = 'link' ORDER BY element_order"},
+	    {"images", b + "SELECT content AS alt, attributes['src'] AS address, attributes['title'] AS title, "
+	                   "element_order FROM b WHERE element_type = 'image' ORDER BY element_order"},
+	};
+}
+
 class DocViewGenerator : public DefaultGenerator {
 public:
 	DocViewGenerator(Catalog &catalog, SchemaCatalogEntry &schema, vector<std::pair<string, string>> views_p)
@@ -400,6 +436,9 @@ unique_ptr<Catalog> PanduckAttach(optional_ptr<StorageExtensionInfo>, ClientCont
 	auto tables = IdentifyTables(db.GetDatabase(), plan);
 	auto table_views = NameTables(tables, plan.mode);
 	plan.views.emplace_back("tables", TablesListingSql(tables));
+	for (auto &v : ContentViews(plan)) {
+		plan.views.push_back(std::move(v));
+	}
 	for (auto &v : table_views) {
 		plan.views.push_back(std::move(v));
 	}

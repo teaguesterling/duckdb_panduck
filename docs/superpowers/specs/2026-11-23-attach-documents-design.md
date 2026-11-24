@@ -1,6 +1,6 @@
 # ATTACH a document as a read-only database
 
-Status: **draft, for Teague's approval** (2026-11-23). Naming decided by Teague the same day. Nothing is built. Brief:
+Status: **approved by Teague** (2026-11-23). Naming decided by Teague the same day. Nothing is built. Brief:
 `docs/briefs/2026-11-23-attach-documents.md`. Branch: `feat/attach-documents`.
 
 ## Intent
@@ -213,7 +213,7 @@ Rules that apply in every mode (Claude's calls):
 
 - **N is the table's row in `tables`**: real tables in document order, then embedded data in
   document order, one sequence. It does not depend on the mode, so `table_3` is the same table in `'numbered'` and `'both'`.
-- **The slug**: a table under a heading that has an `id` takes that `id` as it is. Some readers
+- **The slug**: a table under a heading that has an `id` takes that `id`, with every `-` turned into `_` (Teague, 2026-11-23: a view name is a plain SQL identifier, so `r.my_prices`, not `r."my-prices"`). Some readers
   supply their own ids, such as an HTML `id` attribute (`test/sql/heading_ids.test`). A caption,
   or a heading with no `id`, is slugged with panduck's heading-id rule. The builder finds that
   rule's C++ home and reuses it.

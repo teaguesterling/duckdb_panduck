@@ -102,3 +102,50 @@ RESET panduck_disabled_readers;
 
 statement ok
 ATTACH 'test/fixtures/constructs.odt' AS allowed (TYPE panduck);
+
+# --- writes fail; INSERT too ---
+
+statement error
+INSERT INTO allowed.blocks SELECT * FROM allowed.blocks;
+----
+<REGEX>:.*(read-only|not an table|not a table).*
+
+# --- many connections attaching at once (spec, risk 1) ---
+
+concurrentloop i 0 8
+
+statement ok
+ATTACH 'test/fixtures/attach_names.rst' AS cc_${i} (TYPE panduck);
+
+query I
+SELECT count(*) FROM cc_${i}.prices_2;
+----
+1
+
+statement ok
+DETACH cc_${i};
+
+endloop
+
+# --- a locked configuration (found by the final review, 2026-11-23) ---
+#
+# The caller's policy settings were copied with SET SESSION on every ATTACH, even when
+# nothing differed, and a failure threw an InternalException. Under lock_configuration
+# that SET fails, so one ATTACH invalidated the whole database: SELECT 1 then gave
+# "database has been invalidated". ATTACH must work, and the database must survive.
+
+statement ok
+SET lock_configuration = true;
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS locked (TYPE panduck);
+
+query I
+SELECT count(*) FROM locked.tables;
+----
+1
+
+query I
+SELECT 1;
+----
+1

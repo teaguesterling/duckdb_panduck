@@ -182,12 +182,22 @@ string ReadDocSql(const AttachPlan &plan) {
 vector<FoundTable> IdentifyTables(ClientContext &context, DatabaseInstance &instance, const AttachPlan &plan) {
 	Connection con(instance);
 	for (auto name : {"panduck_allow_registration", "panduck_enabled_readers", "panduck_disabled_readers"}) {
-		Value value;
-		if (context.TryGetCurrentSetting(Identifier(name), value) && !value.IsNull()) {
-			auto set = con.Query(string("SET SESSION ") + name + " = " + value.ToSQLString());
-			if (set->HasError()) {
-				throw InternalException("panduck: cannot pass %s to the ATTACH read: %s", name, set->GetError());
-			}
+		// Only a value that differs is SET. Under lock_configuration any SET fails, and an
+		// unconditional one made every ATTACH fail (found by the final review).
+		Value caller, nested;
+		if (!context.TryGetCurrentSetting(Identifier(name), caller) || caller.IsNull()) {
+			continue;
+		}
+		if (con.context->TryGetCurrentSetting(Identifier(name), nested) && !nested.IsNull() &&
+		    nested.ToString() == caller.ToString()) {
+			continue;
+		}
+		auto set = con.Query(string("SET SESSION ") + name + " = " + caller.ToSQLString());
+		if (set->HasError()) {
+			// An InvalidInputException, not an InternalException: an internal error during
+			// ATTACH invalidates the whole database.
+			throw InvalidInputException("panduck: cannot attach '%s': cannot pass %s to the ATTACH read: %s",
+			                            plan.path, name, set->GetError());
 		}
 	}
 	auto res = con.Query("SELECT element_type, kind, element_order, content, "

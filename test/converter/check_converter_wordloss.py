@@ -46,6 +46,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def sql_str(s):
+    """A SQL string literal for s: single quotes doubled. A fixture path may hold a quote
+    (test/fixtures/it's.docx tests exactly that), so no path goes into SQL bare."""
+    return "'" + str(s).replace("'", "''") + "'"
+
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Source formats pandoc reads, by extension. Same map as check_converter_differential.py,
@@ -115,7 +122,7 @@ def corpus(tmp):
 def round_trip(duckdb, path, extension=None):
     sql = (
         "SELECT panduck_blocks_to_pandoc_blocks(panduck_pandoc_ast_to_blocks("
-        f"(SELECT content FROM read_text('{path}'))));"
+        f"(SELECT content FROM read_text({sql_str(path)}))));"
     )
     # CI runs a stock duckdb against the extension artifact the build matrix produced:
     # -unsigned is required to LOAD a locally built .duckdb_extension. Locally, the
@@ -123,7 +130,7 @@ def round_trip(duckdb, path, extension=None):
     cmd = [duckdb]
     if extension:
         cmd.append("-unsigned")
-        sql = f"LOAD '{extension}'; " + sql
+        sql = f"LOAD {sql_str(extension)}; " + sql
     r = subprocess.run(cmd + ["-noheader", "-list", "-c", sql], capture_output=True, text=True)
     if r.returncode != 0:
         lines = (r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}").splitlines()

@@ -34,6 +34,12 @@ import os
 import subprocess
 import sys
 
+
+def sql_str(s):
+    """A SQL string literal for s: single quotes doubled. A fixture path may hold a quote
+    (test/fixtures/it's.docx tests exactly that), so no path goes into SQL bare."""
+    return "'" + str(s).replace("'", "''") + "'"
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DUCKDB = os.path.join(ROOT, "build", "release", "duckdb")
 EXTENSION = os.path.join(ROOT, "build", "release", "extension", "panduck", "panduck.duckdb_extension")
@@ -187,13 +193,13 @@ def check_fixtures(macros):
     for f in fixtures:
         rel = os.path.relpath(f, ROOT)
         sql = (
-            preamble(macros) + "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks('%s') AS blk;\n"
-            "SELECT '%s' || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
+            preamble(macros) + "CREATE TEMP TABLE fx AS SELECT panduck_read_blocks(%s) AS blk;\n"
+            "SELECT %s || '%s' || duck_blocks_are_valid(blk)::VARCHAR || '%s' || "
             "coalesce(list_aggregate(duck_blocks_undeclared_types(blk), "
             "'string_agg', ','), '') FROM fx;\n"
             "SELECT 'ERR' || '%s' || 'order ' || e.element_order::VARCHAR || "
             "' ' || e.field || ': ' || e.message "
-            "FROM fx, duck_blocks_errors(fx.blk) e;\n" % (rel, rel, SEP, SEP, SEP)
+            "FROM fx, duck_blocks_errors(fx.blk) e;\n" % (sql_str(rel), sql_str(rel), SEP, SEP, SEP)
         )
         try:
             lines = run_sql(sql)

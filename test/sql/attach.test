@@ -31,8 +31,13 @@ SELECT (SELECT count(*) FROM r.blocks) = (SELECT count(*) FROM read_panduck_doc(
 true
 
 # The path is made absolute at ATTACH, so the view does not depend on the cwd later.
+# Compared with \ mapped to /: on Windows DuckDB joins the working directory with its
+# native separator (FileSystem::PathSeparator), so the view holds D:\...\constructs.docx.
+# That native path is correct -- the reads above pass on Windows -- and only this
+# assertion assumed '/'.
 query I
-SELECT sql LIKE '%/test/fixtures/constructs.docx%' AND sql NOT LIKE '%''test/fixtures/constructs.docx%'
+SELECT replace(sql, chr(92), '/') LIKE '%/test/fixtures/constructs.docx%'
+   AND replace(sql, chr(92), '/') NOT LIKE '%''test/fixtures/constructs.docx%'
 FROM duckdb_views() WHERE database_name = 'r' AND view_name = 'blocks';
 ----
 true

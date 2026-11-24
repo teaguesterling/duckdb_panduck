@@ -174,8 +174,22 @@ string ReadDocSql(const AttachPlan &plan) {
 //! IDENTIFY: one read of the blocks, on a fresh Connection to the same database. This is
 //! identifying, not running: the table views' names depend on how many tables there are
 //! and on their titles, so it must happen at ATTACH.
-vector<FoundTable> IdentifyTables(DatabaseInstance &instance, const AttachPlan &plan) {
+//!
+//! A fresh Connection does not see the caller's SESSION settings (measured: with
+//! SET SESSION panduck_disabled_readers = 'odt', the odt was read anyway, and its tables
+//! would have been baked into views). So the caller's reader-policy settings, registered
+//! in src/reader_registry.cpp, are copied to it first.
+vector<FoundTable> IdentifyTables(ClientContext &context, DatabaseInstance &instance, const AttachPlan &plan) {
 	Connection con(instance);
+	for (auto name : {"panduck_allow_registration", "panduck_enabled_readers", "panduck_disabled_readers"}) {
+		Value value;
+		if (context.TryGetCurrentSetting(Identifier(name), value) && !value.IsNull()) {
+			auto set = con.Query(string("SET SESSION ") + name + " = " + value.ToSQLString());
+			if (set->HasError()) {
+				throw InternalException("panduck: cannot pass %s to the ATTACH read: %s", name, set->GetError());
+			}
+		}
+	}
 	auto res = con.Query("SELECT element_type, kind, element_order, content, "
 	                     "coalesce(lower(attributes['language']), ''), coalesce(attributes['id'], '') FROM " +
 	                     ReadDocSql(plan) +
@@ -433,7 +447,7 @@ unique_ptr<Catalog> PanduckAttach(optional_ptr<StorageExtensionInfo>, ClientCont
 
 	plan.views.emplace_back("blocks", "SELECT * FROM " + ReadDocSql(plan));
 
-	auto tables = IdentifyTables(db.GetDatabase(), plan);
+	auto tables = IdentifyTables(context, db.GetDatabase(), plan);
 	auto table_views = NameTables(tables, plan.mode);
 	plan.views.emplace_back("tables", TablesListingSql(tables));
 	for (auto &v : ContentViews(plan)) {

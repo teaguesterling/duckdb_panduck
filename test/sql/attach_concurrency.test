@@ -115,15 +115,15 @@ INSERT INTO allowed.blocks SELECT * FROM allowed.blocks;
 concurrentloop i 0 8
 
 statement ok
-ATTACH 'test/fixtures/attach_names.rst' AS cc_${i} (TYPE panduck);
+ATTACH 'test/fixtures/attach_names.rst' AS cc_{i} (TYPE panduck);
 
 query I
-SELECT count(*) FROM cc_${i}.prices_2;
+SELECT count(*) FROM cc_{i}.prices_2;
 ----
 1
 
 statement ok
-DETACH cc_${i};
+DETACH cc_{i};
 
 endloop
 

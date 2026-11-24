@@ -74,10 +74,15 @@ panduck: TABLE_NAMES must be one of slugs, numbered, named_only, both; got 'slug
 Passes `format :=` to `read_panduck_doc`. The valid values are the reader registry's formats,
 plus `'auto'`, `'pandoc'` and `'code'`.
 
-**Limit:** `read_panduck_doc` chooses a registered reader (docx, odt, html, ...) by the file
-extension only. So `FORMAT 'odt'` on a file with no extension fails, with or without ATTACH.
-`FORMAT` works today for the formats that `read_panduck_doc` chooses by name, such as
-`'pandoc'`.
+Use it for a file whose extension does not say its format, such as a page the app saved
+under a temporary name:
+
+```sql
+ATTACH '/tmp/share-81723' AS r (TYPE panduck, FORMAT 'html');
+```
+
+The reader policy applies to the format named. A wrong format fails with the reader's own
+error.
 
 ## Paths
 

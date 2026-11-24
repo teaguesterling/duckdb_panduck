@@ -103,12 +103,6 @@ true
 # This .json file is pandoc's AST. Without FORMAT, read_panduck_doc treats .json as data
 # and refuses it; with FORMAT 'pandoc' it reads. So the result shows the option arrived.
 #
-# KNOWN GAP, NOT ATTACH'S (measured 2026-11-23): read_panduck_doc picks a REGISTERED reader
-# (docx, odt, html, ...) by file extension only, and ignores `format :=` for those. So
-# read_panduck_doc('<odt with no extension>', format := 'odt') fails with "has no branch
-# for it", with or without ATTACH (src/reader_registry.cpp, the panduck_reader_function_for
-# branch). FORMAT on an extensionless docx/odt/html file waits for that dispatch fix.
-
 statement ok
 ATTACH 'test/fixtures/table_image.pandoc.json' AS f (TYPE panduck, FORMAT 'pandoc');
 
@@ -121,6 +115,16 @@ statement error
 SELECT count(*) FROM read_panduck_doc('test/fixtures/table_image.pandoc.json');
 ----
 panduck:
+
+# The case FORMAT exists for: a docx/odt file with no usable extension
+# (doc_format_override.test covers the reader side).
+statement ok
+ATTACH 'test/fixtures/constructs_dup.no_ext_needed' AS fo (TYPE panduck, FORMAT 'odt');
+
+query I
+SELECT count(*) FROM fo.tables;
+----
+1
 
 # --- failures happen at ATTACH, by name ---
 

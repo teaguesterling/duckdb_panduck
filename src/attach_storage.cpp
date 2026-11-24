@@ -28,6 +28,10 @@
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/main/connection.hpp"
 #include "yyjson.hpp"
+#include "panduck/slugify.hpp"
+
+#include <cctype>
+#include <unordered_set>
 
 #include <algorithm>
 
@@ -249,11 +253,78 @@ string TableViewSql(const FoundTable &t) {
 	return "SELECT * FROM panduck_table_read(coalesce(" + e + ".content, error(" + e + ".error)))";
 }
 
-//! The view names. Every table is table_N here; TABLE_NAMES modes come next.
-void NameTables(vector<FoundTable> &tables, TableNames) {
-	for (auto &t : tables) {
-		t.view = "table_" + std::to_string(t.n);
+//! The fixed views. A table slug never takes one of these names.
+const vector<string> &FixedViews() {
+	static const vector<string> names {"blocks", "tables", "headings", "sections",
+	                                   "code",   "metadata", "links", "images"};
+	return names;
+}
+
+//! A table's slug: its heading's own id when it has one, else panduck's heading-id rule
+//! over the title (libpanduck/include/panduck/slugify.hpp). Any ASCII character that is
+//! not a letter, a digit or `_` becomes `_` (Teague, 2026-11-23: hyphens become
+//! underscores, so every view name is a plain SQL identifier). Empty = no slug.
+string TableSlug(const FoundTable &t) {
+	string raw = !t.heading_id.empty() ? t.heading_id : (t.title.empty() ? "" : ::panduck::HeadingSlug(t.title, '_'));
+	for (auto &c : raw) {
+		auto u = static_cast<unsigned char>(c);
+		if (u < 0x80 && !std::isalnum(u) && c != '_') {
+			c = '_';
+		}
 	}
+	return StringUtil::Lower(raw);
+}
+
+//! Names every table per TABLE_NAMES and returns the (view name, SQL) pairs. Sets each
+//! table's `view` (the name `tables` lists): the slug, else table_N; empty under
+//! 'named_only' for a table with no slug.
+vector<std::pair<string, string>> NameTables(vector<FoundTable> &tables, TableNames mode) {
+	// table_K is reserved for every K in every mode, so table_N is the same table in
+	// 'numbered' and 'both', and a heading named "Table 1" cannot take it.
+	std::unordered_set<string> taken(FixedViews().begin(), FixedViews().end());
+	for (auto &t : tables) {
+		taken.insert("table_" + std::to_string(t.n));
+	}
+	vector<std::pair<string, string>> views;
+	for (auto &t : tables) {
+		auto numbered = "table_" + std::to_string(t.n);
+		string slug;
+		if (mode != TableNames::NUMBERED) {
+			auto base = TableSlug(t);
+			if (!base.empty()) {
+				slug = base;
+				for (idx_t k = 2; taken.count(slug); k++) {
+					slug = base + "_" + std::to_string(k);
+				}
+				taken.insert(slug);
+			}
+		}
+		auto sql = TableViewSql(t);
+		switch (mode) {
+		case TableNames::NUMBERED:
+			t.view = numbered;
+			views.emplace_back(numbered, sql);
+			break;
+		case TableNames::SLUGS:
+			t.view = slug.empty() ? numbered : slug;
+			views.emplace_back(t.view, sql);
+			break;
+		case TableNames::NAMED_ONLY:
+			t.view = slug;
+			if (!slug.empty()) {
+				views.emplace_back(slug, sql);
+			}
+			break;
+		case TableNames::BOTH:
+			t.view = slug.empty() ? numbered : slug;
+			views.emplace_back(numbered, sql);
+			if (!slug.empty()) {
+				views.emplace_back(slug, sql);
+			}
+			break;
+		}
+	}
+	return views;
 }
 
 string OrNull(const string &s) {
@@ -327,12 +398,10 @@ unique_ptr<Catalog> PanduckAttach(optional_ptr<StorageExtensionInfo>, ClientCont
 	plan.views.emplace_back("blocks", "SELECT * FROM " + ReadDocSql(plan));
 
 	auto tables = IdentifyTables(db.GetDatabase(), plan);
-	NameTables(tables, plan.mode);
+	auto table_views = NameTables(tables, plan.mode);
 	plan.views.emplace_back("tables", TablesListingSql(tables));
-	for (auto &t : tables) {
-		if (!t.view.empty()) {
-			plan.views.emplace_back(t.view, TableViewSql(t));
-		}
+	for (auto &v : table_views) {
+		plan.views.push_back(std::move(v));
 	}
 
 	db.SetReadOnlyDatabase();

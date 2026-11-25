@@ -197,4 +197,4 @@ pass.
 - Why an external parser is not a rival to the SQL core, with the host x format matrix:
   https://claude.ai/artifact/MsXES4p4atdVQVaCtgpT3w
 - The Android assessment that started this: https://claude.ai/artifact/KYVUeoahMdLFNyY3f2Bxr9
-- Originating session: https://claude.ai/code/session_01G4hzdTdzDmuh1Mdmb53wm6
+- Originating session: a Claude Code session

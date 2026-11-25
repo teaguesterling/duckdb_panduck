@@ -80,7 +80,7 @@ from duckeye.
 
 ## What is already measured — carry these, do not rediscover them
 
-Measured 2026-11-10 on longbottom, DuckDB v2.0.0, panduck 0.7.0, comparing
+Measured 2026-11-10 on a local Linux build, DuckDB v2.0.0, panduck 0.7.0, comparing
 `duck_blocks_to_text` output against duckeye's own path:
 
 | duckeye | panduck | Output | 72,000-row file |
@@ -160,7 +160,7 @@ Settle this before writing ask 1. Ask 2, 3 and 4 do not depend on it.
 | Commit | `mcp__plugin_jetsam_jetsam__save(message, files=[...])`, then `confirm(id)` | `git add && git commit` through Bash |
 | Push, PR, CI, issues | jetsam `sync`, `ship`, `checks`, `issues`, `pr_view` | raw `git`/`gh` through Bash |
 | Build and test | `mcp__blq_mcp__run` / `mcp__blq_mcp__exec`, then `mcp__blq_mcp__output(run_id, grep=...)` | `make`/`ctest` through Bash with pipes |
-| Anything heavy or long | load the `slurm` skill, then `srun -n 1 -c 8 --mem=16G -p batch -t 60` | a bare build on longbottom |
+| Anything heavy or long | load the `slurm` skill, then `srun -n 1 -c 8 --mem=16G -p batch -t 60` | a bare build outside the queue |
 | Write an explanation for Teague | the `house-artifact` skill, then the `Artifact` tool | a long chat reply |
 
 Deferred MCP tools load by schema first: `ToolSearch` with

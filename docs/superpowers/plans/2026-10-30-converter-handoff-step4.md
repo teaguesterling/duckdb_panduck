@@ -13,7 +13,7 @@
 
 ## The surface, measured
 
-From `duckdb_functions()` on a dbu build (`snape-ci-pin` worktree, DuckDB v2.0.0) and on
+From `duckdb_functions()` on a dbu build (a local worktree, DuckDB v2.0.0) and on
 panduck `b762217` (v1.5.6):
 
 | dbu name | kind | overloads | panduck today |

@@ -30,9 +30,9 @@
 Build (10–25 min, full rebuild per commit is normal):
 
 ```bash
-cd /sl/workspace/home/teague/Projects/duckdb_panduck/.worktrees/attach-documents
+cd .worktrees/attach-documents
 srun -J panduck-attach-build --comment="session=$CLAUDE_CODE_SESSION_ID" -n 1 -c 8 --mem=16G -p batch -t 90 \
-  bash -c 'VCPKG_TOOLCHAIN_PATH=/home/teague/Dev/vcpkg/scripts/buildsystems/vcpkg.cmake GEN=ninja make release' \
+  bash -c 'VCPKG_TOOLCHAIN_PATH=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake GEN=ninja make release' \
   > $SCRATCH/build.log 2>&1; tail -5 $SCRATCH/build.log
 ```
 

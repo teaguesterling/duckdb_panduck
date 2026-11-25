@@ -80,7 +80,7 @@ from duckeye.
 
 ## What is already measured — carry these, do not rediscover them
 
-Measured 2026-11-10 on longbottom, DuckDB v2.0.0, panduck 0.7.0, comparing
+Measured 2026-11-10 on a local Linux build, DuckDB v2.0.0, panduck 0.7.0, comparing
 `duck_blocks_to_text` output against duckeye's own path:
 
 | duckeye | panduck | Output | 72,000-row file |
@@ -160,7 +160,7 @@ Settle this before writing ask 1. Ask 2, 3 and 4 do not depend on it.
 | Commit | `mcp__plugin_jetsam_jetsam__save(message, files=[...])`, then `confirm(id)` | `git add && git commit` through Bash |
 | Push, PR, CI, issues | jetsam `sync`, `ship`, `checks`, `issues`, `pr_view` | raw `git`/`gh` through Bash |
 | Build and test | `mcp__blq_mcp__run` / `mcp__blq_mcp__exec`, then `mcp__blq_mcp__output(run_id, grep=...)` | `make`/`ctest` through Bash with pipes |
-| Anything heavy or long | load the `slurm` skill, then `srun -n 1 -c 8 --mem=16G -p batch -t 60` | a bare build on longbottom |
+| Anything heavy or long | load the `slurm` skill, then `srun -n 1 -c 8 --mem=16G -p batch -t 60` | a bare build outside the queue |
 | Write an explanation for Teague | the `house-artifact` skill, then the `Artifact` tool | a long chat reply |
 
 Deferred MCP tools load by schema first: `ToolSearch` with
@@ -194,7 +194,6 @@ pass.
   (its header still says "waiting for Teague's approval"; commit `2ec1d82` and the asks brief
   both record approval on 2026-11-10, so the header is stale)
 - This repo: issue #104 (libpanduck L1+L2), #129, #107, #140, #85, and `docs/libpanduck.md`
-- Why an external parser is not a rival to the SQL core, with the host x format matrix:
-  https://claude.ai/artifact/MsXES4p4atdVQVaCtgpT3w
-- The Android assessment that started this: https://claude.ai/artifact/KYVUeoahMdLFNyY3f2Bxr9
-- Originating session: https://claude.ai/code/session_01G4hzdTdzDmuh1Mdmb53wm6
+- Why an external parser is not a rival to the SQL core, with the host x format matrix
+- The Android assessment that started this
+- Originating session: a Claude Code session

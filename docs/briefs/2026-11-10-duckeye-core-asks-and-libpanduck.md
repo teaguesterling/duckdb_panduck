@@ -194,7 +194,6 @@ pass.
   (its header still says "waiting for Teague's approval"; commit `2ec1d82` and the asks brief
   both record approval on 2026-11-10, so the header is stale)
 - This repo: issue #104 (libpanduck L1+L2), #129, #107, #140, #85, and `docs/libpanduck.md`
-- Why an external parser is not a rival to the SQL core, with the host x format matrix:
-  https://claude.ai/artifact/MsXES4p4atdVQVaCtgpT3w
-- The Android assessment that started this: https://claude.ai/artifact/KYVUeoahMdLFNyY3f2Bxr9
+- Why an external parser is not a rival to the SQL core, with the host x format matrix
+- The Android assessment that started this
 - Originating session: a Claude Code session

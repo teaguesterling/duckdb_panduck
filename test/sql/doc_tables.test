@@ -106,6 +106,23 @@ SELECT count(*) FROM doc_tables('test/fixtures/report [final].docx');
 ----
 1
 
+# The same file behind ATTACH's 'panduck:' prefix: the prefix is stripped before the glob
+# check, so the two surfaces agree on this input too (review finding F5).
+query I
+SELECT count(*) FROM (FROM doc_tables('panduck:test/fixtures/report [final].docx') EXCEPT ALL FROM rf.tables);
+----
+0
+
+query I
+SELECT count(*) FROM (FROM rf.tables EXCEPT ALL FROM doc_tables('panduck:test/fixtures/report [final].docx'));
+----
+0
+
+statement error
+SELECT * FROM doc_tables('panduck:test/fixtures/*.docx');
+----
+one document
+
 statement error
 SELECT * FROM doc_tables('https://example.com/x.html');
 ----

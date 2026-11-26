@@ -12,6 +12,7 @@
 #include "panduck_duckdb_compat.hpp"
 
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -32,6 +33,10 @@ string DocSource(ClientContext &context, const TableFunctionBindInput &input, co
 		throw BinderException("%s: src must be a constant path, not NULL", fn);
 	}
 	auto src = input.inputs[0].ToString();
+	// ATTACH's 'panduck:' prefix is not part of the path: strip it before the glob check.
+	if (StringUtil::StartsWith(src, "panduck:")) {
+		src = src.substr(8);
+	}
 	// A real file whose name has glob characters is one document: check the literal path first.
 	auto &fs = FileSystem::GetFileSystem(context);
 	if (src.find_first_of("*?[") != string::npos && src.find("://") == string::npos &&

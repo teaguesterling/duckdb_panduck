@@ -1,0 +1,130 @@
+# name: test/sql/doc_table.test
+# description: doc_table(src, n | id := ...) reads one table: the same rows as ATTACH's r.table_N
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY (#215). doc_table returns the SQL ATTACH bakes into r.table_N, from the same table
+# scan, so a table read either way has the same rows and the same column types. n is
+# 1-based, as r.tables.n is. ATTACH uses TABLE_NAMES 'both' here so every r.table_N exists.
+# table_ids.dblocks is the only fixture whose tables carry an id: no native reader emits a
+# table id, and the compact format carries attributes as written.
+# ---------------------------------------------------------------------------
+
+# --- the same rows and types as r.table_N ---
+
+statement ok
+ATTACH 'test/fixtures/attach_tables.rst' AS t (TYPE panduck, TABLE_NAMES 'both');
+
+# loop's end is exclusive: tables 1-3 read; table 4 is the broken csv, tested below.
+loop i 1 4
+
+query I
+SELECT count(*) FROM (FROM doc_table('test/fixtures/attach_tables.rst', ${i}) EXCEPT ALL FROM t.table_${i});
+----
+0
+
+query I
+SELECT count(*) FROM (FROM t.table_${i} EXCEPT ALL FROM doc_table('test/fixtures/attach_tables.rst', ${i}));
+----
+0
+
+query I
+SELECT count(*) FROM ((SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM doc_table('test/fixtures/attach_tables.rst', ${i})))
+	EXCEPT ALL (SELECT column_name, column_type FROM (DESCRIBE t.table_${i})));
+----
+0
+
+endloop
+
+# The comparison is not vacuous.
+query II
+SELECT * FROM doc_table('test/fixtures/attach_tables.rst', 1);
+----
+tea	3
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS c (TYPE panduck, TABLE_NAMES 'both');
+
+query I
+SELECT count(*) FROM (FROM doc_table('test/fixtures/constructs.docx', 1) EXCEPT ALL FROM c.table_1);
+----
+0
+
+query I
+SELECT count(*) FROM (FROM c.table_1 EXCEPT ALL FROM doc_table('test/fixtures/constructs.docx', 1));
+----
+0
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM doc_table('test/fixtures/constructs.docx', 1));
+----
+Name	VARCHAR
+Value	BIGINT
+Note	VARCHAR
+
+# --- a broken embedded table fails when it is read, with its parse reason ---
+
+statement error
+SELECT * FROM doc_table('test/fixtures/attach_tables.rst', 4);
+----
+unterminated quote
+
+# --- n out of range: the error says how many tables there are ---
+
+statement error
+SELECT * FROM doc_table('test/fixtures/attach_tables.rst', 0);
+----
+has 4 tables
+
+statement error
+SELECT * FROM doc_table('test/fixtures/attach_tables.rst', -1);
+----
+has 4 tables
+
+statement error
+SELECT * FROM doc_table('test/fixtures/attach_tables.rst', 5);
+----
+has 4 tables
+
+statement error
+SELECT * FROM doc_table('test/fixtures/lists.docx', 1);
+----
+has 0 tables
+
+# --- by id ---
+
+query II
+SELECT * FROM doc_table('test/fixtures/table_ids.dblocks', id := 'prices');
+----
+tea	3
+
+# Two tables share the id 'prices': the first in n order wins (docs/doc_namespace.md).
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/table_ids.dblocks') WHERE id = 'prices';
+----
+2
+
+query I
+SELECT count(*) FROM (FROM doc_table('test/fixtures/table_ids.dblocks', id := 'prices')
+	EXCEPT ALL FROM doc_table('test/fixtures/table_ids.dblocks', 1));
+----
+0
+
+statement error
+SELECT * FROM doc_table('test/fixtures/table_ids.dblocks', id := 'missing');
+----
+no table with id
+
+# --- exactly one of n and id ---
+
+statement error
+SELECT * FROM doc_table('test/fixtures/table_ids.dblocks');
+----
+exactly one of n and id
+
+statement error
+SELECT * FROM doc_table('test/fixtures/table_ids.dblocks', 1, id := 'prices');
+----
+exactly one of n and id

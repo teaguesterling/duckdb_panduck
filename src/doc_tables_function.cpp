@@ -68,6 +68,35 @@ unique_ptr<TableRef> DocTablesBindReplace(ClientContext &context, TableFunctionB
 	return SelectRef(context, TablesListingSql(ScanTables(context, path, format)));
 }
 
+//! doc_table's table: by 1-based n, or the first table (in n order) whose id matches.
+unique_ptr<TableRef> DocTableBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	auto path = DocSource(context, input, "doc_table");
+	auto format = DocFormat(input);
+	auto id_it = input.named_parameters.find("id");
+	bool has_id = id_it != input.named_parameters.end() && !id_it->second.IsNull();
+	bool has_n = input.inputs.size() > 1 && !input.inputs[1].IsNull();
+	if (has_id == has_n) {
+		throw BinderException("doc_table: give exactly one of n and id := (n is 1-based, as in doc_tables)");
+	}
+	auto tables = ScanTables(context, path, format);
+	if (has_n) {
+		auto n = input.inputs[1].GetValue<int64_t>();
+		if (n < 1 || n > int64_t(tables.size())) {
+			throw InvalidInputException("doc_table: no table %lld; '%s' has %llu tables", n, path,
+			                            (unsigned long long)tables.size());
+		}
+		return SelectRef(context, TableViewSql(tables[n - 1]));
+	}
+	auto id = id_it->second.ToString();
+	for (auto &t : tables) {
+		if (t.id == id) {
+			return SelectRef(context, TableViewSql(t));
+		}
+	}
+	throw InvalidInputException("doc_table: no table with id '%s'; '%s' has %llu tables", id, path,
+	                            (unsigned long long)tables.size());
+}
+
 } // namespace
 
 void RegisterDocTablesFunctions(ExtensionLoader &loader) {
@@ -84,6 +113,32 @@ void RegisterDocTablesFunctions(ExtensionLoader &loader) {
 	desc.categories = {"panduck"};
 	info.descriptions.push_back(desc);
 	loader.RegisterFunction(std::move(info));
+
+	TableFunctionSet doc_table("doc_table");
+	for (auto by_n : {true, false}) {
+		vector<LogicalType> args {LogicalType::VARCHAR};
+		if (by_n) {
+			args.push_back(LogicalType::BIGINT);
+		}
+		TableFunction fn("doc_table", args, nullptr, nullptr);
+		fn.bind_replace = DocTableBindReplace;
+		panduck::AddNamedParameter(fn, "format", LogicalType::VARCHAR);
+		panduck::AddNamedParameter(fn, "id", LogicalType::VARCHAR);
+		doc_table.AddFunction(fn);
+	}
+	CreateTableFunctionInfo table_info(std::move(doc_table));
+	table_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	for (auto by_n : {true, false}) {
+		FunctionDescription d;
+		d.parameter_names = by_n ? vector<string> {"src", "n"} : vector<string> {"src"};
+		d.description = "Read one table of a document: the same rows as ATTACH's r.table_N. Pick it by 1-based n, or "
+		                "by id := (the first table with that id). src must be a constant path to one local document.";
+		d.examples = {by_n ? "SELECT * FROM doc_table('report.docx', 1)"
+		                   : "SELECT * FROM doc_table('report.html', id := 'prices')"};
+		d.categories = {"panduck"};
+		table_info.descriptions.push_back(d);
+	}
+	loader.RegisterFunction(std::move(table_info));
 }
 
 } // namespace duckdb

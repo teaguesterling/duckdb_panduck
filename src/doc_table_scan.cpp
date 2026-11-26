@@ -23,6 +23,21 @@ string Quote(const string &s) {
 	return SQLString::ToString(s);
 }
 
+//! The table JSON's data row count: the length of its "rows" array, the array
+//! panduck_table_read reads (src/table_read.cpp). -1 when there is none.
+int64_t DataRows(const string &table_json) {
+	using namespace duckdb_yyjson; // NOLINT -- the spelling the json extension uses
+	auto doc = yyjson_read(table_json.data(), table_json.size(), 0);
+	if (!doc) {
+		return -1;
+	}
+	auto root = yyjson_doc_get_root(doc);
+	auto rows = yyjson_is_obj(root) ? yyjson_obj_get(root, "rows") : nullptr;
+	int64_t n = yyjson_is_arr(rows) ? int64_t(yyjson_arr_size(rows)) : -1;
+	yyjson_doc_free(doc);
+	return n;
+}
+
 vector<string> HeaderCells(const string &table_json) {
 	using namespace duckdb_yyjson; // NOLINT -- the spelling the json extension uses
 	vector<string> out;
@@ -188,6 +203,8 @@ vector<FoundTable> IdentifyTables(ClientContext &context, DatabaseInstance &inst
 				t.title = heading;
 				t.heading_id = heading_id;
 				t.columns = HeaderCells(content);
+				t.rows = DataRows(content);
+				t.id = chunk->GetValue(5, i).ToString();
 				t.element_order = order;
 				real.push_back(std::move(t));
 				last_real = &real.back();
@@ -281,10 +298,10 @@ vector<std::pair<string, string>> NameTables(vector<FoundTable> &tables, TableNa
 
 //! `tables` is literal data baked at ATTACH, so listing it parses nothing.
 string TablesListingSql(const vector<FoundTable> &tables) {
-	const string cols = " t(n, view, kind, title, columns, element_order)";
+	const string cols = " t(n, view, kind, title, columns, element_order, rows, id)";
 	if (tables.empty()) {
 		return "SELECT * FROM (VALUES (NULL::BIGINT, NULL::VARCHAR, NULL::VARCHAR, NULL::VARCHAR, "
-		       "NULL::VARCHAR[], NULL::BIGINT))" +
+		       "NULL::VARCHAR[], NULL::BIGINT, NULL::BIGINT, NULL::VARCHAR))" +
 		       cols + " WHERE false";
 	}
 	string sql = "SELECT * FROM (VALUES ";
@@ -299,7 +316,8 @@ string TablesListingSql(const vector<FoundTable> &tables) {
 			columns = "[" + StringUtil::Join(quoted, ", ") + "]::VARCHAR[]";
 		}
 		sql += (i ? ", (" : "(") + std::to_string(t.n) + "::BIGINT, " + OrNull(t.view) + ", " + Quote(t.kind) + ", " +
-		       OrNull(t.title) + ", " + columns + ", " + std::to_string(t.element_order) + "::BIGINT)";
+		       OrNull(t.title) + ", " + columns + ", " + std::to_string(t.element_order) + "::BIGINT, " +
+		       (t.rows < 0 ? string("NULL") : std::to_string(t.rows)) + "::BIGINT, " + OrNull(t.id) + ")";
 	}
 	return sql + ")" + cols;
 }

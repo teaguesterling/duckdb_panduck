@@ -20,7 +20,9 @@ struct FoundTable {
 	string heading_id;      //!< that heading's attributes['id'], if it had one
 	vector<string> columns; //!< header cells, real tables only
 	int64_t element_order = 0;
-	string view; //!< the view name; empty = no view (TABLE_NAMES 'named_only')
+	int64_t rows = -1; //!< data rows in the table JSON, real tables only; -1 = NULL (#215)
+	string id;         //!< the table block's own attributes['id']; empty = NULL (#215)
+	string view;       //!< the view name; empty = no view (TABLE_NAMES 'named_only')
 };
 
 //! FORMAT's value, lower-cased and checked against the reader registry.

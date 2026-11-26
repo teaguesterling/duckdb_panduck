@@ -21,7 +21,7 @@ All views are in schema `main`. The database is read-only: `CREATE`, `DROP` and 
 | View | Columns |
 |---|---|
 | `blocks` | the `duck_blocks` columns, from `read_panduck_doc` |
-| `tables` | `n, view, kind, title, columns, element_order` |
+| `tables` | `n, view, kind, title, columns, element_order, rows, id` |
 | one view per table | the table's header cells, with sniffed types |
 | `headings` | `level, title, id, element_order` |
 | `sections` | `id, level, title, start_order, end_order` |
@@ -34,6 +34,10 @@ All views are in schema `main`. The database is read-only: `CREATE`, `DROP` and 
 code blocks), each group in document order. `n` is the row number. `title` is the nearest
 heading above the table. `columns` is NULL for embedded data, because its header is known only
 after it is parsed.
+
+`rows` is the table's data row count, and `id` is the table's own `id` attribute, if the reader
+gave it one. Both are NULL for embedded data. To read the same listing or one table without an
+ATTACH first, use `doc_tables(src)` and `doc_table(src, n)` ([doc_namespace.md](doc_namespace.md)).
 
 A broken embedded table fails only when you query it, with its parse reason:
 

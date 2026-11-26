@@ -37,6 +37,19 @@ Name	VARCHAR
 Value	BIGINT
 Note	VARCHAR
 
+# rows and id (#215): the data row count, counted by hand from word/document.xml (three
+# <w:tr>, the first is the header), and the table block's own attributes['id'] (none here).
+query III
+SELECT n, rows, id FROM c.tables ORDER BY n;
+----
+1	2	NULL
+
+# rows and id are the last two columns, after ATTACH's first six.
+query I
+SELECT string_agg(column_name, ',') FROM (DESCRIBE c.tables);
+----
+n,view,kind,title,columns,element_order,rows,id
+
 # --- a document with no tables: an empty listing, no table views ---
 
 statement ok
@@ -64,6 +77,15 @@ SELECT n, view, kind, title, columns FROM t.tables ORDER BY n;
 2	table_2	csv	NULL	NULL
 3	table_3	json	Prices	NULL
 4	table_4	csv	Prices	NULL
+
+# Embedded data has no row count in the listing (rows NULL), as it has no columns.
+query III
+SELECT n, rows, id FROM t.tables ORDER BY n;
+----
+1	1	NULL
+2	NULL	NULL
+3	NULL	NULL
+4	NULL	NULL
 
 query I
 SELECT string_agg(view_name, ',' ORDER BY view_name) FROM duckdb_views() WHERE database_name = 't' AND view_name LIKE 'table\_%' ESCAPE '\';

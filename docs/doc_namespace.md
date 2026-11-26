@@ -948,6 +948,29 @@ needs.
 that changes the suite says so by name rather than failing three assertions later with
 `function ... does not exist`. It did exactly that on 2026-09-04.
 
+## `doc_tables(src, format := 'auto')` and `doc_table(src, n | id := ..., format := 'auto')`
+
+A document's tables in one SQL expression, with no ATTACH first (#215):
+
+```sql
+SELECT * FROM doc_tables('report.docx');                  -- n, view, kind, title, columns, element_order, rows, id
+SELECT * FROM doc_table('report.docx', 2);                -- the rows of table 2
+SELECT * FROM doc_table('report.html', id := 'prices');   -- the first table whose id is 'prices'
+```
+
+The rows are ATTACH's. Both functions run the table scan that `ATTACH ... (TYPE panduck)` runs,
+and return the SQL that ATTACH puts in `r.tables` and `r.table_N`. So `doc_table(src, n)` is the
+table `r.tables` lists as `n`, with the same column types. `n` is 1-based. `view` is the name
+ATTACH gives the table with its default `TABLE_NAMES 'slugs'`.
+
+- `src` must be a constant: one local document, not a glob and not a column. A network address
+  fails as ATTACH fails.
+- `format` is ATTACH's `FORMAT`, checked by the same parser.
+- `doc_table` takes exactly one of `n` and `id :=`. An `n` out of range, or an id that no table
+  has, fails and says how many tables the document has.
+- Two tables can share an id. Then `id :=` gives the first one, in `n` order.
+- A broken embedded table fails when it is read, with its parse reason, as `r.table_N` does.
+
 ## ATTACH a document
 
 `ATTACH 'report.docx' AS r (TYPE panduck)` gives the same document as a read-only database of views. See [attach.md](attach.md).

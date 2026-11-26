@@ -1,0 +1,141 @@
+# name: test/sql/doc_tables.test
+# description: doc_tables(src) lists a document's tables: the same rows as ATTACH's r.tables
+# group: [sql]
+
+require panduck
+
+# ---------------------------------------------------------------------------
+# WHY (#215). duckeye `-E table:N` and the Android Extract menu want a document's tables
+# in one SQL expression, with no ATTACH first. doc_tables runs ATTACH's own table scan
+# (src/doc_table_scan.cpp) at bind time, so it cannot disagree with r.tables about which
+# table is table N. Each fixture is compared both ways with EXCEPT ALL.
+# ---------------------------------------------------------------------------
+
+# --- the same rows as r.tables: real tables, embedded data, a broken table ---
+
+statement ok
+ATTACH 'test/fixtures/attach_tables.rst' AS t (TYPE panduck);
+
+query I
+SELECT count(*) FROM (FROM doc_tables('test/fixtures/attach_tables.rst') EXCEPT ALL FROM t.tables);
+----
+0
+
+query I
+SELECT count(*) FROM (FROM t.tables EXCEPT ALL FROM doc_tables('test/fixtures/attach_tables.rst'));
+----
+0
+
+# The comparison is not vacuous: the document has four tables.
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/attach_tables.rst');
+----
+4
+
+statement ok
+ATTACH 'test/fixtures/constructs.docx' AS c (TYPE panduck);
+
+query I
+SELECT count(*) FROM (FROM doc_tables('test/fixtures/constructs.docx') EXCEPT ALL FROM c.tables);
+----
+0
+
+query I
+SELECT count(*) FROM (FROM c.tables EXCEPT ALL FROM doc_tables('test/fixtures/constructs.docx'));
+----
+0
+
+query IIII
+SELECT n, view, rows, id FROM doc_tables('test/fixtures/constructs.docx');
+----
+1	heading_three	2	NULL
+
+# --- a document with no tables: 0 rows, not an error ---
+
+statement ok
+ATTACH 'test/fixtures/lists.docx' AS l (TYPE panduck);
+
+query I
+SELECT count(*) FROM (FROM doc_tables('test/fixtures/lists.docx') EXCEPT ALL FROM l.tables);
+----
+0
+
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/lists.docx');
+----
+0
+
+# The empty listing keeps r.tables's columns and types.
+query I
+SELECT count(*) FROM ((SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM doc_tables('test/fixtures/lists.docx')))
+	EXCEPT ALL (SELECT column_name, column_type FROM (DESCRIBE l.tables)));
+----
+0
+
+# --- format := is ATTACH's FORMAT, checked by the same parser ---
+
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/constructs_docx_no_ext', format := 'docx');
+----
+1
+
+statement error
+SELECT * FROM doc_tables('test/fixtures/constructs.docx', format := 'nope');
+----
+FORMAT must be one of
+
+# --- src: one local document, given as a constant ---
+
+statement error
+SELECT * FROM doc_tables('test/fixtures/*.docx');
+----
+one document
+
+# A real file whose name has glob characters is one document, not a pattern: ATTACH reads
+# it, so doc_tables reads it too (review finding F2). The file is a copy of constructs.docx.
+statement ok
+ATTACH 'test/fixtures/report [final].docx' AS rf (TYPE panduck);
+
+query I
+SELECT count(*) FROM (FROM doc_tables('test/fixtures/report [final].docx') EXCEPT ALL FROM rf.tables);
+----
+0
+
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/report [final].docx');
+----
+1
+
+# The same file behind ATTACH's 'panduck:' prefix: the prefix is stripped before the glob
+# check, so the two surfaces agree on this input too (review finding F5).
+query I
+SELECT count(*) FROM (FROM doc_tables('panduck:test/fixtures/report [final].docx') EXCEPT ALL FROM rf.tables);
+----
+0
+
+query I
+SELECT count(*) FROM (FROM rf.tables EXCEPT ALL FROM doc_tables('panduck:test/fixtures/report [final].docx'));
+----
+0
+
+statement error
+SELECT * FROM doc_tables('panduck:test/fixtures/*.docx');
+----
+one document
+
+statement error
+SELECT * FROM doc_tables('https://example.com/x.html');
+----
+reads local files only
+
+# A column is refused by DuckDB's binder before doc_tables binds, so the message is
+# DuckDB's: "does not support lateral join column parameters ... only supports literals".
+statement error
+SELECT * FROM (VALUES ('test/fixtures/constructs.docx')) v(p), doc_tables(p);
+----
+only supports literals as parameters
+
+statement error
+SELECT * FROM doc_tables('test/fixtures/no_such_file.docx');
+----
+file not found

@@ -89,7 +89,8 @@ unique_ptr<TableRef> DocTableBindReplace(ClientContext &context, TableFunctionBi
 	}
 	auto id = id_it->second.ToString();
 	for (auto &t : tables) {
-		if (t.id == id) {
+		// The scan stores a missing id as "", so an empty id must not match it.
+		if (!id.empty() && t.id == id) {
 			return SelectRef(context, TableViewSql(t));
 		}
 	}

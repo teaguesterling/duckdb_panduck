@@ -117,6 +117,12 @@ SELECT * FROM doc_table('test/fixtures/table_ids.dblocks', id := 'missing');
 ----
 no table with id
 
+# An empty id names no table. A table with no id must not match it (review finding F1).
+statement error
+SELECT * FROM doc_table('test/fixtures/table_ids.dblocks', id := '');
+----
+no table with id ''
+
 # --- exactly one of n and id ---
 
 statement error

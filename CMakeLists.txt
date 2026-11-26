@@ -204,7 +204,8 @@ set(EXTENSION_SOURCES
     src/container_status.cpp
     src/table_read.cpp
     # ATTACH '<doc>' AS r (TYPE panduck): the document as a read-only catalog of views.
-    src/attach_storage.cpp)
+    src/attach_storage.cpp
+    src/doc_table_scan.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

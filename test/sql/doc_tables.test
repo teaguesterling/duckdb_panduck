@@ -91,6 +91,21 @@ SELECT * FROM doc_tables('test/fixtures/*.docx');
 ----
 one document
 
+# A real file whose name has glob characters is one document, not a pattern: ATTACH reads
+# it, so doc_tables reads it too (review finding F2). The file is a copy of constructs.docx.
+statement ok
+ATTACH 'test/fixtures/report [final].docx' AS rf (TYPE panduck);
+
+query I
+SELECT count(*) FROM (FROM doc_tables('test/fixtures/report [final].docx') EXCEPT ALL FROM rf.tables);
+----
+0
+
+query I
+SELECT count(*) FROM doc_tables('test/fixtures/report [final].docx');
+----
+1
+
 statement error
 SELECT * FROM doc_tables('https://example.com/x.html');
 ----

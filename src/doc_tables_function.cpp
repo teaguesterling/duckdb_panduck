@@ -11,6 +11,7 @@
 
 #include "panduck_duckdb_compat.hpp"
 
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -31,7 +32,10 @@ string DocSource(ClientContext &context, const TableFunctionBindInput &input, co
 		throw BinderException("%s: src must be a constant path, not NULL", fn);
 	}
 	auto src = input.inputs[0].ToString();
-	if (src.find_first_of("*?[") != string::npos && src.find("://") == string::npos) {
+	// A real file whose name has glob characters is one document: check the literal path first.
+	auto &fs = FileSystem::GetFileSystem(context);
+	if (src.find_first_of("*?[") != string::npos && src.find("://") == string::npos &&
+	    !fs.FileExists(fs.ExpandPath(src))) {
 		throw InvalidInputException("%s reads one document; '%s' is a glob pattern", fn, src);
 	}
 	return ResolveDocPath(context, src);

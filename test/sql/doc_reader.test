@@ -39,10 +39,20 @@ block	paragraph	More body.	3	(empty)
 value	string	Chrome Test	1	title
 value	string	A. Writer	1	author
 
+# EACH ROW KEEPS ITS OWN element_order: doc_reader renumbers nothing. The numbers come
+# from the installed webbed, and they change between webbed releases (webbed 5bdff87
+# stopped emitting presentation <meta> rows, which moved the rows after them).
+# So compare each row with the same row of read_panduck_doc, not with fixed numbers.
+# attributes is in the comparison, so a renumbered row cannot match a different row.
 query I
-SELECT list(element_order) FROM doc_reader('test/fixtures/reader_chrome.html');
+WITH p AS (SELECT element_order, kind, element_type, level, content, attributes::VARCHAR
+           FROM doc_reader('test/fixtures/reader_chrome.html'))
+SELECT (SELECT count(*) FROM (SELECT * FROM p EXCEPT ALL
+          SELECT element_order, kind, element_type, level, content, attributes::VARCHAR
+          FROM read_panduck_doc('test/fixtures/reader_chrome.html'))) = 0
+   AND (SELECT min(element_order) FROM p) > 0;
 ----
-[6, 7, 8, 9, 10, 11, 12, 13, 18, 20]
+true
 
 # THE BLOCKS VARIANT GIVES THE SAME ROWS, for blocks that never were a file.
 query I
